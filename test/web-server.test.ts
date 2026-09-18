@@ -59,6 +59,7 @@ describe('TimeMachineWebServer', () => {
     expect(capabilities.externalEffectLedger).toBe(true);
     expect(capabilities.externalEffectAdapters).toEqual([]);
     expect(capabilities.workspaceIsolation).toBe('shared-lock');
+    expect(capabilities.incrementalCapture).toBe(false);
     expect(capabilities.policies).toMatchObject({
       restoreMode: 'safe',
       maxSnapshots: 0,
@@ -216,6 +217,7 @@ describe('TimeMachineWebServer', () => {
     expect(capabilities.fallback).toBe(false);
     expect(capabilities.mergeRestore).toBe(true);
     expect(capabilities.workspaceIsolation).toBe('shared-lock');
+    expect(capabilities.incrementalCapture).toBe(true);
   });
 
   it('exposes a read-only rewind preview endpoint', async () => {

@@ -443,6 +443,8 @@ declare class TimeMachineService {
         quarantineEncryption: boolean;
         quarantineMigration: boolean;
         partialSnapshots: boolean;
+        /** Safe dirty-path overlay is available for normal Git workspaces. */
+        incrementalCapture: boolean;
         externalEffectLedger: true;
         externalEffectAdapters: string[];
         workspaceIsolation: 'shared-lock';

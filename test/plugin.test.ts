@@ -59,6 +59,9 @@ describe('DSH Cordis plugin entry', () => {
       const execution = { callId: 'native-call', name: 'write', agent };
       ctx.emit('fs/observed', { displayPath: file }, { kind: 'present' }, execution);
       ctx.emit('tools/result', execution, { isError: false });
+      const deleteExecution = { callId: 'native-delete-call', name: 'edit', agent };
+      ctx.emit('fs/observed', { displayPath: path.join(workDir, 'removed.txt') }, { kind: 'absent' }, deleteExecution);
+      ctx.emit('tools/result', deleteExecution, { isError: false });
       ctx.emit('session/event', session, { type: 'turn/end', seq: 2, data: { turn: 1, reason: { kind: 'completed' } } });
       const service = ctx.get('timeMachine') as TimeMachineService;
       expect(service.storageDir).toBe(path.join(workDir, '.dsh-tm'));
@@ -67,7 +70,10 @@ describe('DSH Cordis plugin entry', () => {
         await new Promise(resolve => setTimeout(resolve, 20));
         node = (await service.getDAGManager(session.id)).getCurrentNode();
       }
-      expect(node?.agentWrites).toEqual([expect.objectContaining({ path: 'native.txt', operation: 'modify', sha256: expect.any(String) })]);
+      expect(node?.agentWrites).toEqual(expect.arrayContaining([
+        expect.objectContaining({ path: 'native.txt', operation: 'modify', sha256: expect.any(String) }),
+        expect.objectContaining({ path: 'removed.txt', operation: 'delete', sha256: expect.any(String) }),
+      ]));
       expect(node?.status).toBe('success');
     } finally {
       await (ctx?.fiber?.dispose?.() ?? Promise.resolve());

@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import type { Context } from '@deepseek-ai/cordis';
 import Schema from '@deepseek-ai/schemastery';
 import pc from 'picocolors';
@@ -130,7 +131,7 @@ export function apply(ctx: Context, config: Config = {}): void {
   }
 
   const checkpoints = new Map<string, string>();
-  const observedWrites = new Map<string, { sessionId: string; turn: number; paths: Set<string> }>();
+  const observedWrites = new Map<string, { sessionId: string; turn: number; paths: Map<string, 'modify' | 'delete'> }>();
   const pendingLedgerWrites = new Map<string, Promise<void>>();
 
   // These are global lifecycle observations. Register them on the plugin root
@@ -145,8 +146,8 @@ export function apply(ctx: Context, config: Config = {}): void {
       if (!sessionId || !Number.isSafeInteger(turn) || !execution?.callId || !target?.displayPath) return;
       if (!isNativeWriteTool(execution.name)) return;
       const key = `${sessionId}\0${execution.callId}`;
-      const existing = observedWrites.get(key) ?? { sessionId, turn: turn as number, paths: new Set<string>() };
-      existing.paths.add(target.displayPath);
+      const existing = observedWrites.get(key) ?? { sessionId, turn: turn as number, paths: new Map<string, 'modify' | 'delete'>() };
+      existing.paths.set(target.displayPath, _observation.kind === 'absent' ? 'delete' : 'modify');
       observedWrites.set(key, existing);
     });
 
@@ -159,10 +160,13 @@ export function apply(ctx: Context, config: Config = {}): void {
       if (!checkpointId) return;
       const turnKey = checkpointKey(observed.sessionId, observed.turn);
       let chain = pendingLedgerWrites.get(turnKey) ?? Promise.resolve();
-      for (const displayPath of observed.paths) {
+      for (const [displayPath, operation] of observed.paths) {
         const relative = workspaceRelativePath(workDir, displayPath);
         if (!relative) continue;
-        chain = chain.then(() => service.recordAgentWrite(observed.sessionId, checkpointId, { path: relative, operation: 'modify' })
+        const sha256 = operation === 'delete'
+          ? createHash('sha256').update(`dsh-time-machine:absent:${relative}`).digest('hex')
+          : undefined;
+        chain = chain.then(() => service.recordAgentWrite(observed.sessionId, checkpointId, { path: relative, operation, ...(sha256 ? { sha256 } : {}) })
           .then(() => undefined)
           .catch((error: unknown) => {
             ctx.logger.warn(`[time-machine] could not record Agent write ${relative}: ${errorMessage(error)}`);

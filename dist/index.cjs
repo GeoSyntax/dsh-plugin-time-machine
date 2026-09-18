@@ -1160,6 +1160,7 @@ __export(index_exports, {
 module.exports = __toCommonJS(index_exports);
 init_cjs_shims();
 var import_node_path7 = __toESM(require("path"), 1);
+var import_node_crypto6 = require("crypto");
 var import_schemastery = __toESM(require("@deepseek-ai/schemastery"), 1);
 var import_picocolors2 = __toESM(require("picocolors"), 1);
 
@@ -3557,8 +3558,8 @@ function apply(ctx, config = {}) {
       if (!sessionId || !Number.isSafeInteger(turn) || !execution?.callId || !target?.displayPath) return;
       if (!isNativeWriteTool(execution.name)) return;
       const key = `${sessionId}\0${execution.callId}`;
-      const existing = observedWrites.get(key) ?? { sessionId, turn, paths: /* @__PURE__ */ new Set() };
-      existing.paths.add(target.displayPath);
+      const existing = observedWrites.get(key) ?? { sessionId, turn, paths: /* @__PURE__ */ new Map() };
+      existing.paths.set(target.displayPath, _observation.kind === "absent" ? "delete" : "modify");
       observedWrites.set(key, existing);
     });
     ctx.on("tools/result", (execution, result) => {
@@ -3570,10 +3571,11 @@ function apply(ctx, config = {}) {
       if (!checkpointId) return;
       const turnKey = checkpointKey(observed.sessionId, observed.turn);
       let chain = pendingLedgerWrites.get(turnKey) ?? Promise.resolve();
-      for (const displayPath of observed.paths) {
+      for (const [displayPath, operation] of observed.paths) {
         const relative = workspaceRelativePath(workDir, displayPath);
         if (!relative) continue;
-        chain = chain.then(() => service.recordAgentWrite(observed.sessionId, checkpointId, { path: relative, operation: "modify" }).then(() => void 0).catch((error) => {
+        const sha256 = operation === "delete" ? (0, import_node_crypto6.createHash)("sha256").update(`dsh-time-machine:absent:${relative}`).digest("hex") : void 0;
+        chain = chain.then(() => service.recordAgentWrite(observed.sessionId, checkpointId, { path: relative, operation, ...sha256 ? { sha256 } : {} }).then(() => void 0).catch((error) => {
           ctx.logger.warn(`[time-machine] could not record Agent write ${relative}: ${errorMessage(error)}`);
         }));
       }

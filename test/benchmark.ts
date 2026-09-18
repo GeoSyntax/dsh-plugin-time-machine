@@ -24,6 +24,9 @@ async function runBenchmark() {
   await execAsync('git', ['init'], { cwd: repoDir });
   await execAsync('git', ['config', 'user.name', 'BenchBot'], { cwd: repoDir });
   await execAsync('git', ['config', 'user.email', 'bot@bench.com'], { cwd: repoDir });
+  // Keep Windows Git from emitting one warning per fixture file; a 10k-file
+  // run would otherwise overflow child_process' default stderr buffer.
+  await execAsync('git', ['config', 'core.autocrlf', 'false'], { cwd: repoDir });
 
   // Override these for scale testing, e.g. TM_BENCH_FILE_COUNT=1000.
   const FILE_COUNT = positiveInteger(process.env.TM_BENCH_FILE_COUNT, 100);
@@ -32,6 +35,10 @@ async function runBenchmark() {
     const code = `// Module ${i}\nexport function compute_${i}() { return ${i} * 42; }\n`;
     await fs.writeFile(path.join(repoDir, `module_${i}.ts`), code, 'utf-8');
   }
+  // Establish a tracked baseline so the Git benchmark measures incremental
+  // edits, not the one-time cost of importing an entirely untracked tree.
+  await execAsync('git', ['add', '.'], { cwd: repoDir });
+  await execAsync('git', ['commit', '-m', 'benchmark baseline'], { cwd: repoDir });
 
   const gitEngine = new GitPlumbingEngine({ workDir: repoDir });
   const fallbackEngine = new FallbackSnapshotEngine({ workDir: repoDir, storageDir: backupStorageDir });
@@ -53,6 +60,11 @@ async function runBenchmark() {
     const t1 = performance.now();
     copyTimes.push(t1 - t0);
   }
+
+  // Run the Git track from the same clean baseline and avoid carrying the
+  // traditional-copy mutations into its first checkpoint.
+  await execAsync('git', ['reset', '--hard', 'HEAD'], { cwd: repoDir });
+  await execAsync('git', ['clean', '-fd'], { cwd: repoDir });
 
   // 2. 测试我们的 Git Plumbing 方案
   const gitTimes: number[] = [];

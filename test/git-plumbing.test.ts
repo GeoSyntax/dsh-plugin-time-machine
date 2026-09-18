@@ -167,6 +167,25 @@ describe('GitPlumbingEngine', () => {
     expect(second.changedFiles).toEqual([]);
   });
 
+  it('captures dirty changes by overlaying only status-reported paths on the cached tree', async () => {
+    const stable = path.join(tmpDir, 'stable.txt');
+    const changed = path.join(tmpDir, 'changed.txt');
+    await fs.writeFile(stable, 'stable-v1\n', 'utf8');
+    await fs.writeFile(changed, 'changed-v1\n', 'utf8');
+    await execAsync('git', ['add', '.'], { cwd: tmpDir });
+    await execAsync('git', ['commit', '-m', 'incremental fixture'], { cwd: tmpDir });
+    const first = await engine.createSnapshot({ sessionId: 'incremental', checkpointId: 'one' });
+    await fs.writeFile(changed, 'changed-v2\n', 'utf8');
+    const runGit = vi.spyOn(engine, 'runGit');
+    const second = await engine.createSnapshot({ sessionId: 'incremental', checkpointId: 'two', parentCommitOid: first.commitOid });
+
+    expect(second.treeOid).not.toBe(first.treeOid);
+    expect(second.changedFiles.map(item => item.path)).toContain('changed.txt');
+    const added = runGit.mock.calls.filter(([args]) => args[0] === 'add');
+    expect(added.length).toBeGreaterThan(0);
+    expect(added.flatMap(([args]) => args).join(' ')).toContain('changed.txt');
+  });
+
   it('fails closed when encryption is enabled for a legacy plaintext quarantine', async () => {
     const quarantineDir = path.join(tmpDir, '.quarantine');
     const key = 'legacy-backup';

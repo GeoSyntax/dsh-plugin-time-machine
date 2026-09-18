@@ -264,9 +264,12 @@ export class GitPlumbingEngine {
     const cached = status.cacheable && this.workspaceTreeCache?.signature === status.signature
       ? this.workspaceTreeCache.treeOid
       : undefined;
+    const incrementalBase = !cached && !enforceSnapshotLimits && this.preservePaths.length === 0 && this.workspaceTreeCache?.treeOid && status.changedPaths.length > 0
+      ? this.workspaceTreeCache.treeOid
+      : undefined;
     const treeResult = cached
       ? { treeOid: cached, indexFile: undefined, omittedPaths: [] as string[] }
-      : await this.writeWorkspaceTree(enforceSnapshotLimits);
+      : await this.writeWorkspaceTree(enforceSnapshotLimits, [], incrementalBase, incrementalBase ? status.changedPaths : []);
     const { treeOid, indexFile } = treeResult;
     try {
       const commitMsg = params.message || `DSH Checkpoint [${params.sessionId}:${params.checkpointId}]`;
@@ -726,13 +729,18 @@ export class GitPlumbingEngine {
     return env;
   }
 
-  private async writeWorkspaceTree(enforceSnapshotLimits = false, extraOmittedPaths: string[] = []): Promise<{ treeOid: string; indexFile: string; omittedPaths: string[] }> {
+  private async writeWorkspaceTree(
+    enforceSnapshotLimits = false,
+    extraOmittedPaths: string[] = [],
+    baseTreeOid?: string,
+    changedPaths: string[] = [],
+  ): Promise<{ treeOid: string; indexFile: string; omittedPaths: string[] }> {
     const root = await this.getRepoRoot();
     const indexFile = path.join(await this.getGitDir(), `dsh-tm-index-${randomUUID()}`);
     const env = { GIT_INDEX_FILE: indexFile };
     try {
       try {
-        await this.runGit(['read-tree', 'HEAD'], env, root);
+        await this.runGit(['read-tree', baseTreeOid ?? 'HEAD'], env, root);
       } catch {
         await this.runGit(['read-tree', '--empty'], env, root);
       }
@@ -750,6 +758,15 @@ export class GitPlumbingEngine {
         const filesToIndex = candidateFiles.filter(file => !omittedPaths.includes(file));
         for (let offset = 0; offset < filesToIndex.length; offset += 128) {
           await this.runGit(['add', '-A', '--', ...filesToIndex.slice(offset, offset + 128)], env, root);
+        }
+      } else if (changedPaths.length > 0 && protectedPaths.length === 0) {
+        // Incremental safe path: start from the last complete managed tree and
+        // stage only paths Git reported as changed. Porcelain status still
+        // enumerates every changed path, so unchanged tree entries are never
+        // guessed or silently omitted.
+        const paths = changedPaths.map(normalizeGitPath).filter(Boolean);
+        for (let offset = 0; offset < paths.length; offset += 128) {
+          await this.runGit(['add', '-A', '--', ...paths.slice(offset, offset + 128)], env, root);
         }
       } else if (protectedPaths.length === 0) {
         // Fast path for ordinary snapshots: avoid a full candidate enumeration
@@ -793,12 +810,24 @@ export class GitPlumbingEngine {
    * not contain its content hash; therefore any file entry disables reuse.
    * Ignored paths are intentionally handled separately by listIgnoredPaths().
    */
-  private async workspaceStatusSignature(root: string): Promise<{ signature: string; cacheable: boolean }> {
+  private async workspaceStatusSignature(root: string): Promise<{ signature: string; cacheable: boolean; changedPaths: string[] }> {
     const { stdout } = await this.runGit([
       'status', '--porcelain=v2', '--branch', '--untracked-files=all', '-z',
     ], {}, root);
     const entries = stdout.split('\0').filter(Boolean).filter(item => !item.startsWith('# '));
-    return { signature: stdout, cacheable: entries.length === 0 };
+    const changedPaths = entries.flatMap(item => {
+      const tab = item.indexOf('\t');
+      let raw: string;
+      if (tab >= 0) raw = item.slice(tab + 1);
+      else if (item.startsWith('? ')) raw = item.slice(2);
+      else if (item.startsWith('1 ')) raw = item.split(' ').slice(8).join(' ');
+      else if (item.startsWith('2 ')) raw = item.split(' ').slice(9).join(' ');
+      else if (item.startsWith('u ')) raw = item.split(' ').slice(10).join(' ');
+      else raw = item.slice(2).trimStart();
+      const pathPart = raw.split('\0', 1)[0]?.trim();
+      return pathPart ? [normalizeGitPath(pathPart)] : [];
+    });
+    return { signature: stdout, cacheable: entries.length === 0, changedPaths };
   }
 
   private async assertSnapshotSize(root: string, files: string[]): Promise<string[]> {

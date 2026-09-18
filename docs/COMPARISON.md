@@ -20,6 +20,7 @@ supported only when it is covered by the current implementation and tests.
 | Failed-tool reflection | Yes | No equivalent | No equivalent | No equivalent |
 | Rescue/compensation | Yes | Snapshot-oriented | Journal-oriented | Varies |
 | Storage quotas and pruning | Explicit status, conservative prune, explicit history compaction, explicit age/abandoned-branch prune, opt-in hard guards | Yes | Yes; per-file/aggregate capture budgets and retention | Varies |
+| Incremental dirty-tree capture | Safe overlay of status-reported paths onto the prior complete tree; fallback to full isolated-index capture when limits/preserved paths make the optimization unsafe | Path-identity cache | Path-identity cache | Varies |
 | Automatic age retention | Opt-in `retentionMaxAgeMs`; runs before ordinary checkpoints and protects current/branch heads | Product-specific | Retention policies | Varies |
 | Oversized-file policy | Default fail-closed with `SNAPSHOT_SIZE_LIMIT`; explicit `allowPartialSnapshots` records `omittedPaths` and preserves those live paths during restore | Product-specific | Can skip/report unsupported files | Varies |
 | Durable interrupted-restore journal | Yes; startup restores rescue checkpoint | Store recovery | Yes | Varies |

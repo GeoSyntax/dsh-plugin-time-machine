@@ -143,15 +143,14 @@ TM_DSH_SOURCE=/path/to/deepseek-harness pnpm smoke:dsh:source
 
 | 文件数 | Git 快照延迟（相对传统复制） | Git 对象存储（相对传统复制） |
 | ---: | ---: | ---: |
-| 100 | 约 6.7× | 约 0.1× |
-| 1,000 | 约 2.6× | 约 0.3× |
-| 10,000 | 约 3.1× | 约 0.4× |
+| 100 | 约 2.9× | 约 0.08× |
+| 1,000 | 约 0.6× | 约 0.12× |
+| 10,000 | 约 0.23× | 约 0.25× |
 
-这是可重复的合成 TypeScript 文件基准，不代表所有真实仓库。Git 方案用延迟
-换取不可变历史、分支安全和更低的增量存储；10k+ 文件的全量工作区扫描仍是
-已知 P1 瓶颈；当前仅对完全 clean 的 Git worktree 做保守树复用，任何 staged、
-modified 或 untracked 文件都会禁用复用。后续更广泛的增量缓存必须以 HEAD、
-index、ignored 集合和 protected paths 变化为失效条件，不能牺牲快照完整性。
+这是可重复的合成 TypeScript 文件基准，不代表所有真实仓库。基准先提交一个
+tracked baseline，再模拟每轮只修改 5 个文件；Git 路径会从上一个完整树安全叠加
+Git status 报告的变更路径。小仓库仍有 Git 进程启动开销，但在 1k/10k 文件场景
+已体现增量捕获收益；完整性仍由 status 路径枚举和临时隔离 index 保证。
 - `/tm-preview` 和 Web 预览会签发一次性、会话绑定的 restore plan；Web rewind 会把 plan 一并提交，若预览后工作区、活动 checkpoint、Git HEAD/branch/进行中操作或 plan TTL 发生变化，服务返回 `RESTORE_PLAN_INVALID`（HTTP 409）并要求重新预览。`restorePlanTtlMs: 0` 可关闭过期时间，但 plan 仍只能消费一次。
 - 多文件恢复提供 rescue/compensation 和崩溃后 journal 恢复，但文件系统本身没有跨文件 ACID 事务。
 - Git sparse checkout、submodule 和 merge/rebase/cherry-pick 进行中状态会被明确识别并拒绝创建/预览/恢复 checkpoint（`UNSUPPORTED_WORKSPACE_STATE`），避免把不完整工作区误报为可回滚快照；请先完成操作或使用普通 worktree。

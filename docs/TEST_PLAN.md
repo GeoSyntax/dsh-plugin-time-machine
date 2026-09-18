@@ -66,6 +66,7 @@
 | B-11 | 真实 DSH 模型端点失败仍持久化 failed checkpoint 和错误证据 | `TM_DSH_SOURCE=... pnpm smoke:dsh:failure` |
 | B-12 | 真实 DSH 工具失败事件提取为 `failedTools` | `TM_DSH_LIVE_TOOL_FAILURE=1 TM_GEMINI_API_KEY=... pnpm smoke:dsh:source` |
 | B-13 | 本地发布门禁包含跨进程锁回归和 shadow loose/packed-object 回收 | `pnpm test:release` |
+| B-14 | Git 三方合并恢复保留非冲突漂移并报告冲突路径 | `pnpm test -- --run test/git-plumbing.test.ts test/service.test.ts test/web-server.test.ts` |
 
 ### L1：纯逻辑单元测试
 
@@ -82,6 +83,7 @@
 - `service`：显式 `olderThanMs` 只清理超过时间阈值且不受 DAG head/ancestor 保护的节点；未提供阈值时行为与旧版本一致。
 - `service`：preview plan 必须绑定 session/checkpoint、在工作区漂移或重复消费时 fail closed，并覆盖 TTL 配置。
 - `git-plumbing`：sparse checkout、submodule gitlink 和 merge/rebase/cherry-pick 进行中状态必须报告 `UNSUPPORTED_WORKSPACE_STATE`，不能创建或恢复不完整快照。
+- `git-plumbing` / `service`：显式 merge restore 以活动 checkpoint 为 base，非冲突路径合并成功，同路径双改动返回 `RESTORE_MERGE_CONFLICT` 且不改写工作区；fallback/selective restore 明确拒绝 merge 模式。
 - `web-server`：status/dag/diff/rewind/fork、非法 JSON、非 loopback、Origin 校验。
 
 ### L2：状态机与性质测试
@@ -168,6 +170,12 @@ checkpoint 后由用户手动修改受管文件、staged 文件和 ignored 文�
 在没有 `.git` 的临时目录运行同一组基础场景。
 
 预期：插件明确进入 fallback 能力边界；仍能安全创建/恢复快照；README 中声明的 Git-only 能力不会伪装成可用。
+
+### TM-10：非冲突漂移三方合并
+
+Git 工作区中先创建 base checkpoint，再从该 checkpoint 修改目标文件形成 target；随后只修改另一个无关文件，执行 `/tm-rewind <base> --merge`。
+
+预期：目标文件恢复到 base，另一个无关文件的本地修改保留；若 target 与 live 同时修改同一路径，返回 `RESTORE_MERGE_CONFLICT`，列出冲突路径，且 rescue/补偿仍可用。
 
 ### TM-10：路径与权限安全
 

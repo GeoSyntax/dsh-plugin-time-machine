@@ -265,7 +265,8 @@ artifacts/<run-id>/
 
 当前已经有证据：
 
-- L1 核心测试 15/15 通过。
+- L1 核心测试 17/17 通过。
+- Git 与 fallback 恢复完成后均执行工作区摘要校验；持久化 DAG 加载会校验节点、父节点、分支和会话归属。
 - 真实 DSH 源码宿主加载插件通过。
 - 真实本地模型请求和文件创建通过。
 - 真实 checkpoint DAG 和 Dashboard status/dag 通过。

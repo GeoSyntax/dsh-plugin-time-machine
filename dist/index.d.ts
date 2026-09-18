@@ -347,6 +347,7 @@ declare class TimeMachineService {
     getStorageStatus(sessionId?: string): Promise<StorageStatus>;
     prune(sessionId: string, options?: {
         keepLatest?: number;
+        olderThanMs?: number;
         abandonedBranches?: boolean;
         compactHistory?: boolean;
         repackShadowObjects?: boolean;

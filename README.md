@@ -26,7 +26,7 @@ dsh --profile web
 ```text
 /tm-tree
 /tm-storage
-/tm-prune [keep-latest]
+/tm-prune [keep-latest] [--older-than=<7d|12h|30m>]
 /tm-prune [keep-latest] --repack-shadow
 /tm-preview <checkpoint>
 /tm-restore-files <checkpoint> <path...> [--plan=<id>]
@@ -97,6 +97,7 @@ Web dashboard 只绑定 loopback，并拒绝非本机 Host 和跨 origin 请求�
 - 工作区变更操作带有跨进程文件锁；`workspaceLockTimeoutMs` 控制等待其他 DSH 实例的最长时间。它能避免并发覆盖，但不会替代为多个 Agent 创建独立 worktree。
 - `maxQuarantineBytes` 可选限制 ignored 文件 quarantine 的总容量；超过上限时返回 `QUARANTINE_QUOTA_EXCEEDED`，不会丢弃备份。
 - `maxSnapshotFileBytes` 和 `maxSnapshotBytes` 在捕获前限制单文件与单 checkpoint 的 regular-file 总大小；超过限制返回 `SNAPSHOT_SIZE_LIMIT`，不会创建半成品 checkpoint。默认均为 0（不限制），而存储目录总量仍由 `maxStorageBytes` 控制。
+- `/tm-prune --older-than=7d` 提供显式的时间保留策略；它只让超过阈值且不受 DAG head/ancestor 保护的节点进入清理候选，不会自动运行，也不会删除当前分支所需的历史。
 - `/tm-preview` 和 Web 预览会签发一次性、会话绑定的 restore plan；Web rewind 会把 plan 一并提交，若预览后工作区、活动 checkpoint、Git HEAD/branch/进行中操作或 plan TTL 发生变化，服务返回 `RESTORE_PLAN_INVALID`（HTTP 409）并要求重新预览。`restorePlanTtlMs: 0` 可关闭过期时间，但 plan 仍只能消费一次。
 - 多文件恢复提供 rescue/compensation 和崩溃后 journal 恢复，但文件系统本身没有跨文件 ACID 事务。
 - Git sparse checkout、submodule 和 merge/rebase/cherry-pick 进行中状态会被明确识别并拒绝创建/预览/恢复 checkpoint（`UNSUPPORTED_WORKSPACE_STATE`），避免把不完整工作区误报为可回滚快照；请先完成操作或使用普通 worktree。

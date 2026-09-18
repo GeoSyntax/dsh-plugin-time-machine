@@ -79,6 +79,7 @@
 - `service`：checkpoint prune 后仅清理无 DAG 引用的 quarantine，仍被 rescue 节点引用的备份必须保留。
 - `git-plumbing`：quarantine 达到 `maxQuarantineBytes` 时拒绝删除并保留原文件。
 - `git-plumbing` / `fallback-engine`：`maxSnapshotFileBytes` 与 `maxSnapshotBytes` 在复制/写入前拒绝超限文件或 checkpoint，不能留下半成品。
+- `service`：显式 `olderThanMs` 只清理超过时间阈值且不受 DAG head/ancestor 保护的节点；未提供阈值时行为与旧版本一致。
 - `service`：preview plan 必须绑定 session/checkpoint、在工作区漂移或重复消费时 fail closed，并覆盖 TTL 配置。
 - `git-plumbing`：sparse checkout、submodule gitlink 和 merge/rebase/cherry-pick 进行中状态必须报告 `UNSUPPORTED_WORKSPACE_STATE`，不能创建或恢复不完整快照。
 - `web-server`：status/dag/diff/rewind/fork、非法 JSON、非 loopback、Origin 校验。

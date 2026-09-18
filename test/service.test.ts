@@ -289,6 +289,23 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
     expect(dag.getNode(third.id)).not.toBeNull();
   });
 
+  it('supports explicit age-based pruning without touching the current checkpoint', async () => {
+    const sessionId = 'age-prune-session';
+    const file = path.join(tmpDir, 'age.txt');
+    await fs.writeFile(file, 'one\n', 'utf8');
+    const first = await service.createTurnCheckpoint({ sessionId, turnIndex: 1, prompt: 'one', sessionState: { sessionId, messages: [] } });
+    await fs.writeFile(file, 'two\n', 'utf8');
+    const second = await service.createTurnCheckpoint({ sessionId, turnIndex: 2, prompt: 'two', sessionState: { sessionId, messages: [] } });
+    await fs.writeFile(file, 'three\n', 'utf8');
+    const current = await service.createTurnCheckpoint({ sessionId, turnIndex: 3, prompt: 'three', sessionState: { sessionId, messages: [] } });
+    await new Promise(resolve => setTimeout(resolve, 5));
+    const result = await service.prune(sessionId, { keepLatest: 0, olderThanMs: 1, compactHistory: true });
+    expect(result.removedCheckpointIds).toContain(first.id);
+    expect(result.removedCheckpointIds).toContain(second.id);
+    expect(result.removedCheckpointIds).not.toContain(current.id);
+    expect((await service.getDAGManager(sessionId)).getNode(current.id)).toBeTruthy();
+  });
+
   it('recovers an interrupted restore journal on the next service startup', async () => {
     const sessionId = 'journal-recovery';
     const file = path.join(tmpDir, 'journal.txt');

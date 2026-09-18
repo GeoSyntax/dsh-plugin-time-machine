@@ -40,14 +40,18 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
     scope.commands.register({
       name: 'tm-prune',
       description: 'Prune old non-head Time Machine checkpoints',
-      input: { hint: '[keep-latest] [--abandoned-branches] [--compact-history] [--repack-shadow]' },
+      input: { hint: '[keep-latest] [--older-than=<duration>] [--abandoned-branches] [--compact-history] [--repack-shadow]' },
       handler: async ({ agent, rawInput }: CommandInvocationLike): Promise<CommandResult> => {
         const args = rawInput.trim().split(/\s+/).filter(Boolean);
         const keepArg = args.find(arg => !arg.startsWith('--'));
         const keepLatest = keepArg ? Number(keepArg) : 20;
         if (!Number.isInteger(keepLatest) || keepLatest < 0) return { kind: 'error', text: 'Usage: /tm-prune [non-negative keep-latest]' };
+        const olderThanRaw = optionValue(args, '--older-than');
+        const olderThanMs = olderThanRaw === undefined ? undefined : parseDurationMs(olderThanRaw);
+        if (olderThanRaw !== undefined && olderThanMs === undefined) return { kind: 'error', text: 'Usage: /tm-prune [--older-than=<7d|12h|30m|45s>]' };
         const result = await service.prune(agent.session.id, {
           keepLatest,
+          olderThanMs,
           abandonedBranches: args.includes('--abandoned-branches'),
           compactHistory: args.includes('--compact-history'),
           repackShadowObjects: args.includes('--repack-shadow'),
@@ -163,6 +167,15 @@ function optionValue(args: string[], name: string): string | undefined {
   const prefix = `${name}=`;
   const inline = args.find(arg => arg.startsWith(prefix));
   return inline ? inline.slice(prefix.length) || undefined : undefined;
+}
+
+function parseDurationMs(value: string): number | undefined {
+  const match = /^(\d+(?:\.\d+)?)(ms|s|m|h|d|w)$/i.exec(value.trim());
+  if (!match) return undefined;
+  const amount = Number(match[1]);
+  const factor: Record<string, number> = { ms: 1, s: 1_000, m: 60_000, h: 3_600_000, d: 86_400_000, w: 604_800_000 };
+  const result = amount * factor[match[2].toLowerCase()];
+  return Number.isSafeInteger(Math.floor(result)) ? Math.floor(result) : undefined;
 }
 
 function formatBytes(bytes: number): string {

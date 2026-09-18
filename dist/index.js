@@ -1945,12 +1945,14 @@ var TimeMachineService = class {
       const keepLatest = Math.max(0, Math.floor(options.keepLatest ?? 20));
       const nodes = Object.values(dag.tree.nodes).sort((left, right) => right.timestamp - left.timestamp);
       const keep = new Set(nodes.slice(0, keepLatest).map((node) => node.id));
+      const olderThanMs = options.olderThanMs !== void 0 ? Math.max(0, Math.floor(options.olderThanMs)) : void 0;
+      const cutoff = olderThanMs !== void 0 && olderThanMs > 0 ? Date.now() - olderThanMs : void 0;
       let removed = [];
       if (options.abandonedBranches) {
         const abandonedBranches = Object.keys(dag.tree.branches).filter((branch) => branch !== dag.tree.currentBranch);
         for (const branch of abandonedBranches) removed.push(...await dag.removeBranch(branch));
       }
-      const candidates = Object.values(dag.tree.nodes).filter((node) => !keep.has(node.id));
+      const candidates = Object.values(dag.tree.nodes).filter((node) => !keep.has(node.id) && (cutoff === void 0 || node.timestamp < cutoff));
       if (options.compactHistory) {
         removed.push(...await dag.compactNodes(candidates.map((node) => node.id)));
       } else {
@@ -1966,7 +1968,7 @@ var TimeMachineService = class {
         quarantineReclaimedBytes: reclaimed.quarantineReclaimedBytes,
         shadowObjectsReclaimedBytes: shadowRepack?.reclaimedBytes,
         shadowRepackSkippedReason: shadowRepack?.skippedReason,
-        note: reclaimed.gitRefsRemoved > 0 ? this.config.shadowStore ? "Plugin refs and shadow objects were pruned; the user repository was not garbage-collected." : "Git objects are shared; run repository maintenance only if you understand its impact." : "Fallback snapshot bytes were removed from plugin storage."
+        note: reclaimed.gitRefsRemoved > 0 ? this.config.shadowStore ? "Plugin refs and shadow objects were pruned; the user repository was not garbage-collected." : "Git objects are shared; run repository maintenance only if you understand its impact." : cutoff === void 0 ? "Fallback snapshot bytes were removed from plugin storage." : `Only checkpoints older than ${olderThanMs} ms were eligible; protected DAG nodes were retained.`
       };
     });
   }
@@ -2380,11 +2382,16 @@ var TimeMachineWebServer = class {
       const body = await this.readJsonBody(req);
       const sessionId = body.sessionId || "default";
       const keepLatest = body.keepLatest === void 0 ? void 0 : Number(body.keepLatest);
+      const olderThanMs = body.olderThanMs === void 0 ? void 0 : Number(body.olderThanMs);
       if (keepLatest !== void 0 && (!Number.isInteger(keepLatest) || keepLatest < 0)) {
         throw Object.assign(new Error("keepLatest must be a non-negative integer"), { code: "BAD_REQUEST" });
       }
+      if (olderThanMs !== void 0 && (!Number.isSafeInteger(olderThanMs) || olderThanMs <= 0)) {
+        throw Object.assign(new Error("olderThanMs must be a positive integer"), { code: "BAD_REQUEST" });
+      }
       const result = await this.service.prune(sessionId, {
         keepLatest,
+        olderThanMs,
         abandonedBranches: body.abandonedBranches === true,
         compactHistory: body.compactHistory === true,
         repackShadowObjects: body.repackShadowObjects === true
@@ -2546,14 +2553,18 @@ function registerCliCommands(ctx, service) {
     scope.commands.register({
       name: "tm-prune",
       description: "Prune old non-head Time Machine checkpoints",
-      input: { hint: "[keep-latest] [--abandoned-branches] [--compact-history] [--repack-shadow]" },
+      input: { hint: "[keep-latest] [--older-than=<duration>] [--abandoned-branches] [--compact-history] [--repack-shadow]" },
       handler: async ({ agent, rawInput }) => {
         const args = rawInput.trim().split(/\s+/).filter(Boolean);
         const keepArg = args.find((arg) => !arg.startsWith("--"));
         const keepLatest = keepArg ? Number(keepArg) : 20;
         if (!Number.isInteger(keepLatest) || keepLatest < 0) return { kind: "error", text: "Usage: /tm-prune [non-negative keep-latest]" };
+        const olderThanRaw = optionValue(args, "--older-than");
+        const olderThanMs = olderThanRaw === void 0 ? void 0 : parseDurationMs(olderThanRaw);
+        if (olderThanRaw !== void 0 && olderThanMs === void 0) return { kind: "error", text: "Usage: /tm-prune [--older-than=<7d|12h|30m|45s>]" };
         const result = await service.prune(agent.session.id, {
           keepLatest,
+          olderThanMs,
           abandonedBranches: args.includes("--abandoned-branches"),
           compactHistory: args.includes("--compact-history"),
           repackShadowObjects: args.includes("--repack-shadow")
@@ -2662,6 +2673,14 @@ function optionValue(args, name2) {
   const prefix = `${name2}=`;
   const inline = args.find((arg) => arg.startsWith(prefix));
   return inline ? inline.slice(prefix.length) || void 0 : void 0;
+}
+function parseDurationMs(value) {
+  const match = /^(\d+(?:\.\d+)?)(ms|s|m|h|d|w)$/i.exec(value.trim());
+  if (!match) return void 0;
+  const amount = Number(match[1]);
+  const factor = { ms: 1, s: 1e3, m: 6e4, h: 36e5, d: 864e5, w: 6048e5 };
+  const result = amount * factor[match[2].toLowerCase()];
+  return Number.isSafeInteger(Math.floor(result)) ? Math.floor(result) : void 0;
 }
 function formatBytes(bytes) {
   if (bytes < 1024) return `${bytes} B`;

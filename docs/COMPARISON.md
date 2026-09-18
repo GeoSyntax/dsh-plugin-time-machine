@@ -15,7 +15,7 @@ supported only when it is covered by the current implementation and tests.
 | DAG branches | Yes, persistent | No user-facing DAG | Ledger history | Usually linear |
 | Failed-tool reflection | Yes | No equivalent | No equivalent | No equivalent |
 | Rescue/compensation | Yes | Snapshot-oriented | Journal-oriented | Varies |
-| Storage quotas and pruning | Explicit status, conservative prune, explicit history compaction, optional abandoned-branch prune, opt-in hard guards | Yes | Yes; per-file/aggregate capture budgets and retention | Varies |
+| Storage quotas and pruning | Explicit status, conservative prune, explicit history compaction, explicit age/abandoned-branch prune, opt-in hard guards | Yes | Yes; per-file/aggregate capture budgets and retention | Varies |
 | Durable interrupted-restore journal | Yes; startup restores rescue checkpoint | Store recovery | Yes | Varies |
 | Independent shadow store | Opt-in `shadowStore: true`; loose GC plus explicit private-pack repack | Yes | Yes | Usually local backups |
 | Cross-process workspace lock | Yes; bounded wait with stale-owner recovery | Product-specific | Change Ledger documents active-session blocking and Git-operation fences | Usually unavailable |

@@ -596,18 +596,20 @@ export class TimeMachineService {
     };
   }
 
-  async prune(sessionId: string, options: { keepLatest?: number; abandonedBranches?: boolean; compactHistory?: boolean; repackShadowObjects?: boolean } = {}): Promise<PruneResult> {
+  async prune(sessionId: string, options: { keepLatest?: number; olderThanMs?: number; abandonedBranches?: boolean; compactHistory?: boolean; repackShadowObjects?: boolean } = {}): Promise<PruneResult> {
     return this.runWorkspaceOperation(async () => {
       const dag = await this.getDAGManager(sessionId);
       const keepLatest = Math.max(0, Math.floor(options.keepLatest ?? 20));
       const nodes = Object.values(dag.tree.nodes).sort((left, right) => right.timestamp - left.timestamp);
       const keep = new Set(nodes.slice(0, keepLatest).map(node => node.id));
+      const olderThanMs = options.olderThanMs !== undefined ? Math.max(0, Math.floor(options.olderThanMs)) : undefined;
+      const cutoff = olderThanMs !== undefined && olderThanMs > 0 ? Date.now() - olderThanMs : undefined;
       let removed: CheckpointNode[] = [];
       if (options.abandonedBranches) {
         const abandonedBranches = Object.keys(dag.tree.branches).filter(branch => branch !== dag.tree.currentBranch);
         for (const branch of abandonedBranches) removed.push(...await dag.removeBranch(branch));
       }
-      const candidates = Object.values(dag.tree.nodes).filter(node => !keep.has(node.id));
+      const candidates = Object.values(dag.tree.nodes).filter(node => !keep.has(node.id) && (cutoff === undefined || node.timestamp < cutoff));
       if (options.compactHistory) {
         removed.push(...await dag.compactNodes(candidates.map(node => node.id)));
       } else {
@@ -629,7 +631,9 @@ export class TimeMachineService {
           ? (this.config.shadowStore
             ? 'Plugin refs and shadow objects were pruned; the user repository was not garbage-collected.'
             : 'Git objects are shared; run repository maintenance only if you understand its impact.')
-          : 'Fallback snapshot bytes were removed from plugin storage.',
+          : cutoff === undefined
+          ? 'Fallback snapshot bytes were removed from plugin storage.'
+          : `Only checkpoints older than ${olderThanMs} ms were eligible; protected DAG nodes were retained.`,
       };
     });
   }

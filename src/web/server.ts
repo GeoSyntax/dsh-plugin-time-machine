@@ -176,11 +176,16 @@ export class TimeMachineWebServer {
       const body = await this.readJsonBody(req);
       const sessionId = body.sessionId || 'default';
       const keepLatest = body.keepLatest === undefined ? undefined : Number(body.keepLatest);
+      const olderThanMs = body.olderThanMs === undefined ? undefined : Number(body.olderThanMs);
       if (keepLatest !== undefined && (!Number.isInteger(keepLatest) || keepLatest < 0)) {
         throw Object.assign(new Error('keepLatest must be a non-negative integer'), { code: 'BAD_REQUEST' });
       }
+      if (olderThanMs !== undefined && (!Number.isSafeInteger(olderThanMs) || olderThanMs <= 0)) {
+        throw Object.assign(new Error('olderThanMs must be a positive integer'), { code: 'BAD_REQUEST' });
+      }
       const result = await this.service.prune(sessionId, {
         keepLatest,
+        olderThanMs,
         abandonedBranches: body.abandonedBranches === true,
         compactHistory: body.compactHistory === true,
         repackShadowObjects: body.repackShadowObjects === true,

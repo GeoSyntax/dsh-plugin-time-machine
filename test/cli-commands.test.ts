@@ -105,4 +105,19 @@ describe('registered DSH time-machine commands', () => {
     expect(result.kind).toBe('success');
     expect(result.text).toContain('Conflicting paths: preview.txt');
   });
+
+  it('parses explicit age pruning durations and rejects invalid values', async () => {
+    const sessionId = 'cli-prune-session';
+    await fs.writeFile(path.join(root, 'prune.txt'), 'one\n', 'utf8');
+    await service.createTurnCheckpoint({ sessionId, turnIndex: 1, prompt: 'one', sessionState: { sessionId, messages: [] } });
+    await fs.writeFile(path.join(root, 'prune.txt'), 'two\n', 'utf8');
+    await service.createTurnCheckpoint({ sessionId, turnIndex: 2, prompt: 'two', sessionState: { sessionId, messages: [] } });
+    await new Promise(resolve => setTimeout(resolve, 5));
+
+    const invalid = await handlers['tm-prune']({ agent: { session: { id: sessionId } }, rawInput: '--older-than=not-a-duration' });
+    expect(invalid.kind).toBe('error');
+    const valid = await handlers['tm-prune']({ agent: { session: { id: sessionId } }, rawInput: '0 --older-than=1ms --compact-history' });
+    expect(valid.kind).toBe('success');
+    expect(valid.text).toContain('Pruned');
+  });
 });

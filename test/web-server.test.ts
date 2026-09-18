@@ -171,6 +171,22 @@ describe('TimeMachineWebServer', () => {
     expect((await prune.json()).result.removedCheckpointIds).toEqual([]);
   });
 
+  it('accepts a positive olderThanMs prune filter over the web API', async () => {
+    const sessionId = 'storage-age-web';
+    const file = path.join(tmpDir, 'storage-age.txt');
+    await fs.writeFile(file, 'one\n', 'utf8');
+    const first = await service.createTurnCheckpoint({ sessionId, turnIndex: 1, prompt: 'one', sessionState: { sessionId, messages: [] } });
+    await fs.writeFile(file, 'two\n', 'utf8');
+    await service.createTurnCheckpoint({ sessionId, turnIndex: 2, prompt: 'two', sessionState: { sessionId, messages: [] } });
+    await new Promise(resolve => setTimeout(resolve, 5));
+    const response = await fetch(`http://localhost:${testPort}/api/prune`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId, keepLatest: 0, olderThanMs: 1, compactHistory: true }),
+    });
+    expect(response.status).toBe(200);
+    expect((await response.json()).result.removedCheckpointIds).toContain(first.id);
+  });
+
   it('should compensate a physical rewind when conversation restart fails', async () => {
     const file = path.join(tmpDir, 'compensation.txt');
     await fs.writeFile(file, 'before\n', 'utf8');

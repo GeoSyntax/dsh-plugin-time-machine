@@ -8,7 +8,7 @@
 
 ### P0 必须通过
 
-1. **真实宿主加载**：DSH 源码宿主和声明的发布宿主都能加载插件。
+1. **真实宿主加载**：DSH 源码宿主和声明的发布宿主都能加载插件；本插件 manifest 当前只声明 `web` profile，不承诺原生 TUI。
 2. **边界 checkpoint**：每个 turn 在 agent 执行前创建 checkpoint，turn 结束后正确记录 `success`、`failed` 或 `aborted`。
 3. **安全回滚**：默认模式检测工作区漂移；未获得显式 `--force` 时不得覆盖用户在 checkpoint 后的修改。
 4. **完整清理**：回滚会删除 checkpoint 后创建的受管文件；新增 ignored 文件默认不删除，显式删除时进入 quarantine。
@@ -287,12 +287,11 @@ artifacts/<run-id>/
 
 仍需补齐的 P0/P1 证据：
 
-1. 原生交互式 TUI 中真实执行 `/tm-tree`、`/tm-rewind`、`/tm-fork`（当前源码宿主未提供 shipped `tui` profile）。
-2. 真实 Session fork 失败后的补偿验收。
+1. 真实 DSH SessionController fork 失败后的补偿注入验收；插件自身 Web/API hook contract 已有自动化故障注入覆盖。
 
-注：真实 Web smoke 已覆盖插件 REST API 的 fork/rewind 与宿主 SessionController；CLI 内置命令 `/tm-*` 仍需要在交互式 TUI 中人工验收，不能由 headless/Web API 结果替代。
+注：原生 TUI 不属于当前 manifest 的兼容范围；真实 Web smoke 已覆盖插件 REST API 的 fork/rewind 与宿主 SessionController，CLI 命令层则由注册契约测试覆盖。
 
-在上述两项完成并保存证据前，项目只能标记为 **integration-tested / not yet release-qualified**，不能宣称“完整证明生产可用”。
+在上述宿主故障注入完成并保存证据前，项目只能标记为 **integration-tested / not yet release-qualified**，不能宣称“完整证明生产可用”。
 
 ## 10. 推荐执行顺序
 

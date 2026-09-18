@@ -155,7 +155,7 @@ Standalone dashboard 只绑定 loopback，并拒绝跨域/非本机 Host。Web �
 - ignored 文件只有在显式删除时才会进入 quarantine；默认不会复制秘密、缓存或依赖目录。
 - 多文件恢复具备 rescue/compensation，但底层文件系统没有跨文件事务，不能宣传为严格 ACID。
 - Web UI 目前能展示 DAG 和 diff；成功 fork 后返回新 Session ID，尚未自动切换 DSH 前端路由。
-- CI 已覆盖声明宿主的 bundle smoke；Web API 的 rewind/fork 与故障补偿已有自动化测试，真实交互式 `/tm-rewind`、`/tm-fork` 仍按 [docs/TEST_PLAN.md](docs/TEST_PLAN.md) 作为发布前专项验收。
+- CI 已覆盖声明宿主的 bundle smoke；当前 manifest 只支持 `web` profile，Web API 的 rewind/fork 与故障补偿已有自动化测试；原生 TUI 不在兼容承诺范围内。
 
 ## 卸载与数据保留
 

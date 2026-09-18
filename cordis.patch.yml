@@ -1,0 +1,4 @@
+# Mount the Time Machine service into a DeepSeek Harness profile.
+- insert:
+    - id: time-machine
+      name: dsh-plugin-time-machine

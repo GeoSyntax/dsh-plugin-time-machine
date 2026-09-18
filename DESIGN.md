@@ -1,0 +1,83 @@
+# Design notes
+
+## Scope
+
+Time Machine coordinates two independently durable domains:
+
+1. a workspace checkpoint (Git tree/private ref or ordinary-directory manifest), and
+2. a stable DSH Session event boundary used to create a new conversation fork.
+
+It never rewrites the append-only DSH event log. A rewind restores files and asks the host `sessionController` to create/fork a conversation. If the conversation operation fails, the workspace is restored from the automatic rescue checkpoint.
+
+## State model
+
+Each `CheckpointNode` records a parent, logical branch, pre-turn workspace object, Session boundary, turn outcome, and optional settled workspace signature. A pre-turn node therefore has two relevant signatures:
+
+- `gitTreeOid` / `ignoredPaths`: state to restore;
+- `settledGitTreeOid` / `settledIgnoredPaths`: state expected after the turn, used to detect later hand edits.
+
+DAG mutations and workspace mutations are serialized per configured workspace. DAG files are published by writing a unique temporary file and renaming it into place.
+
+## Restore protocol
+
+1. Resolve and validate the target node.
+2. In safe mode, compare the current workspace with the active node's settled signature.
+3. Create a rescue node from the current workspace.
+4. Restore the target using an isolated Git index or exact directory manifest.
+5. Move the DAG cursor only after the workspace restore succeeds.
+6. Fork the DSH conversation at `boundarySeq`.
+7. If step 6 fails, restore the rescue node and cursor.
+
+This is compensating transaction semantics, not a filesystem-wide ACID transaction.
+
+## Git decisions
+
+- Both capture and restore use a temporary `GIT_INDEX_FILE`; the user's real index is not modified.
+- Snapshots use `write-tree` + `commit-tree` + a private `refs/dsh-tm/*` ref. Normal branches and `git log` are untouched, but objects still live in the user's object database.
+- Plugin storage and configured preserved paths are removed from the temporary index.
+- `git clean` is not used. The temporary current-state index gives `read-tree --reset -u` the information needed to remove managed paths absent from the target.
+- Ignored contents are excluded from Git objects. Explicit ignored-path deletion copies content to a plugin quarantine first; rescue restoration copies it back.
+
+The planned storage evolution is a shared shadow Git store similar to Hermes, with store size limits and pruning. That change requires a format migration and is intentionally not hidden inside 0.2.0.
+
+## Threat model
+
+### Assets
+
+- user source files, ignored secrets and staged Git state;
+- DSH Session history and branch boundary identity;
+- private snapshot refs, DAG files and quarantine content;
+- local dashboard mutation endpoints.
+
+### Threats and controls
+
+| Threat | Control |
+|---|---|
+| Path traversal through Session/checkpoint IDs | IDs are base64url-encoded before filesystem/ref use; manifests validate relative paths. |
+| Symlink escape | Directory scans use `lstat` and never recurse through symlinks. Restore destinations are resolved beneath the workspace root. |
+| Loss of staged changes | Capture and restore use isolated indexes; regression test compares cached diff before/after restore. |
+| Overwriting hand edits | Safe mode compares the current tree and ignored-name set with the active settled signature. |
+| Irrecoverable ignored-file deletion | Deletion is explicit and quarantines contents outside Git before removal. |
+| Cross-origin localhost attack / DNS rebinding | Server binds loopback, validates `Host` and `Origin`, disables permissive CORS and uses a restrictive CSP. |
+| DOM XSS from checkpoint metadata | Dashboard builds nodes with `textContent`; no dynamic `innerHTML` or inline event handlers. |
+| Workspace/session split-brain | Mutating UI/commands require `sessionController`; session-fork failure triggers rescue compensation. |
+| Concurrent restore/create races | Keyed FIFO mutex serializes state-changing operations. |
+
+### Accepted risks
+
+- Quarantine is local plaintext storage; its directory needs the same OS permissions as the workspace. Encryption and retention limits are not implemented yet.
+- A process or machine crash during the small interval between workspace restore and DAG cursor publication requires manual selection of the recorded rescue point. A durable restore journal is planned.
+- One plugin instance currently owns one configured workspace. Sessions with a different `cwd` are skipped rather than routed incorrectly.
+- The Git object database and private refs can grow until explicit cleanup; automatic retention/GC is not implemented.
+
+## Change history
+
+### 2026-09-18 — 0.2.0 safety and DSH compatibility pass
+
+**Changes:** migrated to `@deepseek-ai/cordis` 4.x, added real pre-step/turn-end integration and DSH session forks, isolated restore indexes, safe drift checks, rescue compensation, ignored quarantine, exact non-Git restore, atomic DAG writes, operation locking, loopback HTTP controls and DOM-safe rendering.
+
+**Reason:** the earlier prototype used a non-existent lifecycle event, modified the real Git index during restore, only returned an in-memory Session-shaped object, and overstated atomicity.
+
+**Impact:** command names are now `/tm-*`; restore defaults to safe mode; workspace-only Web mutations are refused; the declared API target is DSH `>=0.1.5-rc.2 <0.2.0` pending a real-host CI matrix.
+
+**Evidence:** current DSH Session/architecture documentation, Hermes checkpoint documentation, and `@anionex/dsh-turn-rewind` safety semantics.

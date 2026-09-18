@@ -1,0 +1,31 @@
+name: Feature request
+description: Propose a scoped improvement with explicit safety semantics.
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user-visible failure or limitation does this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe defaults, destructive choices, rescue behavior, and compatibility impact.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Include DSH/Hermes/native Git behavior where relevant.
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope confirmation
+      options:
+        - label: This does not require rewriting DSH's append-only Session log.
+          required: true

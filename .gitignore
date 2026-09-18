@@ -1,0 +1,17 @@
+node_modules/
+coverage/
+*.log
+*.tgz
+*.tsbuildinfo
+
+# Local runtime state. Keep committed dist/ for build-script-free GitHub installs.
+.dsh/time-machine/
+.dsh-tm/
+
+.env
+.env.*
+!.env.example
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

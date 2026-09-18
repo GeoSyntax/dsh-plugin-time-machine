@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/GeoSyntax/dsh-plugin-time-machine/security/advisories/new
+    about: Report path escape, unintended deletion, data exposure, or local Web attacks privately.
+  - name: DeepSeek Harness questions
+    url: https://github.com/deepseek-ai/deepseek-harness/discussions
+    about: Ask questions about DSH core behavior and profiles upstream.

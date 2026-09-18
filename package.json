@@ -1,0 +1,106 @@
+{
+  "name": "dsh-plugin-time-machine",
+  "version": "0.2.0",
+  "description": "Coordinated session/workspace checkpoints, safe rewind, DAG branching, and reflection for DeepSeek Harness",
+  "main": "dist/index.cjs",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "cordis.patch.yml",
+    "DESIGN.md"
+  ],
+  "scripts": {
+    "build": "tsup && node -e \"const fs = require('fs'); fs.cpSync('src/web/client', 'dist/client', { recursive: true });\"",
+    "check": "pnpm test && pnpm build && pnpm pack --dry-run",
+    "dev": "tsup --watch",
+    "prepack": "pnpm build",
+    "smoke:dsh": "node test/smoke-dsh.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "benchmark": "tsx test/benchmark.ts",
+    "reproduce": "tsx test/reproduce-comparison.ts"
+  },
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "cordis",
+    "time-travel",
+    "checkpoint",
+    "rewind",
+    "dag",
+    "branching",
+    "git-plumbing"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "catalog": {
+      "category": "workflow",
+      "summary": {
+        "en": "Coordinate DSH Session forks with safe workspace checkpoints, DAG branches, and failure reflection.",
+        "zh": "协调 DSH 会话分叉与安全工作区检查点，并保留 DAG 分支和失败反思。"
+      },
+      "capabilities": [
+        "agents",
+        "sessions",
+        "commands",
+        "sessionController",
+        "filesystem",
+        "git"
+      ]
+    },
+    "category": "workflow",
+    "displayName": "Time Machine (时光机)",
+    "description": "Coordinated session/workspace rewind, DAG branching, and workspace snapshot engine",
+    "compatibility": {
+      "dsh": ">=0.1.5-rc.2 <0.2.0",
+      "profiles": [
+        "web"
+      ]
+    }
+  },
+  "author": "GeoSyntax",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/GeoSyntax/dsh-plugin-time-machine.git"
+  },
+  "bugs": {
+    "url": "https://github.com/GeoSyntax/dsh-plugin-time-machine/issues"
+  },
+  "homepage": "https://github.com/GeoSyntax/dsh-plugin-time-machine#readme",
+  "packageManager": "pnpm@10.29.1",
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.2",
+    "picocolors": "^1.1.1"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "tsup": "^8.4.0",
+    "typescript": "^5.8.2",
+    "vitest": "^3.0.8",
+    "tsx": "^4.19.2",
+    "@types/node": "^22.13.9"
+  }
+}

@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DeepSeek Harness - Time Machine Dashboard</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body class="dark-theme">
+  <div class="app-container">
+    <!-- 顶栏 Header -->
+    <header class="navbar">
+      <div class="brand">
+        <div class="brand-icon">⏳</div>
+        <div>
+          <h1>DSH Time Machine</h1>
+          <span class="subtitle">Coordinated Session Fork, Workspace Restore & DAG Branching</span>
+        </div>
+      </div>
+      <div class="nav-metrics">
+        <div class="metric-chip">
+          <span class="label">BRANCH:</span>
+          <span id="current-branch-badge" class="value badge-branch">main</span>
+        </div>
+        <div class="metric-chip">
+          <span class="label">SESSION:</span>
+          <span id="session-badge" class="value">default</span>
+        </div>
+        <button id="btn-refresh" class="btn btn-secondary">🔄 Refresh</button>
+      </div>
+    </header>
+
+    <!-- 主体区域 -->
+    <main class="main-layout">
+      <!-- 左侧：时间轴与 DAG 分支流 -->
+      <section class="timeline-pane">
+        <div class="pane-header">
+          <h2>Exploration Timeline (DAG)</h2>
+          <span id="node-count" class="badge">0 checkpoints</span>
+        </div>
+        <div id="timeline-flow" class="timeline-container">
+          <div class="loading">Loading checkpoints...</div>
+        </div>
+      </section>
+
+      <!-- 右侧：节点详情与操作面板 -->
+      <section class="inspector-pane">
+        <div class="pane-header">
+          <h2>Snapshot Inspector</h2>
+          <div id="inspector-status-badge" class="badge badge-idle">Select a Turn</div>
+        </div>
+
+        <div id="inspector-content" class="inspector-body empty-state">
+          <p>Click on any Turn checkpoint in the timeline to view details, inspect diffs, or initiate a time-travel rewind.</p>
+        </div>
+      </section>
+    </main>
+
+    <!-- 弹窗：Fork 新分支 -->
+    <div id="fork-modal" class="modal-overlay hidden">
+      <div class="modal-card">
+        <h3>🌿 Fork Exploration Branch</h3>
+        <p>Branch out a parallel exploration universe from <strong id="modal-fork-from">turn</strong> without losing current progress.</p>
+        <div class="form-group">
+          <label>New Branch Name:</label>
+          <input type="text" id="fork-branch-input" placeholder="e.g. experiment/jwt-auth" />
+        </div>
+        <div class="form-group">
+          <label>Description (Optional):</label>
+          <input type="text" id="fork-desc-input" placeholder="e.g. Try alternative authentication using JWT" />
+        </div>
+        <div class="modal-actions">
+          <button id="modal-cancel-fork" class="btn btn-secondary">Cancel</button>
+          <button id="modal-confirm-fork" class="btn btn-primary">Fork & Switch Universe</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 弹窗：Diff 差异查看器 -->
+    <div id="diff-modal" class="modal-overlay hidden">
+      <div class="modal-card diff-modal-card">
+        <div class="modal-header">
+          <h3 id="diff-title">File Diff Viewer</h3>
+          <button id="diff-modal-close" class="btn-icon">✕</button>
+        </div>
+        <pre id="diff-content" class="diff-view"></pre>
+      </div>
+    </div>
+  </div>
+
+  <script src="./app.js"></script>
+</body>
+</html>

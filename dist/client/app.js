@@ -83,10 +83,12 @@ function createTimelineCard(node) {
   top.append(title, element('span', `badge ${status.className}`, status.text));
 
   const files = Array.isArray(node.changedFiles) ? node.changedFiles : [];
+  const omitted = Array.isArray(node.omittedPaths) ? node.omittedPaths : [];
   const meta = element('div', 'card-meta');
   meta.append(
     element('span', '', `🕒 ${new Date(node.timestamp).toLocaleTimeString()}`),
     element('span', '', `📁 ${files.length} file(s) changed`),
+    ...(omitted.length ? [element('span', 'badge badge-warning', `⚠ ${omitted.length} omitted`)] : []),
   );
   card.append(top, element('div', 'card-prompt', String(node.prompt || '')), meta);
   return card;
@@ -126,6 +128,9 @@ function metadataGroup(node) {
     ['Git Commit OID', node.gitCommitOid || 'N/A'],
     ['Git Tree OID', node.gitTreeOid || 'N/A'],
     ['Timestamp', new Date(node.timestamp).toLocaleString()],
+    ...(Array.isArray(node.omittedPaths) && node.omittedPaths.length
+      ? [['Omitted Paths', node.omittedPaths.join(', ')]]
+      : []),
   ]) {
     const row = document.createElement('div');
     const strong = element('strong', '', `${label}: `);
@@ -168,6 +173,11 @@ function fileChangesGroup(node) {
     list.append(item);
   }
   const body = document.createElement('div');
+  const omitted = Array.isArray(node.omittedPaths) ? node.omittedPaths : [];
+  if (omitted.length) {
+    const warning = element('div', 'info-box', `⚠ Partial checkpoint: ${omitted.length} path(s) were not captured. Rewind preserves their live content.`);
+    body.append(warning);
+  }
   body.append(list);
   const restore = element('button', 'btn btn-secondary', '↶ Restore selected files');
   restore.addEventListener('click', async event => {

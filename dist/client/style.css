@@ -414,3 +414,4 @@ body.dark-theme {
 .badge-success { background: rgba(16, 185, 129, 0.2); color: #34d399; }
 .badge-failed { background: rgba(239, 68, 68, 0.2); color: #f87171; }
 .badge-idle { background: #1e293b; color: var(--text-muted); }
+.badge-warning { background: rgba(245, 158, 11, 0.2); color: #fbbf24; }

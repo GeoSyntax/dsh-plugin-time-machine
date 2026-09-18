@@ -235,15 +235,20 @@ async function triggerRewind(nodeId, turnIndex) {
   const warning = preview.requiresForce
     ? `\n\n⚠ Workspace drift detected; safe restore will refuse to overwrite it.\nConflicts:\n${conflicts || '(unavailable)'}${conflictMore}`
     : '';
+  let merge = false;
+  if (preview.requiresForce) {
+    merge = confirm('Workspace drift was detected. OK will attempt a Git three-way merge and preserve non-conflicting local edits; Cancel aborts the rewind.');
+    if (!merge) return;
+  }
   const confirmed = confirm(
-    `Rewind to Turn #${turnIndex}?\n\nPlanned file changes:\n${files || '(none)'}${more}${warning}\n\nA rescue point is created first.`,
+    `Rewind to Turn #${turnIndex}${merge ? ' with three-way merge' : ''}?\n\nPlanned file changes:\n${files || '(none)'}${more}${warning}\n\nA rescue point is created first.`,
   );
   if (!confirmed) return;
   try {
     const result = await requestJson(`${API_BASE}/api/rewind`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId: currentSessionId, checkpointId: nodeId, restorePlanId: preview.restorePlanId }),
+      body: JSON.stringify({ sessionId: currentSessionId, checkpointId: nodeId, restorePlanId: preview.restorePlanId, ...(merge ? { merge: true } : {}) }),
     });
     adoptConversation(result);
     await loadDag();

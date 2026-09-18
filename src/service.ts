@@ -335,7 +335,7 @@ export class TimeMachineService {
    * durable declaration and requires an explicit execute request.
    */
   registerExternalEffectAdapter(adapter: ExternalEffectAdapter): () => void {
-    if (!adapter || !adapter.name.trim() || typeof adapter.compensate !== 'function') {
+    if (!adapter || !adapter.name.trim() || /\s/.test(adapter.name) || typeof adapter.compensate !== 'function') {
       throw new Error('External effect adapter requires a non-empty name and compensate function.');
     }
     if (this.externalEffectAdapters.has(adapter.name)) {

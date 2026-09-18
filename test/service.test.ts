@@ -645,6 +645,8 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
       failureSemantics: 'cleanup may be retried', status: 'unresolved',
     });
     const calls: string[] = [];
+    expect(() => service.registerExternalEffectAdapter({ name: 'bad adapter', compensate: async () => ({ status: 'unknown' }) }))
+      .toThrow('non-empty name');
     const unregister = service.registerExternalEffectAdapter({
       name: 'demo-adapter',
       async compensate(context) {
@@ -667,6 +669,8 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
     });
     expect(replay.replayed).toBe(true);
     expect(calls).toHaveLength(1);
+    const restarted = new TimeMachineService({ workDir: tmpDir, storageDir: path.join(tmpDir, '.dsh-tm') });
+    expect((await restarted.getDAGManager(sessionId)).getNode(checkpoint.id)?.externalEffects?.[0]?.status).toBe('compensated');
     await expect(service.compensateExternalEffect(sessionId, checkpoint.id, effectId, {
       execute: true, idempotencyKey: 'different-key',
     })).rejects.toThrow('different compensation idempotency key');

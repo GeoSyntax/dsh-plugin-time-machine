@@ -53,8 +53,10 @@ containers; restore is snapshot replacement rather than a three-way merge; and
 database, network, process, cloud, and other external side effects are outside
 the workspace snapshot. Quota-driven compaction is opt-in via `autoPrune`;
 restore journals are durable and replayed on startup; pruning and history
-compaction do not run repository-wide Git GC. Shadow-store encryption and
-age-based expiration are not implemented yet.
+compaction do not run repository-wide Git GC. Manual age filtering is available
+through `/tm-prune --older-than=...` and `olderThanMs` in the Web API, but
+automatic time-based expiration and shadow-store encryption are not implemented
+yet.
 
 Further reading:
 

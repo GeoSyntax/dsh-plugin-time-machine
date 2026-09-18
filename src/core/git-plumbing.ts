@@ -261,16 +261,17 @@ export class GitPlumbingEngine {
         addArgs.push(`:(exclude)${relative}`, `:(exclude)${relative}/**`);
       }
       await this.runGit(addArgs, env, root);
-      for (const relative of protectedPaths) {
-        const { stdout: protectedEntries } = await this.runGit(['ls-files', '-z', '--', relative], env, root);
-        const entries = protectedEntries.split('\0').filter(Boolean);
-        for (let offset = 0; offset < entries.length; offset += 128) {
-          await this.runGit(
-            ['update-index', '--force-remove', '--', ...entries.slice(offset, offset + 128)],
-            env,
-            root,
-          );
-        }
+      const { stdout: indexedFiles } = await this.runGit(['ls-files', '-z'], env, root);
+      const indexedEntries = indexedFiles.split('\0').filter(Boolean);
+      const protectedEntries = indexedEntries.filter(file => protectedPaths.some(
+        relative => file === relative || file.startsWith(`${relative}/`),
+      ));
+      for (let offset = 0; offset < protectedEntries.length; offset += 128) {
+        await this.runGit(
+          ['update-index', '--force-remove', '--', ...protectedEntries.slice(offset, offset + 128)],
+          env,
+          root,
+        );
       }
       const { stdout } = await this.runGit(['write-tree'], env, root);
       return { treeOid: stdout.trim(), indexFile };

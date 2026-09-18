@@ -1120,7 +1120,9 @@ var TimeMachineService = class {
       const expectedIgnored = current.settledIgnoredPaths ?? current.ignoredPaths ?? [];
       if (actual.treeOid !== expectedTree || !sameStrings(actual.ignoredPaths, expectedIgnored)) {
         const { WorkspaceDriftError: WorkspaceDriftError2 } = await Promise.resolve().then(() => (init_git_plumbing(), git_plumbing_exports));
-        throw new WorkspaceDriftError2(["workspace no longer matches the active checkpoint"]);
+        const details = actual.treeOid === expectedTree ? ["workspace no longer matches the active checkpoint"] : [`managed tree changed (expected ${expectedTree}, observed ${actual.treeOid})`];
+        if (!sameStrings(actual.ignoredPaths, expectedIgnored)) details.push("ignored path set changed");
+        throw new WorkspaceDriftError2(details);
       }
     }
     let rescue;

@@ -186,6 +186,8 @@ interface RestoreResult {
     rescueCheckpointId?: string;
     deletedIgnoredPaths: string[];
     restoreJournalId?: string;
+    /** Paths preserved because verified Agent-write hashes no longer matched. */
+    preservedHandEditPaths?: string[];
 }
 interface DiffResult {
     file: string;

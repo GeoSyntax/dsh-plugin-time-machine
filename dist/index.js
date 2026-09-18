@@ -2245,7 +2245,8 @@ var TimeMachineService = class {
         restoredSessionState: cloneJson2(target.sessionState),
         rescueCheckpointId: restored.rescue?.id,
         deletedIgnoredPaths: restored.deletedIgnoredPaths,
-        restoreJournalId: restored.journalId
+        restoreJournalId: restored.journalId,
+        preservedHandEditPaths: restored.preservedHandEditPaths
       };
     });
   }
@@ -2717,7 +2718,7 @@ var TimeMachineService = class {
         preservePaths: preservedPaths
       });
       await this.updateRestoreJournal(journalId, "workspace-restored");
-      return { rescue, deletedIgnoredPaths: result.deletedIgnoredPaths, journalId };
+      return { rescue, deletedIgnoredPaths: result.deletedIgnoredPaths, journalId, preservedHandEditPaths: preservedPaths };
     } catch (error) {
       if (rescue) {
         try {
@@ -3316,7 +3317,7 @@ function registerCliCommands(ctx, service) {
           await service.completeRestoreJournal(result.restoreJournalId);
           return {
             kind: "success",
-            text: `Restored ${checkpointId}. Continue in forked session ${created.sessionId}. Rescue point: ${result.rescueCheckpointId ?? "none"}.`
+            text: `Restored ${checkpointId}. Continue in forked session ${created.sessionId}. Rescue point: ${result.rescueCheckpointId ?? "none"}.${result.preservedHandEditPaths?.length ? ` Preserved hand-edited paths: ${result.preservedHandEditPaths.join(", ")}.` : ""}`
           };
         } catch (error) {
           await compensate(service, sessionId, result.rescueCheckpointId);

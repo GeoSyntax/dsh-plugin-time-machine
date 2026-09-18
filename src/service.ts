@@ -496,6 +496,7 @@ export class TimeMachineService {
         rescueCheckpointId: restored.rescue?.id,
         deletedIgnoredPaths: restored.deletedIgnoredPaths,
         restoreJournalId: restored.journalId,
+        preservedHandEditPaths: restored.preservedHandEditPaths,
       };
     });
   }
@@ -1018,7 +1019,7 @@ export class TimeMachineService {
     target: CheckpointNode,
     options: RestoreOptions,
     kind: RestoreJournal['kind'] = 'rewind',
-  ): Promise<{ rescue?: CheckpointNode; deletedIgnoredPaths: string[]; journalId?: string }> {
+  ): Promise<{ rescue?: CheckpointNode; deletedIgnoredPaths: string[]; journalId?: string; preservedHandEditPaths: string[] }> {
     const current = dag.getCurrentNode() ?? undefined;
     const mode = options.mode ?? this.config.restoreMode;
     const preserveHandEdits = options.preserveVerifiedHandEdits === true;
@@ -1079,7 +1080,7 @@ export class TimeMachineService {
         preservePaths: preservedPaths,
       });
       await this.updateRestoreJournal(journalId, 'workspace-restored');
-      return { rescue, deletedIgnoredPaths: result.deletedIgnoredPaths, journalId };
+      return { rescue, deletedIgnoredPaths: result.deletedIgnoredPaths, journalId, preservedHandEditPaths: preservedPaths };
     } catch (error) {
       if (rescue) {
         try {

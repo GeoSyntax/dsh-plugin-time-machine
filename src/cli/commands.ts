@@ -124,7 +124,7 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
           await service.completeRestoreJournal(result.restoreJournalId);
           return {
             kind: 'success',
-            text: `Restored ${checkpointId}. Continue in forked session ${created.sessionId}. Rescue point: ${result.rescueCheckpointId ?? 'none'}.`,
+            text: `Restored ${checkpointId}. Continue in forked session ${created.sessionId}. Rescue point: ${result.rescueCheckpointId ?? 'none'}.${result.preservedHandEditPaths?.length ? ` Preserved hand-edited paths: ${result.preservedHandEditPaths.join(', ')}.` : ''}`,
           };
         } catch (error) {
           await compensate(service, sessionId, result.rescueCheckpointId);

@@ -168,4 +168,27 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
     expect(loaded?.sessionState.messages).toHaveLength(1);
     expect(loaded?.failedTools?.[0]?.toolName).toBe('write');
   });
+
+  it('verifies the restored workspace digest for the fallback engine', async () => {
+    const fallbackRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-fallback-service-'));
+    try {
+      const fallback = new TimeMachineService({
+        workDir: fallbackRoot,
+        storageDir: path.join(fallbackRoot, '.dsh-tm'),
+      });
+      const file = path.join(fallbackRoot, 'state.txt');
+      await fs.writeFile(file, 'v1\n', 'utf8');
+      const checkpoint = await fallback.createTurnCheckpoint({
+        sessionId: 'fallback-session',
+        turnIndex: 1,
+        prompt: 'fallback boundary',
+        sessionState: { sessionId: 'fallback-session', messages: [] },
+      });
+      await fs.writeFile(file, 'v2\n', 'utf8');
+      await fallback.rewindToCheckpoint('fallback-session', checkpoint.id, { mode: 'force' });
+      expect(await fs.readFile(file, 'utf8')).toBe('v1\n');
+    } finally {
+      await fs.rm(fallbackRoot, { recursive: true, force: true });
+    }
+  });
 });

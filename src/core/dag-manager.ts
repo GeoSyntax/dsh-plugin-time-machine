@@ -277,6 +277,20 @@ export class DAGStateManager {
     if (tree.currentCheckpointId && !tree.nodes[tree.currentCheckpointId]) {
       throw new Error(`DAG current checkpoint '${tree.currentCheckpointId}' is missing.`);
     }
+    for (const [id, node] of Object.entries(tree.nodes)) {
+      if (!node || node.id !== id || node.sessionState?.sessionId !== tree.sessionId) {
+        throw new Error(`DAG checkpoint '${id}' is malformed or belongs to another session.`);
+      }
+      if (!Array.isArray(node.sessionState.messages) || !Array.isArray(node.changedFiles)) {
+        throw new Error(`DAG checkpoint '${id}' has invalid session or file state.`);
+      }
+      if (node.parentId !== null && !tree.nodes[node.parentId]) {
+        throw new Error(`DAG checkpoint '${id}' references missing parent '${node.parentId}'.`);
+      }
+      if (!tree.branches[node.branch]) {
+        throw new Error(`DAG checkpoint '${id}' references missing branch '${node.branch}'.`);
+      }
+    }
   }
 
   private async commitMutation(mutate: () => void): Promise<void> {

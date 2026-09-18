@@ -788,6 +788,20 @@ var DAGStateManager = class {
     if (tree.currentCheckpointId && !tree.nodes[tree.currentCheckpointId]) {
       throw new Error(`DAG current checkpoint '${tree.currentCheckpointId}' is missing.`);
     }
+    for (const [id, node] of Object.entries(tree.nodes)) {
+      if (!node || node.id !== id || node.sessionState?.sessionId !== tree.sessionId) {
+        throw new Error(`DAG checkpoint '${id}' is malformed or belongs to another session.`);
+      }
+      if (!Array.isArray(node.sessionState.messages) || !Array.isArray(node.changedFiles)) {
+        throw new Error(`DAG checkpoint '${id}' has invalid session or file state.`);
+      }
+      if (node.parentId !== null && !tree.nodes[node.parentId]) {
+        throw new Error(`DAG checkpoint '${id}' references missing parent '${node.parentId}'.`);
+      }
+      if (!tree.branches[node.branch]) {
+        throw new Error(`DAG checkpoint '${id}' references missing branch '${node.branch}'.`);
+      }
+    }
   }
   async commitMutation(mutate) {
     const previous = cloneJson(this.tree);
@@ -1158,9 +1172,17 @@ var TimeMachineService = class {
         ignoredBackupKey: options.ignoredBackupKey
       });
       if (target.ignoredBackupKey) await this.gitEngine.restoreIgnoredBackup(target.ignoredBackupKey);
+      const verified2 = await this.gitEngine.inspectWorkspace();
+      if (verified2.treeOid !== target.gitTreeOid || !sameStrings(verified2.ignoredPaths, target.ignoredPaths ?? [])) {
+        throw new Error(`Workspace integrity check failed after restoring checkpoint '${target.id}'.`);
+      }
       return result;
     }
     await this.fallbackEngine.restoreSnapshot(target.sessionState.sessionId, target.id);
+    const verified = await this.fallbackEngine.inspectWorkspace();
+    if (verified !== target.gitTreeOid) {
+      throw new Error(`Fallback workspace integrity check failed after restoring checkpoint '${target.id}'.`);
+    }
     return { deletedIgnoredPaths: [] };
   }
 };

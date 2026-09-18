@@ -375,9 +375,17 @@ export class TimeMachineService {
         ignoredBackupKey: options.ignoredBackupKey,
       });
       if (target.ignoredBackupKey) await this.gitEngine.restoreIgnoredBackup(target.ignoredBackupKey);
+      const verified = await this.gitEngine.inspectWorkspace();
+      if (verified.treeOid !== target.gitTreeOid || !sameStrings(verified.ignoredPaths, target.ignoredPaths ?? [])) {
+        throw new Error(`Workspace integrity check failed after restoring checkpoint '${target.id}'.`);
+      }
       return result;
     }
     await this.fallbackEngine.restoreSnapshot(target.sessionState.sessionId, target.id);
+    const verified = await this.fallbackEngine.inspectWorkspace();
+    if (verified !== target.gitTreeOid) {
+      throw new Error(`Fallback workspace integrity check failed after restoring checkpoint '${target.id}'.`);
+    }
     return { deletedIgnoredPaths: [] };
   }
 }

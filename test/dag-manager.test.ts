@@ -96,4 +96,18 @@ describe('DAGStateManager', () => {
     expect(abandoned[0].id).toBe('chk_2');
     expect(abandoned[0].errorMessage).toContain('Redis connection timed out');
   });
+
+  it('rejects a persisted DAG whose current checkpoint is missing', async () => {
+    const sessionId = 'invalid-session';
+    const file = path.join(tmpDir, `dag_${Buffer.from(sessionId).toString('base64url')}.json`);
+    await fs.writeFile(file, JSON.stringify({
+      sessionId,
+      currentBranch: 'main',
+      currentCheckpointId: 'missing',
+      nodes: {},
+      branches: { main: { name: 'main', headId: '', forkedFromId: null, createdAt: Date.now() } },
+    }));
+    const manager = new DAGStateManager({ sessionId, storageDir: tmpDir });
+    await expect(manager.init()).rejects.toThrow('current checkpoint');
+  });
 });

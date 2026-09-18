@@ -47,6 +47,12 @@ ignored-path set, or staged index changed.
 100, 1k, and 10k-file fixtures; staged-index isolation and orphan cleanup tests
 remain green.
 
+Latest Windows Node 22 synthetic measurements are recorded in the README. They
+show the expected trade-off: Git plumbing uses substantially less storage, but
+10k-file snapshots still take seconds because the safe path re-scans the
+workspace. This is an evidence-backed performance gap, not a claim of parity
+with path-identity caches in Change Ledger.
+
 ### Native DSH timeline action
 
 Expose preview/merge/force choices as a host message-anchored action when DSH

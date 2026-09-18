@@ -315,7 +315,12 @@ export class TimeMachineService {
 
   /** Explicitly migrate a legacy plaintext ignored-file quarantine to AES-GCM. */
   async migrateIgnoredBackup(key: string): Promise<{ migrated: boolean; bytesRewritten: number; entryCount: number }> {
-    return this.runWorkspaceOperation(() => this.gitEngine.migrateIgnoredBackup(key));
+    return this.runWorkspaceOperation(async () => {
+      if (!(await this.gitEngine.isGitRepo())) {
+        throw new Error('Ignored quarantine migration requires a Git-backed workspace.');
+      }
+      return this.gitEngine.migrateIgnoredBackup(key);
+    });
   }
 
   /**
@@ -681,7 +686,7 @@ export class TimeMachineService {
       selectiveRestore: usable || !git,
       shadowStore: git && this.config.shadowStore,
       quarantineEncryption: Boolean(this.config.quarantineEncryptionKeyEnv && process.env[this.config.quarantineEncryptionKeyEnv]),
-      quarantineMigration: Boolean(this.config.quarantineEncryptionKeyEnv),
+      quarantineMigration: git && Boolean(this.config.quarantineEncryptionKeyEnv),
       externalEffectLedger: true,
       workspaceIsolation: 'shared-lock',
       workspace,

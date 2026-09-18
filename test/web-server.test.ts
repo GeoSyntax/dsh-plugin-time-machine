@@ -3,8 +3,12 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import http from 'node:http';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { TimeMachineService } from '../src/service.js';
 import { TimeMachineWebServer } from '../src/web/server.js';
+
+const execAsync = promisify(execFile);
 
 describe('TimeMachineWebServer', () => {
   let tmpDir: string;
@@ -112,6 +116,33 @@ describe('TimeMachineWebServer', () => {
     expect(forkBody.conversation.sessionId).toBe(`forked-${first.id}`);
     expect(await fs.readFile(file, 'utf8')).toBe('v1\n');
     expect(second.id).not.toBe(first.id);
+  });
+
+  it('supports explicit merge rewind through the Web API', async () => {
+    await execAsync('git', ['init'], { cwd: tmpDir });
+    await execAsync('git', ['config', 'user.name', 'TestBot'], { cwd: tmpDir });
+    await execAsync('git', ['config', 'user.email', 'bot@test.com'], { cwd: tmpDir });
+    const left = path.join(tmpDir, 'merge-left.txt');
+    const right = path.join(tmpDir, 'merge-right.txt');
+    await fs.writeFile(left, 'base-left\n', 'utf8');
+    await fs.writeFile(right, 'base-right\n', 'utf8');
+    const base = await service.createTurnCheckpoint({ sessionId: 'merge-web', turnIndex: 1, prompt: 'base', sessionState: { sessionId: 'merge-web', messages: [] } });
+    await fs.writeFile(left, 'target-left\n', 'utf8');
+    await service.createTurnCheckpoint({ sessionId: 'merge-web', turnIndex: 2, prompt: 'target', sessionState: { sessionId: 'merge-web', messages: [] } });
+    await fs.writeFile(right, 'live-right\n', 'utf8');
+
+    await server.stop();
+    server = new TimeMachineWebServer(service, testPort, '127.0.0.1', {
+      restartConversation: async () => ({ sessionId: 'merge-web-fork' }),
+    });
+    await server.start();
+    const response = await fetch(`http://localhost:${testPort}/api/rewind`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: 'merge-web', checkpointId: base.id, merge: true }),
+    });
+    expect(response.status).toBe(200);
+    expect(await fs.readFile(left, 'utf8')).toBe('base-left\n');
+    expect(await fs.readFile(right, 'utf8')).toBe('live-right\n');
   });
 
   it('exposes a read-only rewind preview endpoint', async () => {

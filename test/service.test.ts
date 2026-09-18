@@ -143,6 +143,21 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
     expect(await fs.readdir(path.join(tmpDir, '.dsh-tm', 'ignored-quarantine')).catch(() => [])).toHaveLength(0);
   });
 
+  it('merge mode preserves non-conflicting live edits during rewind', async () => {
+    const sessionId = 'merge-rewind-session';
+    const left = path.join(tmpDir, 'merge-left.txt');
+    const right = path.join(tmpDir, 'merge-right.txt');
+    await fs.writeFile(left, 'base-left\n', 'utf8');
+    await fs.writeFile(right, 'base-right\n', 'utf8');
+    const base = await service.createTurnCheckpoint({ sessionId, turnIndex: 1, prompt: 'base', sessionState: { sessionId, messages: [] } });
+    await fs.writeFile(left, 'target-left\n', 'utf8');
+    await service.createTurnCheckpoint({ sessionId, turnIndex: 2, prompt: 'target', sessionState: { sessionId, messages: [] } });
+    await fs.writeFile(right, 'live-right\n', 'utf8');
+    await service.rewindToCheckpoint(sessionId, base.id, { mode: 'merge' });
+    expect(await fs.readFile(left, 'utf8')).toBe('base-left\n');
+    expect(await fs.readFile(right, 'utf8')).toBe('live-right\n');
+  });
+
   it('previews rewind impact without mutating files or DAG state', async () => {
     const sessionId = 'preview-session';
     const file = path.join(tmpDir, 'preview.txt');

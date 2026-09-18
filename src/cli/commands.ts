@@ -66,17 +66,17 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
     scope.commands.register({
       name: 'tm-rewind',
       description: 'Restore workspace and fork conversation at a checkpoint',
-      input: { hint: '<checkpoint> [--force] [--delete-new-ignored] [--plan=<id>]' },
+      input: { hint: '<checkpoint> [--merge|--force] [--delete-new-ignored] [--plan=<id>]' },
       handler: async ({ agent, rawInput }: CommandInvocationLike): Promise<CommandResult> => {
         const args = rawInput.trim().split(/\s+/).filter(Boolean);
         const checkpointId = args.find(arg => !arg.startsWith('--'));
-        if (!checkpointId) return { kind: 'error', text: 'Usage: /tm-rewind <checkpoint> [--force] [--delete-new-ignored]' };
+        if (!checkpointId) return { kind: 'error', text: 'Usage: /tm-rewind <checkpoint> [--merge|--force] [--delete-new-ignored]' };
         const controller = scope.get('sessionController') as SessionControllerLike | undefined;
         if (!controller) return { kind: 'error', text: 'This DSH profile has no sessionController; dual-track rewind is unavailable.' };
 
         const sessionId = agent.session.id;
         const result = await service.rewindToCheckpoint(sessionId, checkpointId, {
-          mode: args.includes('--force') ? 'force' : undefined,
+          mode: args.includes('--force') ? 'force' : args.includes('--merge') ? 'merge' : undefined,
           deleteNewIgnoredPaths: args.includes('--delete-new-ignored'),
           restorePlanId: optionValue(args, '--plan'),
         });
@@ -131,11 +131,11 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
     scope.commands.register({
       name: 'tm-fork',
       description: 'Create a named exploration branch from a checkpoint',
-      input: { hint: '<checkpoint> <branch> [--force]' },
+      input: { hint: '<checkpoint> <branch> [--merge|--force]' },
       handler: async ({ agent, rawInput }: CommandInvocationLike): Promise<CommandResult> => {
         const args = rawInput.trim().split(/\s+/).filter(Boolean);
         const positionals = args.filter(arg => !arg.startsWith('--'));
-        if (positionals.length < 2) return { kind: 'error', text: 'Usage: /tm-fork <checkpoint> <branch> [--force]' };
+        if (positionals.length < 2) return { kind: 'error', text: 'Usage: /tm-fork <checkpoint> <branch> [--merge|--force]' };
         const controller = scope.get('sessionController') as SessionControllerLike | undefined;
         if (!controller) return { kind: 'error', text: 'This DSH profile has no sessionController; dual-track fork is unavailable.' };
 
@@ -144,7 +144,7 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
           sessionId,
           fromCheckpointId: positionals[0],
           newBranchName: positionals[1],
-          restore: { mode: args.includes('--force') ? 'force' : undefined },
+          restore: { mode: args.includes('--force') ? 'force' : args.includes('--merge') ? 'merge' : undefined },
         });
         try {
           const created = await restartConversation(controller, sessionId, result.forkedNode, service.workDir);

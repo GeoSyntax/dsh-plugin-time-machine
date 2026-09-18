@@ -48,6 +48,7 @@ __export(git_plumbing_exports, {
   SnapshotSizeError: () => SnapshotSizeError,
   UnsupportedWorkspaceStateError: () => UnsupportedWorkspaceStateError,
   WorkspaceDriftError: () => WorkspaceDriftError,
+  WorkspaceMergeConflictError: () => WorkspaceMergeConflictError,
   WorkspaceRestoreConflictError: () => WorkspaceRestoreConflictError
 });
 async function sumFileSizes(files) {
@@ -78,7 +79,7 @@ function symmetricDifference(left, right) {
 function longestFirst(left, right) {
   return right.split("/").length - left.split("/").length || right.localeCompare(left);
 }
-var import_node_child_process, import_node_crypto, import_node_util, import_node_path, import_promises, import_node_zlib, execFileAsync, WorkspaceDriftError, UnsupportedWorkspaceStateError, WorkspaceRestoreConflictError, QuarantineQuotaError, SnapshotSizeError, GitPlumbingEngine;
+var import_node_child_process, import_node_crypto, import_node_util, import_node_path, import_promises, import_node_zlib, execFileAsync, WorkspaceDriftError, UnsupportedWorkspaceStateError, WorkspaceRestoreConflictError, WorkspaceMergeConflictError, QuarantineQuotaError, SnapshotSizeError, GitPlumbingEngine;
 var init_git_plumbing = __esm({
   "src/core/git-plumbing.ts"() {
     "use strict";
@@ -121,6 +122,15 @@ var init_git_plumbing = __esm({
       }
       paths;
       code = "RESTORE_CONFLICT";
+    };
+    WorkspaceMergeConflictError = class extends Error {
+      constructor(paths) {
+        super(`Merge restore conflicts require review: ${paths.slice(0, 8).join(", ")}`);
+        this.paths = paths;
+        this.name = "WorkspaceMergeConflictError";
+      }
+      paths;
+      code = "RESTORE_MERGE_CONFLICT";
     };
     QuarantineQuotaError = class extends Error {
       constructor(limitBytes, requiredBytes) {
@@ -309,10 +319,11 @@ Reason: ${errorMsg}`);
         }
         const { stdout: treeStdout } = await this.runGit(["rev-parse", `${commitOrTreeOid}^{tree}`]);
         const targetTree = treeStdout.trim();
+        const restoreTree = mode === "merge" ? await this.mergeWorkspaceTree(options.expectedCurrentTreeOid, targetTree, current.treeOid) : targetTree;
         const targetIgnored = new Set(options.targetIgnoredPaths ?? []);
         const ignoredToDelete = current.ignoredPaths.filter((item) => !targetIgnored.has(item));
-        const targetFiles = new Set(await this.listTreeFileNames(targetTree));
-        const targetEntries = this.shadowObjectDir ? await this.listTreeEntries(targetTree) : [];
+        const targetFiles = new Set(await this.listTreeFileNames(restoreTree));
+        const targetEntries = this.shadowObjectDir ? await this.listTreeEntries(restoreTree) : [];
         const collisions = current.ignoredPaths.filter((item) => targetFiles.has(item));
         if (collisions.length && !options.deleteNewIgnoredPaths) {
           throw new WorkspaceRestoreConflictError(collisions);
@@ -330,7 +341,7 @@ Reason: ${errorMsg}`);
         const root = await this.getRepoRoot();
         const { indexFile } = await this.writeWorkspaceTree();
         try {
-          const restoreArgs = this.shadowObjectDir ? ["read-tree", "--reset", targetTree] : ["read-tree", "--reset", "-u", targetTree];
+          const restoreArgs = this.shadowObjectDir ? ["read-tree", "--reset", restoreTree] : ["read-tree", "--reset", "-u", restoreTree];
           await this.runGit(restoreArgs, { GIT_INDEX_FILE: indexFile }, root);
           if (this.shadowObjectDir) {
             const currentFiles = await this.listTreeFileNames(current.treeOid);
@@ -353,7 +364,21 @@ Reason: ${errorMsg}`);
         } finally {
           await import_promises.default.rm(indexFile, { force: true }).catch(() => void 0);
         }
-        return { deletedIgnoredPaths };
+        return { deletedIgnoredPaths, restoredTreeOid: restoreTree };
+      }
+      async mergeWorkspaceTree(baseTree, targetTree, currentTree) {
+        if (!baseTree) throw new Error("Merge restore requires the active checkpoint tree.");
+        const indexFile = import_node_path.default.join(await this.getGitDir(), `dsh-tm-merge-index-${(0, import_node_crypto.randomUUID)()}`);
+        try {
+          await this.runGit(["read-tree", "-m", baseTree, targetTree, currentTree], { GIT_INDEX_FILE: indexFile });
+          const { stdout: conflicts } = await this.runGit(["ls-files", "-u", "-z"], { GIT_INDEX_FILE: indexFile });
+          const paths = [...new Set(conflicts.split("\0").filter(Boolean).map((entry) => normalizeGitPath(entry.slice(entry.indexOf("	") + 1))))];
+          if (paths.length) throw new WorkspaceMergeConflictError(paths);
+          const { stdout } = await this.runGit(["write-tree"], { GIT_INDEX_FILE: indexFile });
+          return stdout.trim();
+        } finally {
+          await import_promises.default.rm(indexFile, { force: true }).catch(() => void 0);
+        }
       }
       /** Restore only selected tracked workspace paths using a disposable index. */
       async restoreSelectedPaths(commitOrTreeOid, paths, options = {}) {
@@ -789,6 +814,7 @@ __export(index_exports, {
   TimeMachineService: () => TimeMachineService,
   UnsupportedWorkspaceStateError: () => UnsupportedWorkspaceStateError,
   WorkspaceDriftError: () => WorkspaceDriftError,
+  WorkspaceMergeConflictError: () => WorkspaceMergeConflictError,
   WorkspaceRestoreConflictError: () => WorkspaceRestoreConflictError,
   apply: () => apply,
   collectFailedTools: () => collectFailedTools,
@@ -1749,6 +1775,8 @@ var TimeMachineService = class {
       const target = dag.getNode(checkpointId);
       if (!target) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
       await this.consumeRestorePlan(sessionId, checkpointId, options.restorePlanId, dag);
+      const selectiveMode = options.mode ?? this.config.restoreMode;
+      if (selectiveMode === "merge") throw new Error("Merge mode is only available for full Git-backed rewind/fork operations.");
       if (await this.gitEngine.isGitRepo()) await this.gitEngine.assertSupportedWorkspace();
       const current = dag.getCurrentNode();
       let rescue;
@@ -1774,12 +1802,12 @@ var TimeMachineService = class {
         const isGit = await this.gitEngine.isGitRepo();
         if (isGit && !target.gitCommitOid.startsWith("fallback_")) {
           await this.gitEngine.restoreSelectedPaths(target.gitCommitOid, paths, {
-            mode: options.mode ?? this.config.restoreMode,
+            mode: selectiveMode,
             expectedCurrentTreeOid: rescue?.gitTreeOid ?? current?.gitTreeOid
           });
         } else {
           await this.fallbackEngine.restoreSelectedPaths(target.sessionState.sessionId, target.id, paths, {
-            mode: options.mode ?? this.config.restoreMode,
+            mode: selectiveMode,
             expectedCurrentTreeOid: rescue?.gitTreeOid ?? current?.gitTreeOid
           });
         }
@@ -2151,7 +2179,7 @@ var TimeMachineService = class {
         kind
       });
     }
-    const expected = rescue ?? current;
+    const expected = mode === "merge" ? current : rescue ?? current;
     if (rescue && options.deleteNewIgnoredPaths) {
       rescue = await dag.updateNode(rescue.id, { ignoredBackupKey: rescue.id });
     }
@@ -2189,10 +2217,14 @@ var TimeMachineService = class {
       });
       if (target.ignoredBackupKey) await this.gitEngine.restoreIgnoredBackup(target.ignoredBackupKey);
       const verified2 = await this.gitEngine.inspectWorkspace();
-      if (verified2.treeOid !== target.gitTreeOid || !sameStrings(verified2.ignoredPaths, target.ignoredPaths ?? [])) {
+      const expectedTree = options.mode === "merge" ? result.restoredTreeOid : target.gitTreeOid;
+      if (verified2.treeOid !== expectedTree || !sameStrings(verified2.ignoredPaths, target.ignoredPaths ?? [])) {
         throw new Error(`Workspace integrity check failed after restoring checkpoint '${target.id}'.`);
       }
       return result;
+    }
+    if (options.mode === "merge") {
+      throw new Error("Merge restore is only supported for Git-backed checkpoints.");
     }
     await this.fallbackEngine.restoreSnapshot(target.sessionState.sessionId, target.id);
     const verified = await this.fallbackEngine.inspectWorkspace();
@@ -2332,7 +2364,7 @@ var TimeMachineWebServer = class {
           }
           await this.handleStatic(res, pathname);
         } catch (err) {
-          const status = err?.code === "BAD_REQUEST" ? 400 : err?.code === "RESTORE_PLAN_INVALID" ? 409 : err?.code === "UNSUPPORTED_WORKSPACE_STATE" ? 422 : err?.code === "SNAPSHOT_SIZE_LIMIT" ? 413 : 500;
+          const status = err?.code === "BAD_REQUEST" ? 400 : err?.code === "RESTORE_PLAN_INVALID" || err?.code === "RESTORE_MERGE_CONFLICT" ? 409 : err?.code === "UNSUPPORTED_WORKSPACE_STATE" ? 422 : err?.code === "SNAPSHOT_SIZE_LIMIT" ? 413 : 500;
           res.writeHead(status, { "Content-Type": "application/json" });
           res.end(JSON.stringify({
             error: err.message || "Internal Server Error",
@@ -2408,7 +2440,7 @@ var TimeMachineWebServer = class {
       if (!this.hooks.restartConversation) throw new Error("Conversation restart capability is unavailable; refusing workspace-only rewind.");
       const sourceSessionId = sessionId || "default";
       const result = await this.service.rewindToCheckpoint(sourceSessionId, checkpointId, {
-        mode: body.force === true ? "force" : void 0,
+        mode: body.force === true ? "force" : body.merge === true ? "merge" : void 0,
         deleteNewIgnoredPaths: body.deleteNewIgnoredPaths === true,
         restorePlanId: typeof body.restorePlanId === "string" ? body.restorePlanId : void 0
       });
@@ -2431,7 +2463,7 @@ var TimeMachineWebServer = class {
       const paths = Array.isArray(body.paths) ? body.paths.filter((item) => typeof item === "string") : [];
       if (!body.checkpointId || paths.length === 0) throw Object.assign(new Error("checkpointId and non-empty paths are required"), { code: "BAD_REQUEST" });
       const result = await this.service.restoreSelectedPaths(sessionId, body.checkpointId, paths, {
-        mode: body.force === true ? "force" : void 0,
+        mode: body.force === true ? "force" : body.merge === true ? "merge" : void 0,
         restorePlanId: typeof body.restorePlanId === "string" ? body.restorePlanId : void 0
       });
       res.writeHead(200, { "Content-Type": "application/json" });
@@ -2470,7 +2502,7 @@ var TimeMachineWebServer = class {
         fromCheckpointId: checkpointId,
         newBranchName: branchName,
         description,
-        restore: { mode: body.force === true ? "force" : void 0 }
+        restore: { mode: body.force === true ? "force" : body.merge === true ? "merge" : void 0 }
       });
       let conversation;
       try {
@@ -2638,16 +2670,16 @@ function registerCliCommands(ctx, service) {
     scope.commands.register({
       name: "tm-rewind",
       description: "Restore workspace and fork conversation at a checkpoint",
-      input: { hint: "<checkpoint> [--force] [--delete-new-ignored] [--plan=<id>]" },
+      input: { hint: "<checkpoint> [--merge|--force] [--delete-new-ignored] [--plan=<id>]" },
       handler: async ({ agent, rawInput }) => {
         const args = rawInput.trim().split(/\s+/).filter(Boolean);
         const checkpointId = args.find((arg) => !arg.startsWith("--"));
-        if (!checkpointId) return { kind: "error", text: "Usage: /tm-rewind <checkpoint> [--force] [--delete-new-ignored]" };
+        if (!checkpointId) return { kind: "error", text: "Usage: /tm-rewind <checkpoint> [--merge|--force] [--delete-new-ignored]" };
         const controller = scope.get("sessionController");
         if (!controller) return { kind: "error", text: "This DSH profile has no sessionController; dual-track rewind is unavailable." };
         const sessionId = agent.session.id;
         const result = await service.rewindToCheckpoint(sessionId, checkpointId, {
-          mode: args.includes("--force") ? "force" : void 0,
+          mode: args.includes("--force") ? "force" : args.includes("--merge") ? "merge" : void 0,
           deleteNewIgnoredPaths: args.includes("--delete-new-ignored"),
           restorePlanId: optionValue(args, "--plan")
         });
@@ -2699,11 +2731,11 @@ function registerCliCommands(ctx, service) {
     scope.commands.register({
       name: "tm-fork",
       description: "Create a named exploration branch from a checkpoint",
-      input: { hint: "<checkpoint> <branch> [--force]" },
+      input: { hint: "<checkpoint> <branch> [--merge|--force]" },
       handler: async ({ agent, rawInput }) => {
         const args = rawInput.trim().split(/\s+/).filter(Boolean);
         const positionals = args.filter((arg) => !arg.startsWith("--"));
-        if (positionals.length < 2) return { kind: "error", text: "Usage: /tm-fork <checkpoint> <branch> [--force]" };
+        if (positionals.length < 2) return { kind: "error", text: "Usage: /tm-fork <checkpoint> <branch> [--merge|--force]" };
         const controller = scope.get("sessionController");
         if (!controller) return { kind: "error", text: "This DSH profile has no sessionController; dual-track fork is unavailable." };
         const sessionId = agent.session.id;
@@ -2711,7 +2743,7 @@ function registerCliCommands(ctx, service) {
           sessionId,
           fromCheckpointId: positionals[0],
           newBranchName: positionals[1],
-          restore: { mode: args.includes("--force") ? "force" : void 0 }
+          restore: { mode: args.includes("--force") ? "force" : args.includes("--merge") ? "merge" : void 0 }
         });
         try {
           const created = await restartConversation(controller, sessionId, result.forkedNode, service.workDir);
@@ -2772,7 +2804,7 @@ var Config = import_schemastery.default.object({
   storageDir: import_schemastery.default.string(),
   webPort: import_schemastery.default.number().default(3088),
   enableWebUI: import_schemastery.default.boolean().default(true),
-  restoreMode: import_schemastery.default.union(["safe", "force"]).default("safe"),
+  restoreMode: import_schemastery.default.union(["safe", "merge", "force"]).default("safe"),
   preservePaths: import_schemastery.default.array(import_schemastery.default.string()).default(["node_modules"]),
   webHost: import_schemastery.default.string().default("127.0.0.1"),
   maxSnapshots: import_schemastery.default.number().default(0),
@@ -2947,6 +2979,7 @@ var index_default = TimeMachinePlugin;
   TimeMachineService,
   UnsupportedWorkspaceStateError,
   WorkspaceDriftError,
+  WorkspaceMergeConflictError,
   WorkspaceRestoreConflictError,
   apply,
   collectFailedTools,

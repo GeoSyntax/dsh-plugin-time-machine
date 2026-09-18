@@ -10,6 +10,7 @@ supported only when it is covered by the current implementation and tests.
 | Remove ordinary orphan files | Yes | Yes | Yes | Depends on tracked set |
 | Ignored-file safety | Preserve by default; quarantine on explicit delete | Configurable | Conflict-aware | Usually left untouched |
 | Preview before restore | `tm-preview`, Web API, Web confirmation, conflict paths, single-use session-bound plan | Yes | Yes; expiring plan and stale-plan fences | Limited |
+| Non-conflicting drift merge | Explicit `/tm-rewind --merge` for Git workspaces; path-level conflicts fail closed | Product-specific | Three-way / selective conflict handling | Varies |
 | Selective file restore | `tm-restore-files`, Web API | Yes | Yes | Varies |
 | Conversation/session alignment | DSH `sessionController` fork | Product-specific | Product-specific | Usually undo/redo or same window |
 | DAG branches | Yes, persistent | No user-facing DAG | Ledger history | Usually linear |
@@ -46,11 +47,15 @@ The current Change Ledger implementation still goes further with
 unsupported-file partial capture/reporting; path-identity caches for large
 workspaces; and a host-native,
 message-anchored rewind action. We should adopt those ideas where they fit
-without copying their storage format.
+without copying their storage format. It also offers an explicit Git-only
+three-way merge restore for non-conflicting workspace drift; safe mode remains
+the default and still fails closed on any drift.
 
 Time Machine's remaining boundaries are also important: the cross-process lock
 prevents concurrent mutation but does not create separate worktrees or
-containers; restore is snapshot replacement rather than a three-way merge; and
+containers; the default restore is snapshot replacement (an explicit Git-only
+`--merge` mode handles non-conflicting drift, but is not a general patch
+editor); and
 database, network, process, cloud, and other external side effects are outside
 the workspace snapshot. Quota-driven compaction is opt-in via `autoPrune`;
 restore journals are durable and replayed on startup; pruning and history

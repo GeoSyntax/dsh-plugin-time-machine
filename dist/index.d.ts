@@ -77,7 +77,7 @@ interface TimeMachineConfig {
     webPort?: number;
     enableWebUI?: boolean;
     /** Refuse to overwrite changes made after the latest checkpoint unless forced. */
-    restoreMode?: 'safe' | 'force';
+    restoreMode?: 'safe' | 'merge' | 'force';
     /** Ignored paths that are never scanned or removed by restore. */
     preservePaths?: string[];
     /** Address for the standalone dashboard. Defaults to loopback only. */
@@ -104,7 +104,7 @@ interface TimeMachineConfig {
     maxSnapshotBytes?: number;
 }
 interface RestoreOptions {
-    mode?: 'safe' | 'force';
+    mode?: 'safe' | 'merge' | 'force';
     /** Delete ignored paths created after the target checkpoint. Off by default. */
     deleteNewIgnoredPaths?: boolean;
     /** Internal compensation restores do not create another rescue point. */
@@ -410,7 +410,7 @@ interface GitRestoreOptions {
     expectedCurrentTreeOid?: string;
     expectedCurrentIgnoredPaths?: string[];
     targetIgnoredPaths?: string[];
-    mode?: 'safe' | 'force';
+    mode?: 'safe' | 'merge' | 'force';
     deleteNewIgnoredPaths?: boolean;
     ignoredBackupKey?: string;
 }
@@ -431,6 +431,11 @@ declare class UnsupportedWorkspaceStateError extends Error {
 declare class WorkspaceRestoreConflictError extends Error {
     readonly paths: string[];
     readonly code = "RESTORE_CONFLICT";
+    constructor(paths: string[]);
+}
+declare class WorkspaceMergeConflictError extends Error {
+    readonly paths: string[];
+    readonly code = "RESTORE_MERGE_CONFLICT";
     constructor(paths: string[]);
 }
 declare class QuarantineQuotaError extends Error {
@@ -499,7 +504,9 @@ declare class GitPlumbingEngine {
     /** Restore with an isolated index so the user's staged changes are never rewritten. */
     restoreSnapshot(commitOrTreeOid: string, options?: GitRestoreOptions): Promise<{
         deletedIgnoredPaths: string[];
+        restoredTreeOid: string;
     }>;
+    private mergeWorkspaceTree;
     /** Restore only selected tracked workspace paths using a disposable index. */
     restoreSelectedPaths(commitOrTreeOid: string, paths: string[], options?: GitSelectiveRestoreOptions): Promise<string[]>;
     /** Restore quarantined ignored content without ever writing it into Git objects. */
@@ -645,4 +652,4 @@ declare class TimeMachinePlugin {
     constructor(ctx: Context, config?: Config);
 }
 
-export { type CheckpointNode, Config, type DAGManagerOptions, DAGStateManager, type DAGTree, type DiffResult, type FallbackOptions, FallbackSnapshotEngine, type FileChange, GitPlumbingEngine, type GitPlumbingOptions, type GitRestoreOptions, type GitSelectiveRestoreOptions, type GitSnapshot, type PruneResult, QuarantineQuotaError, ReflectionAdvisor, type ReflectionSummary, type RestoreOptions, RestorePlanError, type RestorePreview, type RestoreResult, type SelectiveRestoreResult, type SessionMessage, type SessionState, type ShadowGcResult, type ShadowRepackResult, SnapshotSizeError, StorageQuotaError, type StorageStatus, type TimeMachineConfig, TimeMachinePlugin, TimeMachineService, type TimeMachineServiceOptions, UnsupportedWorkspaceStateError, type WorkspaceCapabilities, WorkspaceDriftError, WorkspaceRestoreConflictError, apply, collectFailedTools, TimeMachinePlugin as default, name };
+export { type CheckpointNode, Config, type DAGManagerOptions, DAGStateManager, type DAGTree, type DiffResult, type FallbackOptions, FallbackSnapshotEngine, type FileChange, GitPlumbingEngine, type GitPlumbingOptions, type GitRestoreOptions, type GitSelectiveRestoreOptions, type GitSnapshot, type PruneResult, QuarantineQuotaError, ReflectionAdvisor, type ReflectionSummary, type RestoreOptions, RestorePlanError, type RestorePreview, type RestoreResult, type SelectiveRestoreResult, type SessionMessage, type SessionState, type ShadowGcResult, type ShadowRepackResult, SnapshotSizeError, StorageQuotaError, type StorageStatus, type TimeMachineConfig, TimeMachinePlugin, TimeMachineService, type TimeMachineServiceOptions, UnsupportedWorkspaceStateError, type WorkspaceCapabilities, WorkspaceDriftError, WorkspaceMergeConflictError, WorkspaceRestoreConflictError, apply, collectFailedTools, TimeMachinePlugin as default, name };

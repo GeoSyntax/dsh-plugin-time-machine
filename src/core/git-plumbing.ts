@@ -54,7 +54,7 @@ export interface GitRestoreOptions {
   expectedCurrentTreeOid?: string;
   expectedCurrentIgnoredPaths?: string[];
   targetIgnoredPaths?: string[];
-  mode?: 'safe' | 'force';
+  mode?: 'safe' | 'merge' | 'force';
   deleteNewIgnoredPaths?: boolean;
   ignoredBackupKey?: string;
 }
@@ -93,6 +93,15 @@ export class WorkspaceRestoreConflictError extends Error {
   constructor(public readonly paths: string[]) {
     super(`Ignored files block restore: ${paths.slice(0, 8).join(', ')}`);
     this.name = 'WorkspaceRestoreConflictError';
+  }
+}
+
+export class WorkspaceMergeConflictError extends Error {
+  readonly code = 'RESTORE_MERGE_CONFLICT';
+
+  constructor(public readonly paths: string[]) {
+    super(`Merge restore conflicts require review: ${paths.slice(0, 8).join(', ')}`);
+    this.name = 'WorkspaceMergeConflictError';
   }
 }
 
@@ -301,7 +310,7 @@ export class GitPlumbingEngine {
   }
 
   /** Restore with an isolated index so the user's staged changes are never rewritten. */
-  async restoreSnapshot(commitOrTreeOid: string, options: GitRestoreOptions = {}): Promise<{ deletedIgnoredPaths: string[] }> {
+  async restoreSnapshot(commitOrTreeOid: string, options: GitRestoreOptions = {}): Promise<{ deletedIgnoredPaths: string[]; restoredTreeOid: string }> {
     if (!(await this.isGitRepo())) {
       throw new Error(`Working directory '${this.workDir}' is not a valid Git repository.`);
     }
@@ -321,10 +330,13 @@ export class GitPlumbingEngine {
 
     const { stdout: treeStdout } = await this.runGit(['rev-parse', `${commitOrTreeOid}^{tree}`]);
     const targetTree = treeStdout.trim();
+    const restoreTree = mode === 'merge'
+      ? await this.mergeWorkspaceTree(options.expectedCurrentTreeOid, targetTree, current.treeOid)
+      : targetTree;
     const targetIgnored = new Set(options.targetIgnoredPaths ?? []);
     const ignoredToDelete = current.ignoredPaths.filter(item => !targetIgnored.has(item));
-    const targetFiles = new Set(await this.listTreeFileNames(targetTree));
-    const targetEntries = this.shadowObjectDir ? await this.listTreeEntries(targetTree) : [];
+    const targetFiles = new Set(await this.listTreeFileNames(restoreTree));
+    const targetEntries = this.shadowObjectDir ? await this.listTreeEntries(restoreTree) : [];
     const collisions = current.ignoredPaths.filter(item => targetFiles.has(item));
     if (collisions.length && !options.deleteNewIgnoredPaths) {
       throw new WorkspaceRestoreConflictError(collisions);
@@ -345,8 +357,8 @@ export class GitPlumbingEngine {
     const { indexFile } = await this.writeWorkspaceTree();
     try {
       const restoreArgs = this.shadowObjectDir
-        ? ['read-tree', '--reset', targetTree]
-        : ['read-tree', '--reset', '-u', targetTree];
+        ? ['read-tree', '--reset', restoreTree]
+        : ['read-tree', '--reset', '-u', restoreTree];
       await this.runGit(restoreArgs, { GIT_INDEX_FILE: indexFile }, root);
       if (this.shadowObjectDir) {
         const currentFiles = await this.listTreeFileNames(current.treeOid);
@@ -369,7 +381,22 @@ export class GitPlumbingEngine {
     } finally {
       await fs.rm(indexFile, { force: true }).catch(() => undefined);
     }
-    return { deletedIgnoredPaths };
+    return { deletedIgnoredPaths, restoredTreeOid: restoreTree };
+  }
+
+  private async mergeWorkspaceTree(baseTree: string | undefined, targetTree: string, currentTree: string): Promise<string> {
+    if (!baseTree) throw new Error('Merge restore requires the active checkpoint tree.');
+    const indexFile = path.join(await this.getGitDir(), `dsh-tm-merge-index-${randomUUID()}`);
+    try {
+      await this.runGit(['read-tree', '-m', baseTree, targetTree, currentTree], { GIT_INDEX_FILE: indexFile });
+      const { stdout: conflicts } = await this.runGit(['ls-files', '-u', '-z'], { GIT_INDEX_FILE: indexFile });
+      const paths = [...new Set(conflicts.split('\0').filter(Boolean).map(entry => normalizeGitPath(entry.slice(entry.indexOf('\t') + 1))))];
+      if (paths.length) throw new WorkspaceMergeConflictError(paths);
+      const { stdout } = await this.runGit(['write-tree'], { GIT_INDEX_FILE: indexFile });
+      return stdout.trim();
+    } finally {
+      await fs.rm(indexFile, { force: true }).catch(() => undefined);
+    }
   }
 
   /** Restore only selected tracked workspace paths using a disposable index. */

@@ -75,7 +75,7 @@ export interface TimeMachineConfig {
   webPort?: number;
   enableWebUI?: boolean;
   /** Refuse to overwrite changes made after the latest checkpoint unless forced. */
-  restoreMode?: 'safe' | 'force';
+  restoreMode?: 'safe' | 'merge' | 'force';
   /** Ignored paths that are never scanned or removed by restore. */
   preservePaths?: string[];
   /** Address for the standalone dashboard. Defaults to loopback only. */
@@ -103,7 +103,7 @@ export interface TimeMachineConfig {
 }
 
 export interface RestoreOptions {
-  mode?: 'safe' | 'force';
+  mode?: 'safe' | 'merge' | 'force';
   /** Delete ignored paths created after the target checkpoint. Off by default. */
   deleteNewIgnoredPaths?: boolean;
   /** Internal compensation restores do not create another rescue point. */

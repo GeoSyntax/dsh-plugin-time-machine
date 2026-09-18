@@ -18,7 +18,7 @@ export const Config: Schema<Config> = Schema.object({
   storageDir: Schema.string(),
   webPort: Schema.number().default(3088),
   enableWebUI: Schema.boolean().default(true),
-  restoreMode: Schema.union(['safe', 'force']).default('safe'),
+  restoreMode: Schema.union(['safe', 'merge', 'force']).default('safe'),
   preservePaths: Schema.array(Schema.string()).default(['node_modules']),
   webHost: Schema.string().default('127.0.0.1'),
   maxSnapshots: Schema.number().default(0),

@@ -125,6 +125,39 @@ describe('GitPlumbingEngine', () => {
     expect(file2Exists).toBe(false);
   });
 
+  it('merge-restores non-conflicting live edits while applying the target snapshot', async () => {
+    const left = path.join(tmpDir, 'left.txt');
+    const right = path.join(tmpDir, 'right.txt');
+    await fs.writeFile(left, 'base-left\n', 'utf8');
+    await fs.writeFile(right, 'base-right\n', 'utf8');
+    const base = await engine.createSnapshot({ sessionId: 'merge', checkpointId: 'base' });
+    await fs.writeFile(left, 'target-left\n', 'utf8');
+    const target = await engine.createSnapshot({ sessionId: 'merge', checkpointId: 'target', parentCommitOid: base.commitOid });
+    await fs.writeFile(right, 'live-right\n', 'utf8');
+    const current = await engine.inspectWorkspace();
+    const restored = await engine.restoreSnapshot(target.commitOid, {
+      mode: 'merge', expectedCurrentTreeOid: base.treeOid,
+    });
+    expect(await fs.readFile(left, 'utf8')).toBe('target-left\n');
+    expect(await fs.readFile(right, 'utf8')).toBe('live-right\n');
+    expect(restored.restoredTreeOid).toBe((await engine.inspectWorkspace()).treeOid);
+    expect(current.treeOid).toBe(restored.restoredTreeOid);
+  });
+
+  it('rejects merge-restores when both target and live changed the same path', async () => {
+    const file = path.join(tmpDir, 'conflict.txt');
+    await fs.writeFile(file, 'base\n', 'utf8');
+    const base = await engine.createSnapshot({ sessionId: 'merge-conflict', checkpointId: 'base' });
+    await fs.writeFile(file, 'target\n', 'utf8');
+    const target = await engine.createSnapshot({ sessionId: 'merge-conflict', checkpointId: 'target', parentCommitOid: base.commitOid });
+    await fs.writeFile(file, 'live\n', 'utf8');
+    const current = await engine.inspectWorkspace();
+    await expect(engine.restoreSnapshot(target.commitOid, {
+      mode: 'merge', expectedCurrentTreeOid: base.treeOid,
+    })).rejects.toMatchObject({ code: 'RESTORE_MERGE_CONFLICT', paths: ['conflict.txt'] });
+    expect((await engine.inspectWorkspace()).treeOid).toBe(current.treeOid);
+  });
+
   it('should exclude plugin storage from every temporary tree', async () => {
     const storageDir = path.join(tmpDir, '.dsh-tm');
     await fs.mkdir(storageDir, { recursive: true });

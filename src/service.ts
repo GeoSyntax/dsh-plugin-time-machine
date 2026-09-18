@@ -320,6 +320,8 @@ export class TimeMachineService {
       const target = dag.getNode(checkpointId);
       if (!target) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
       await this.consumeRestorePlan(sessionId, checkpointId, options.restorePlanId, dag);
+      const selectiveMode = options.mode ?? this.config.restoreMode;
+      if (selectiveMode === 'merge') throw new Error('Merge mode is only available for full Git-backed rewind/fork operations.');
       if (await this.gitEngine.isGitRepo()) await this.gitEngine.assertSupportedWorkspace();
       const current = dag.getCurrentNode();
       let rescue: CheckpointNode | undefined;
@@ -338,12 +340,12 @@ export class TimeMachineService {
         const isGit = await this.gitEngine.isGitRepo();
         if (isGit && !target.gitCommitOid.startsWith('fallback_')) {
           await this.gitEngine.restoreSelectedPaths(target.gitCommitOid, paths, {
-            mode: options.mode ?? this.config.restoreMode,
+            mode: selectiveMode,
             expectedCurrentTreeOid: rescue?.gitTreeOid ?? current?.gitTreeOid,
           });
         } else {
           await this.fallbackEngine.restoreSelectedPaths(target.sessionState.sessionId, target.id, paths, {
-            mode: options.mode ?? this.config.restoreMode,
+            mode: selectiveMode,
             expectedCurrentTreeOid: rescue?.gitTreeOid ?? current?.gitTreeOid,
           });
         }
@@ -790,7 +792,9 @@ export class TimeMachineService {
       });
     }
 
-    const expected = rescue ?? current;
+    // Merge mode must use the original active checkpoint as the 3-way base;
+    // the rescue point is only compensation state and includes the live drift.
+    const expected = mode === 'merge' ? current : (rescue ?? current);
     if (rescue && options.deleteNewIgnoredPaths) {
       rescue = await dag.updateNode(rescue.id, { ignoredBackupKey: rescue.id });
     }
@@ -833,10 +837,14 @@ export class TimeMachineService {
       });
       if (target.ignoredBackupKey) await this.gitEngine.restoreIgnoredBackup(target.ignoredBackupKey);
       const verified = await this.gitEngine.inspectWorkspace();
-      if (verified.treeOid !== target.gitTreeOid || !sameStrings(verified.ignoredPaths, target.ignoredPaths ?? [])) {
+      const expectedTree = options.mode === 'merge' ? result.restoredTreeOid : target.gitTreeOid;
+      if (verified.treeOid !== expectedTree || !sameStrings(verified.ignoredPaths, target.ignoredPaths ?? [])) {
         throw new Error(`Workspace integrity check failed after restoring checkpoint '${target.id}'.`);
       }
       return result;
+    }
+    if (options.mode === 'merge') {
+      throw new Error('Merge restore is only supported for Git-backed checkpoints.');
     }
     await this.fallbackEngine.restoreSnapshot(target.sessionState.sessionId, target.id);
     const verified = await this.fallbackEngine.inspectWorkspace();

@@ -2818,6 +2818,9 @@ var TimeMachineService = class {
     const records = current.agentWrites ?? [];
     const preserved = [];
     for (const record of records) {
+      if (!normalizeRelativePath(record.path) || !/^[a-f0-9]{64}$/i.test(record.sha256)) {
+        throw new Error(`AGENT_WRITE_LEDGER_INVALID: checkpoint '${current.id}' contains invalid write evidence.`);
+      }
       const actual = await this.hashWorkspacePath(record.path).catch(() => void 0);
       if (actual && actual !== record.sha256) preserved.push(record.path);
     }
@@ -2890,7 +2893,7 @@ function cloneJson2(value) {
 }
 function normalizeRelativePath(value) {
   const normalized = value.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+$/, "");
-  if (!normalized || normalized === "." || normalized.startsWith("/") || normalized === ".." || normalized.startsWith("../") || normalized.includes("\0")) {
+  if (!normalized || normalized === "." || normalized.startsWith("/") || normalized === ".." || normalized.startsWith("../") || normalized.includes("\0") || normalized.split("/").includes("..")) {
     throw new Error(`Invalid workspace-relative path '${value}'.`);
   }
   return normalized;
@@ -3053,6 +3056,7 @@ var TimeMachineWebServer = class {
       const sourceSessionId = sessionId || "default";
       const result = await this.service.rewindToCheckpoint(sourceSessionId, checkpointId, {
         mode: body.force === true ? "force" : body.merge === true ? "merge" : void 0,
+        preserveVerifiedHandEdits: body.preserveVerifiedHandEdits === true,
         deleteNewIgnoredPaths: body.deleteNewIgnoredPaths === true,
         restorePlanId: typeof body.restorePlanId === "string" ? body.restorePlanId : void 0
       });

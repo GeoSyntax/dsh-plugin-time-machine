@@ -258,7 +258,7 @@ export class GitPlumbingEngine {
         // Exclude untracked storage before it can enter the temporary index.
         // Git 2.55 on Windows is stricter about removing an untracked directory
         // with `git rm --cached` after `git add -A`.
-        addArgs.push(`:(exclude)${relative}`, `:(exclude)${relative}/**`);
+        addArgs.push(`:(top,exclude)${relative}`, `:(top,exclude)${relative}/**`);
       }
       await this.runGit(addArgs, env, root);
       const { stdout: indexedFiles } = await this.runGit(['ls-files', '-z'], env, root);

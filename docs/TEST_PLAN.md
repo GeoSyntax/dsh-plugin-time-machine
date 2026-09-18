@@ -62,6 +62,7 @@
 | B-09 | 同一 DSH_HOME/workspace 重启并保留 DAG | `TM_DSH_LIVE=1 TM_DSH_LIVE_RESTART=1 TM_GEMINI_API_KEY=... pnpm smoke:dsh:source` |
 | B-10 | 真实 DSH Web 宿主 session + checkpoint + fork + rewind | `TM_GEMINI_API_KEY=... pnpm smoke:dsh:web` |
 | B-11 | 真实 DSH 模型端点失败仍持久化 failed checkpoint 和错误证据 | `TM_DSH_SOURCE=... pnpm smoke:dsh:failure` |
+| B-12 | 真实 DSH 工具失败事件提取为 `failedTools` | `TM_DSH_LIVE_TOOL_FAILURE=1 TM_GEMINI_API_KEY=... pnpm smoke:dsh:source` |
 
 ### L1：纯逻辑单元测试
 

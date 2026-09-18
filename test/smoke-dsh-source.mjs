@@ -120,6 +120,23 @@ try {
       }
       console.log(`Source DSH restart preserved DAG history (${restartedNodeCount} checkpoint(s)).`);
     }
+    if (process.env.TM_DSH_LIVE_TOOL_FAILURE === '1') {
+      run([
+        '--profile', profile,
+        '--patch', patchFile,
+        'Use the shell tool to run exactly `node -e "process.exit(7)"`. Do not skip the command or replace it with an explanation; after it fails, briefly report the failure.',
+      ], { timeout: 180_000 });
+      const failureDagFiles = await findFiles(workspace, (name) => name.startsWith('dag_') && name.endsWith('.json'));
+      const failureNodes = [];
+      for (const file of failureDagFiles) {
+        const state = JSON.parse(await readFile(file, 'utf8'));
+        failureNodes.push(...Object.values(state.nodes ?? {}));
+      }
+      if (!failureNodes.some((node) => (node.failedTools?.length ?? 0) > 0)) {
+        throw new Error('Live DSH tool-failure turn did not persist failedTools evidence.');
+      }
+      console.log('Source DSH live tool failure persisted failedTools evidence.');
+    }
     console.log('Source DSH live model turn passed.');
   }
 

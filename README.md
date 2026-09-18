@@ -179,6 +179,9 @@ TM_DSH_SOURCE=E:/desktop/dsh/deepseek-harness pnpm smoke:dsh:source
 # Optional live model turn; inject the key through the environment only.
 TM_DSH_SOURCE=E:/desktop/dsh/deepseek-harness TM_DSH_LIVE=1 TM_GEMINI_API_KEY=<redacted> pnpm smoke:dsh:source
 
+# Optional: additionally force a non-zero shell command and verify failedTools extraction.
+TM_DSH_SOURCE=E:/desktop/dsh/deepseek-harness TM_DSH_LIVE=1 TM_DSH_LIVE_TOOL_FAILURE=1 TM_GEMINI_API_KEY=<redacted> pnpm smoke:dsh:source
+
 # Optional: run a second process with the same DSH_HOME/workspace and verify DAG history survives.
 TM_DSH_SOURCE=E:/desktop/dsh/deepseek-harness TM_DSH_LIVE=1 TM_DSH_LIVE_RESTART=1 TM_GEMINI_API_KEY=<redacted> pnpm smoke:dsh:source
 

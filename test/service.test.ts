@@ -198,6 +198,32 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
     expect(dag.getNode(third.id)).not.toBeNull();
   });
 
+  it('recovers an interrupted restore journal on the next service startup', async () => {
+    const sessionId = 'journal-recovery';
+    const file = path.join(tmpDir, 'journal.txt');
+    await fs.writeFile(file, 'safe-state\n', 'utf8');
+    const rescue = await service.createTurnCheckpoint({
+      sessionId, turnIndex: 1, prompt: 'safe boundary', sessionState: { sessionId, messages: [] },
+    });
+    await fs.writeFile(file, 'corrupted-state\n', 'utf8');
+    const target = await service.createTurnCheckpoint({
+      sessionId, turnIndex: 2, prompt: 'corrupted turn', sessionState: { sessionId, messages: [] },
+    });
+    await fs.writeFile(file, 'partially-restored-state\n', 'utf8');
+    const journalDir = path.join(tmpDir, '.dsh-tm', 'restore-journals');
+    await fs.mkdir(journalDir, { recursive: true });
+    await fs.writeFile(path.join(journalDir, 'restore_crash.json'), JSON.stringify({
+      version: 1, id: 'restore_crash', sessionId, rescueCheckpointId: target.id,
+      targetCheckpointId: rescue.id, kind: 'rewind', phase: 'workspace-restored', createdAt: Date.now(),
+    }), 'utf8');
+
+    const restarted = new TimeMachineService({ workDir: tmpDir, storageDir: path.join(tmpDir, '.dsh-tm') });
+    const dag = await restarted.getDAGManager(sessionId);
+    expect(await fs.readFile(file, 'utf8')).toBe('corrupted-state\n');
+    expect(dag.tree.currentCheckpointId).toBe(target.id);
+    await expect(fs.access(path.join(journalDir, 'restore_crash.json'))).rejects.toThrow();
+  });
+
   it('finalizes a turn and reloads its DAG state after a service restart', async () => {
     const sessionId = 'restart-session';
     const file = path.join(tmpDir, 'restart.txt');

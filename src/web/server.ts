@@ -142,8 +142,10 @@ export class TimeMachineWebServer {
         conversation = await this.hooks.restartConversation(sourceSessionId, result.targetNode);
       } catch (error) {
         await this.compensate(sourceSessionId, result.rescueCheckpointId);
+        await this.service.completeRestoreJournal(result.restoreJournalId);
         throw error;
       }
+      await this.service.completeRestoreJournal(result.restoreJournalId);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, result, conversation }));
       return;
@@ -192,8 +194,10 @@ export class TimeMachineWebServer {
         conversation = await this.hooks.restartConversation(sourceSessionId, result.forkedNode);
       } catch (error) {
         await this.compensate(sourceSessionId, result.rescueCheckpointId);
+        await this.service.completeRestoreJournal(result.restoreJournalId);
         throw error;
       }
+      await this.service.completeRestoreJournal(result.restoreJournalId);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, result, conversation }));
       return;

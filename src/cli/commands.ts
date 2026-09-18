@@ -69,12 +69,14 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
         });
         try {
           const created = await restartConversation(controller, sessionId, result.targetNode, service.workDir);
+          await service.completeRestoreJournal(result.restoreJournalId);
           return {
             kind: 'success',
             text: `Restored ${checkpointId}. Continue in forked session ${created.sessionId}. Rescue point: ${result.rescueCheckpointId ?? 'none'}.`,
           };
         } catch (error) {
           await compensate(service, sessionId, result.rescueCheckpointId);
+          await service.completeRestoreJournal(result.restoreJournalId);
           throw error;
         }
       },
@@ -130,12 +132,14 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
         });
         try {
           const created = await restartConversation(controller, sessionId, result.forkedNode, service.workDir);
+          await service.completeRestoreJournal(result.restoreJournalId);
           const reflection = result.reflectionAdvisory.hasPastFailures
             ? `\n\n${result.reflectionAdvisory.suggestedPromptPrefix}`
             : '';
           return { kind: 'success', text: `Forked ${positionals[1]} into DSH session ${created.sessionId}.${reflection}` };
         } catch (error) {
           await compensate(service, sessionId, result.rescueCheckpointId);
+          await service.completeRestoreJournal(result.restoreJournalId);
           throw error;
         }
       },

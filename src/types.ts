@@ -97,6 +97,7 @@ export interface RestoreResult {
   restoredSessionState: SessionState;
   rescueCheckpointId?: string;
   deletedIgnoredPaths: string[];
+  restoreJournalId?: string;
 }
 
 export interface DiffResult {
@@ -125,6 +126,7 @@ export interface SelectiveRestoreResult {
   restoredPaths: string[];
   rescueCheckpointId?: string;
   resultCheckpointId?: string;
+  restoreJournalId?: string;
 }
 
 export interface StorageStatus {

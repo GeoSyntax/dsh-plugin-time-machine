@@ -46,6 +46,7 @@ dsh --profile web
 - **先看再回滚:** Git 工作区提供文本 diff；非 Git fallback 至少列出将被目标快照覆盖的路径，并明确提示暂不提供文本 diff。
 - **选择性恢复:** `/tm-restore-files` 只写入指定文件/目录，并创建 rescue 和结果 checkpoint；它不会伪造会话回滚。
 - **存储治理:** `/tm-storage` 查看插件目录占用；`/tm-prune` 只删除不属于 current/branch head 且没有子节点的旧叶子节点；明确传入 `--abandoned-branches` 才会删除非当前探索分支。Git object 是共享的，删除私有 ref 不会自动执行危险的全仓库 GC。
+- **崩溃恢复:** rewind/fork/选择性恢复会写入 durable restore journal；插件下次启动时如果发现未完成操作，会先恢复 rescue checkpoint，再清理 journal。
 
 ## Safety model
 
@@ -76,7 +77,7 @@ Web dashboard 只绑定 loopback，并拒绝非本机 Host 和跨 origin 请求�
 
 - 当前一个插件实例管理一个启动时 `workDir`；不同 session `cwd` 会被跳过。
 - Git 快照复用用户仓库的 object database 和私有 refs，尚未迁移到独立 shadow store。
-- 多文件恢复提供 rescue/compensation，但文件系统本身没有跨文件 ACID 事务。
+- 多文件恢复提供 rescue/compensation 和崩溃后 journal 恢复，但文件系统本身没有跨文件 ACID 事务。
 - 当前 manifest 只声明 `web` profile；原生 TUI 不在兼容承诺范围内。
 - Hermes Agent v2 已有自己的 checkpoint/rollback；本插件适合需要 DSH Session fork、DAG 探索或失败反思的场景。
 

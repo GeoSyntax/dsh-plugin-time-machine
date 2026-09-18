@@ -97,6 +97,7 @@ interface RestoreResult {
     restoredSessionState: SessionState;
     rescueCheckpointId?: string;
     deletedIgnoredPaths: string[];
+    restoreJournalId?: string;
 }
 interface DiffResult {
     file: string;
@@ -122,6 +123,7 @@ interface SelectiveRestoreResult {
     restoredPaths: string[];
     rescueCheckpointId?: string;
     resultCheckpointId?: string;
+    restoreJournalId?: string;
 }
 interface StorageStatus {
     storageDir: string;
@@ -222,8 +224,10 @@ declare class TimeMachineService {
     private gitEngine;
     private fallbackEngine;
     private dagManagers;
+    private recoveredSessions;
     private advisor;
     private operations;
+    private readonly journalDir;
     constructor(options: TimeMachineServiceOptions);
     /**
      * 获取或初始化指定会话的 DAG 管理器
@@ -279,6 +283,7 @@ declare class TimeMachineService {
         restoredSessionState: SessionState;
         reflectionAdvisory: ReflectionSummary;
         rescueCheckpointId?: string;
+        restoreJournalId?: string;
     }>;
     /**
      * 获取指定快照与当前（或另一快照）的代码差异
@@ -302,6 +307,10 @@ declare class TimeMachineService {
     private listStoredSessions;
     private restoreWithRescue;
     private restoreNode;
+    completeRestoreJournal(journalId?: string): Promise<void>;
+    private createRestoreJournal;
+    private updateRestoreJournal;
+    private recoverInterruptedRestores;
 }
 
 interface GitPlumbingOptions {

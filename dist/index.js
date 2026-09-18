@@ -1056,11 +1056,14 @@ var TimeMachineService = class {
   gitEngine;
   fallbackEngine;
   dagManagers = /* @__PURE__ */ new Map();
+  recoveredSessions = /* @__PURE__ */ new Set();
   advisor = new ReflectionAdvisor();
   operations = new KeyedOperationLock();
+  journalDir;
   constructor(options) {
     this.workDir = path5.resolve(options.workDir);
     this.storageDir = options.storageDir ? path5.resolve(options.storageDir) : path5.join(this.workDir, ".dsh", "time-machine");
+    this.journalDir = path5.join(this.storageDir, "restore-journals");
     this.config = {
       autoSnapshot: options.config?.autoSnapshot ?? true,
       enableReflectionAdvisor: options.config?.enableReflectionAdvisor ?? true,
@@ -1096,6 +1099,10 @@ var TimeMachineService = class {
       });
       await mgr.init();
       this.dagManagers.set(sessionId, mgr);
+    }
+    if (!this.recoveredSessions.has(sessionId)) {
+      await this.recoverInterruptedRestores(sessionId, mgr);
+      this.recoveredSessions.add(sessionId);
     }
     return mgr;
   }
@@ -1191,11 +1198,13 @@ var TimeMachineService = class {
         }
         throw error;
       }
+      await this.completeRestoreJournal(restored.journalId);
       return {
         targetNode: cloneJson2(target),
         restoredSessionState: cloneJson2(target.sessionState),
         rescueCheckpointId: restored.rescue?.id,
-        deletedIgnoredPaths: restored.deletedIgnoredPaths
+        deletedIgnoredPaths: restored.deletedIgnoredPaths,
+        restoreJournalId: restored.journalId
       };
     });
   }
@@ -1207,6 +1216,7 @@ var TimeMachineService = class {
       if (!target) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
       const current = dag.getCurrentNode();
       let rescue;
+      let journalId;
       if (current) {
         rescue = await this.createTurnCheckpointUnlocked({
           sessionId,
@@ -1216,6 +1226,12 @@ var TimeMachineService = class {
           sessionState: current.sessionState,
           status: "success",
           tags: ["rescue", "selective-restore"]
+        });
+        journalId = await this.createRestoreJournal({
+          sessionId,
+          rescueCheckpointId: rescue.id,
+          targetCheckpointId: checkpointId,
+          kind: "selective-restore"
         });
       }
       try {
@@ -1240,16 +1256,20 @@ var TimeMachineService = class {
           status: "success",
           tags: ["selective-restore"]
         });
+        await this.updateRestoreJournal(journalId, "workspace-restored");
+        await this.completeRestoreJournal(journalId);
         return {
           checkpointId,
           restoredPaths: [...new Set(paths)],
           rescueCheckpointId: rescue?.id,
-          resultCheckpointId: resultNode.id
+          resultCheckpointId: resultNode.id,
+          restoreJournalId: journalId
         };
       } catch (error) {
         if (rescue) {
           await this.restoreNode(rescue, void 0, { mode: "force", createRescuePoint: false });
           await dag.rewindTo(rescue.id);
+          await this.completeRestoreJournal(journalId);
         }
         throw error;
       }
@@ -1262,7 +1282,7 @@ var TimeMachineService = class {
     return this.operations.run(this.workDir, async () => {
       const dag = await this.getDAGManager(params.sessionId);
       const baseNode = dag.validateFork(params.fromCheckpointId, params.newBranchName);
-      const restored = await this.restoreWithRescue(dag, baseNode, params.restore ?? {});
+      const restored = await this.restoreWithRescue(dag, baseNode, params.restore ?? {}, "fork");
       let forkedNode;
       try {
         forkedNode = await dag.forkBranch(params.fromCheckpointId, params.newBranchName, params.description);
@@ -1291,7 +1311,8 @@ var TimeMachineService = class {
         forkedNode: cloneJson2(forkedNode),
         restoredSessionState: cloneJson2(forkedNode.sessionState),
         reflectionAdvisory,
-        rescueCheckpointId: restored.rescue?.id
+        rescueCheckpointId: restored.rescue?.id,
+        restoreJournalId: restored.journalId
       };
     });
   }
@@ -1418,7 +1439,7 @@ var TimeMachineService = class {
     }
     return [...sessions];
   }
-  async restoreWithRescue(dag, target, options) {
+  async restoreWithRescue(dag, target, options, kind = "rewind") {
     const current = dag.getCurrentNode() ?? void 0;
     const mode = options.mode ?? this.config.restoreMode;
     if (mode === "safe" && current) {
@@ -1434,6 +1455,7 @@ var TimeMachineService = class {
       }
     }
     let rescue;
+    let journalId;
     if (options.createRescuePoint !== false && current) {
       rescue = await this.createTurnCheckpointUnlocked({
         sessionId: dag.tree.sessionId,
@@ -1443,6 +1465,12 @@ var TimeMachineService = class {
         sessionState: current.sessionState,
         status: "success",
         tags: ["rescue"]
+      });
+      journalId = await this.createRestoreJournal({
+        sessionId: dag.tree.sessionId,
+        rescueCheckpointId: rescue.id,
+        targetCheckpointId: target.id,
+        kind
       });
     }
     const expected = rescue ?? current;
@@ -1455,12 +1483,14 @@ var TimeMachineService = class {
         mode,
         ignoredBackupKey: rescue?.ignoredBackupKey
       });
-      return { rescue, deletedIgnoredPaths: result.deletedIgnoredPaths };
+      await this.updateRestoreJournal(journalId, "workspace-restored");
+      return { rescue, deletedIgnoredPaths: result.deletedIgnoredPaths, journalId };
     } catch (error) {
       if (rescue) {
         try {
           await this.restoreNode(rescue, void 0, { mode: "force", createRescuePoint: false });
           await dag.rewindTo(rescue.id);
+          await this.completeRestoreJournal(journalId);
         } catch (rollbackError) {
           throw new AggregateError([error, rollbackError], "Restore failed and rescue compensation also failed");
         }
@@ -1492,6 +1522,57 @@ var TimeMachineService = class {
       throw new Error(`Fallback workspace integrity check failed after restoring checkpoint '${target.id}'.`);
     }
     return { deletedIgnoredPaths: [] };
+  }
+  async completeRestoreJournal(journalId) {
+    if (!journalId) return;
+    await fs4.rm(path5.join(this.journalDir, `${journalId}.json`), { force: true }).catch(() => void 0);
+  }
+  async createRestoreJournal(params) {
+    const id = `restore_${randomUUID4().replace(/-/g, "")}`;
+    const journal = { version: 1, id, phase: "prepared", createdAt: Date.now(), ...params };
+    await fs4.mkdir(this.journalDir, { recursive: true });
+    const file = path5.join(this.journalDir, `${id}.json`);
+    const temporary = `${file}.${randomUUID4()}.tmp`;
+    try {
+      await fs4.writeFile(temporary, `${JSON.stringify(journal, null, 2)}
+`, { encoding: "utf8", flag: "wx" });
+      await fs4.rename(temporary, file);
+    } finally {
+      await fs4.rm(temporary, { force: true }).catch(() => void 0);
+    }
+    return id;
+  }
+  async updateRestoreJournal(journalId, phase) {
+    if (!journalId) return;
+    const file = path5.join(this.journalDir, `${journalId}.json`);
+    const raw = await fs4.readFile(file, "utf8").catch(() => void 0);
+    if (!raw) return;
+    const journal = JSON.parse(raw);
+    journal.phase = phase;
+    await fs4.writeFile(file, `${JSON.stringify(journal, null, 2)}
+`, "utf8");
+  }
+  async recoverInterruptedRestores(sessionId, dag) {
+    const entries = await fs4.readdir(this.journalDir, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+      const file = path5.join(this.journalDir, entry.name);
+      let journal;
+      try {
+        journal = JSON.parse(await fs4.readFile(file, "utf8"));
+      } catch {
+        continue;
+      }
+      if (journal.version !== 1 || journal.sessionId !== sessionId) continue;
+      const rescue = dag.getNode(journal.rescueCheckpointId);
+      if (!rescue) {
+        await fs4.rm(file, { force: true });
+        continue;
+      }
+      await this.restoreNode(rescue, void 0, { mode: "force", createRescuePoint: false });
+      await dag.rewindTo(rescue.id);
+      await fs4.rm(file, { force: true });
+    }
   }
 };
 function cloneJson2(value) {
@@ -1646,8 +1727,10 @@ var TimeMachineWebServer = class {
         conversation = await this.hooks.restartConversation(sourceSessionId, result.targetNode);
       } catch (error) {
         await this.compensate(sourceSessionId, result.rescueCheckpointId);
+        await this.service.completeRestoreJournal(result.restoreJournalId);
         throw error;
       }
+      await this.service.completeRestoreJournal(result.restoreJournalId);
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ success: true, result, conversation }));
       return;
@@ -1693,8 +1776,10 @@ var TimeMachineWebServer = class {
         conversation = await this.hooks.restartConversation(sourceSessionId, result.forkedNode);
       } catch (error) {
         await this.compensate(sourceSessionId, result.rescueCheckpointId);
+        await this.service.completeRestoreJournal(result.restoreJournalId);
         throw error;
       }
+      await this.service.completeRestoreJournal(result.restoreJournalId);
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ success: true, result, conversation }));
       return;
@@ -1854,12 +1939,14 @@ function registerCliCommands(ctx, service) {
         });
         try {
           const created = await restartConversation(controller, sessionId, result.targetNode, service.workDir);
+          await service.completeRestoreJournal(result.restoreJournalId);
           return {
             kind: "success",
             text: `Restored ${checkpointId}. Continue in forked session ${created.sessionId}. Rescue point: ${result.rescueCheckpointId ?? "none"}.`
           };
         } catch (error) {
           await compensate(service, sessionId, result.rescueCheckpointId);
+          await service.completeRestoreJournal(result.restoreJournalId);
           throw error;
         }
       }
@@ -1911,12 +1998,14 @@ function registerCliCommands(ctx, service) {
         });
         try {
           const created = await restartConversation(controller, sessionId, result.forkedNode, service.workDir);
+          await service.completeRestoreJournal(result.restoreJournalId);
           const reflection = result.reflectionAdvisory.hasPastFailures ? `
 
 ${result.reflectionAdvisory.suggestedPromptPrefix}` : "";
           return { kind: "success", text: `Forked ${positionals[1]} into DSH session ${created.sessionId}.${reflection}` };
         } catch (error) {
           await compensate(service, sessionId, result.rescueCheckpointId);
+          await service.completeRestoreJournal(result.restoreJournalId);
           throw error;
         }
       }

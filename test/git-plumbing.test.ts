@@ -186,6 +186,23 @@ describe('GitPlumbingEngine', () => {
     expect(added.flatMap(([args]) => args).join(' ')).toContain('changed.txt');
   });
 
+  it('disables the incremental overlay when the Git branch control plane changes', async () => {
+    await fs.writeFile(path.join(tmpDir, 'base.txt'), 'base\n', 'utf8');
+    await execAsync('git', ['add', '.'], { cwd: tmpDir });
+    await execAsync('git', ['commit', '-m', 'branch cache fixture'], { cwd: tmpDir });
+    const first = await engine.createSnapshot({ sessionId: 'branch-cache', checkpointId: 'one' });
+    await execAsync('git', ['checkout', '-b', 'alternate-cache'], { cwd: tmpDir });
+    await fs.writeFile(path.join(tmpDir, 'branch-only.txt'), 'alternate\n', 'utf8');
+    await execAsync('git', ['add', 'branch-only.txt'], { cwd: tmpDir });
+    await execAsync('git', ['commit', '-m', 'alternate branch'], { cwd: tmpDir });
+    await fs.appendFile(path.join(tmpDir, 'base.txt'), 'dirty\n', 'utf8');
+    const runGit = vi.spyOn(engine, 'runGit');
+    await engine.createSnapshot({ sessionId: 'branch-cache', checkpointId: 'two', parentCommitOid: first.commitOid });
+
+    const addCommands = runGit.mock.calls.filter(([args]) => args[0] === 'add');
+    expect(addCommands.some(([args]) => args.includes('.'))).toBe(true);
+  });
+
   it('fails closed when encryption is enabled for a legacy plaintext quarantine', async () => {
     const quarantineDir = path.join(tmpDir, '.quarantine');
     const key = 'legacy-backup';

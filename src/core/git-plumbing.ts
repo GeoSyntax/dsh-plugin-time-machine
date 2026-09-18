@@ -178,7 +178,7 @@ export class GitPlumbingEngine {
   private readonly quarantineKey?: Buffer;
   private shadowReady?: Promise<void>;
   /** Last complete managed tree and the Git status signature that produced it. */
-  private workspaceTreeCache?: { treeOid: string; signature: string };
+  private workspaceTreeCache?: { treeOid: string; signature: string; controlSignature: string };
 
   constructor(options: GitPlumbingOptions) {
     this.workDir = path.resolve(options.workDir);
@@ -264,7 +264,8 @@ export class GitPlumbingEngine {
     const cached = status.cacheable && this.workspaceTreeCache?.signature === status.signature
       ? this.workspaceTreeCache.treeOid
       : undefined;
-    const incrementalBase = !cached && !enforceSnapshotLimits && this.preservePaths.length === 0 && this.workspaceTreeCache?.treeOid && status.changedPaths.length > 0
+    const incrementalBase = !cached && !enforceSnapshotLimits && this.preservePaths.length === 0 && this.workspaceTreeCache?.treeOid
+      && this.workspaceTreeCache.controlSignature === status.controlSignature && status.changedPaths.length > 0
       ? this.workspaceTreeCache.treeOid
       : undefined;
     const treeResult = cached
@@ -293,7 +294,7 @@ export class GitPlumbingEngine {
       if (!cached) {
         const nextStatus = await this.workspaceStatusSignature(root);
         this.workspaceTreeCache = nextStatus.cacheable
-          ? { treeOid, signature: nextStatus.signature }
+          ? { treeOid, signature: nextStatus.signature, controlSignature: nextStatus.controlSignature }
           : undefined;
       }
 
@@ -810,11 +811,13 @@ export class GitPlumbingEngine {
    * not contain its content hash; therefore any file entry disables reuse.
    * Ignored paths are intentionally handled separately by listIgnoredPaths().
    */
-  private async workspaceStatusSignature(root: string): Promise<{ signature: string; cacheable: boolean; changedPaths: string[] }> {
+  private async workspaceStatusSignature(root: string): Promise<{ signature: string; controlSignature: string; cacheable: boolean; changedPaths: string[] }> {
     const { stdout } = await this.runGit([
       'status', '--porcelain=v2', '--branch', '--untracked-files=all', '-z',
     ], {}, root);
-    const entries = stdout.split('\0').filter(Boolean).filter(item => !item.startsWith('# '));
+    const allEntries = stdout.split('\0').filter(Boolean);
+    const controlSignature = allEntries.filter(item => item.startsWith('# branch.')).join('\0');
+    const entries = allEntries.filter(item => !item.startsWith('# '));
     const changedPaths = entries.flatMap(item => {
       const tab = item.indexOf('\t');
       let raw: string;
@@ -827,7 +830,7 @@ export class GitPlumbingEngine {
       const pathPart = raw.split('\0', 1)[0]?.trim();
       return pathPart ? [normalizeGitPath(pathPart)] : [];
     });
-    return { signature: stdout, cacheable: entries.length === 0, changedPaths };
+    return { signature: stdout, controlSignature, cacheable: entries.length === 0, changedPaths };
   }
 
   private async assertSnapshotSize(root: string, files: string[]): Promise<string[]> {

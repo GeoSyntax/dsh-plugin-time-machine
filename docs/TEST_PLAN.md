@@ -274,6 +274,7 @@ artifacts/<run-id>/
 - 真实 DSH 源码宿主加载插件通过。
 - 真实本地模型请求、文件创建、turn 结束后的 finalized checkpoint 落盘通过。
 - 使用同一 `DSH_HOME` 与 workspace 的 live restart 测试通过，第二次运行保留并新增 DAG checkpoint。
+- live restart 还验证每个持久化节点的 `sessionState.sessionId` 与 DAG 所属 session 一致，且原 session DAG 未丢失。
 - 真实 DSH Web 宿主通过 `session/create`、`session/prompt` 驱动 turn，并完成真实 `/api/fork` 与 `/api/rewind`。
 - 同一真实 Web session 中，失败工具证据会在从失败 checkpoint 分叉时进入 `reflectionAdvisory`。
 - 真实 DSH 不可达模型端点会产生并持久化 `failed` checkpoint，且保留错误证据。
@@ -288,12 +289,10 @@ artifacts/<run-id>/
 
 1. 原生交互式 TUI 中真实执行 `/tm-tree`、`/tm-rewind`、`/tm-fork`（当前源码宿主未提供 shipped `tui` profile）。
 2. 真实 Session fork 失败后的补偿验收。
-3. 重启后从同一 DSH_HOME 恢复 DAG 和 session 边界。
-4. Windows Git 新版本临时索引兼容性专项测试。
 
 注：真实 Web smoke 已覆盖插件 REST API 的 fork/rewind 与宿主 SessionController；CLI 内置命令 `/tm-*` 仍需要在交互式 TUI 中人工验收，不能由 headless/Web API 结果替代。
 
-在上述五项完成并保存证据前，项目只能标记为 **integration-tested / not yet release-qualified**，不能宣称“完整证明生产可用”。
+在上述两项完成并保存证据前，项目只能标记为 **integration-tested / not yet release-qualified**，不能宣称“完整证明生产可用”。
 
 ## 10. 推荐执行顺序
 

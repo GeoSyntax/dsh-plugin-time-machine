@@ -93,6 +93,7 @@ try {
     const dagFiles = await findFiles(workspace, (name) => name.startsWith('dag_') && name.endsWith('.json'));
     if (dagFiles.length === 0) throw new Error('Live DSH did not persist a time-machine DAG checkpoint.');
     const dag = JSON.parse(await readFile(dagFiles[0], 'utf8'));
+    if (typeof dag.sessionId !== 'string') throw new Error('Live DSH DAG is missing its session boundary.');
     const nodes = Object.values(dag.nodes ?? {});
     if (nodes.length < 1) throw new Error('Live DSH persisted an empty time-machine DAG.');
     if (!nodes.some((node) => ['success', 'failed', 'aborted'].includes(node.status))) {
@@ -111,10 +112,19 @@ try {
         throw new Error('Restarted DSH did not continue in the same workspace.');
       }
       const restartedDagFiles = await findFiles(workspace, (name) => name.startsWith('dag_') && name.endsWith('.json'));
-      const restartedNodeCount = (await Promise.all(restartedDagFiles.map(async (file) => {
+      const restartedStates = await Promise.all(restartedDagFiles.map(async (file) => {
         const state = JSON.parse(await readFile(file, 'utf8'));
-        return Object.keys(state.nodes ?? {}).length;
-      }))).reduce((total, count) => total + count, 0);
+        for (const node of Object.values(state.nodes ?? {})) {
+          if (node.sessionState?.sessionId !== state.sessionId) {
+            throw new Error(`DAG node ${node.id} crossed its persisted session boundary.`);
+          }
+        }
+        return state;
+      }));
+      if (!restartedStates.some((state) => state.sessionId === dag.sessionId)) {
+        throw new Error('Restarted DSH lost the original session DAG.');
+      }
+      const restartedNodeCount = restartedStates.reduce((total, state) => total + Object.keys(state.nodes ?? {}).length, 0);
       if (restartedNodeCount < nodes.length + 1) {
         throw new Error(`Restarted DSH did not persist a new checkpoint (expected at least ${nodes.length + 1}, got ${restartedNodeCount}).`);
       }

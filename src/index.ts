@@ -23,6 +23,7 @@ export const Config: Schema<Config> = Schema.object({
   webHost: Schema.string().default('127.0.0.1'),
   maxSnapshots: Schema.number().default(0),
   maxStorageBytes: Schema.number().default(0),
+  shadowStore: Schema.boolean().default(false),
 });
 
 interface SessionEventLike {

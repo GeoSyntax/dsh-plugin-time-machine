@@ -86,6 +86,8 @@ interface TimeMachineConfig {
     maxSnapshots?: number;
     /** Hard plugin-storage byte limit; 0 disables the guard. */
     maxStorageBytes?: number;
+    /** Store plugin-created Git objects outside the user's normal object directory. */
+    shadowStore?: boolean;
 }
 interface RestoreOptions {
     mode?: 'safe' | 'force';
@@ -327,6 +329,8 @@ interface GitPlumbingOptions {
     refPrefix?: string;
     preservePaths?: string[];
     quarantineDir?: string;
+    /** Optional object directory for plugin-created objects. */
+    shadowObjectDir?: string;
 }
 interface GitSnapshot {
     treeOid: string;
@@ -364,7 +368,10 @@ declare class GitPlumbingEngine {
     private isRepoCached;
     private repoRootCached;
     private gitDirCached;
+    private readonly shadowObjectDir?;
+    private shadowReady?;
     constructor(options: GitPlumbingOptions);
+    get usesShadowStore(): boolean;
     isGitRepo(): Promise<boolean>;
     getRepoRoot(): Promise<string>;
     getGitDir(): Promise<string>;
@@ -392,10 +399,14 @@ declare class GitPlumbingEngine {
     /** Restore quarantined ignored content without ever writing it into Git objects. */
     restoreIgnoredBackup(key: string): Promise<void>;
     getDiffBetween(baseOid: string, targetOid: string): Promise<DiffResult[]>;
+    private runGitBuffer;
+    private readShadowBlob;
+    private gitEnv;
     private writeWorkspaceTree;
     private listIgnoredPaths;
     private listTreeFiles;
     private listTreeFileNames;
+    private listTreeEntries;
     private computeChangedFiles;
     private diffNameOnly;
     private protectedRepoPaths;
@@ -405,6 +416,7 @@ declare class GitPlumbingEngine {
     private parseUnifiedDiff;
     cleanupSession(sessionId: string): Promise<void>;
     deleteCheckpointRef(sessionId: string, checkpointId: string): Promise<boolean>;
+    private ensureShadowStore;
 }
 
 interface FallbackOptions {

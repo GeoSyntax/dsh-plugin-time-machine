@@ -245,6 +245,25 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
     expect((await quotaService.getDAGManager(sessionId)).getNode(first.id)).not.toBeNull();
   });
 
+  it('supports the opt-in shadow object store through the service', async () => {
+    const shadowService = new TimeMachineService({
+      workDir: tmpDir,
+      storageDir: path.join(tmpDir, '.shadow-service'),
+      config: { shadowStore: true },
+    });
+    const sessionId = 'shadow-service';
+    const file = path.join(tmpDir, 'shadow-service.txt');
+    await fs.writeFile(file, 'before\n', 'utf8');
+    const checkpoint = await shadowService.createTurnCheckpoint({
+      sessionId, turnIndex: 1, prompt: 'shadow boundary', sessionState: { sessionId, messages: [] },
+    });
+    await fs.writeFile(file, 'after\n', 'utf8');
+    await shadowService.rewindToCheckpoint(sessionId, checkpoint.id, { mode: 'force' });
+    expect(await fs.readFile(file, 'utf8')).toBe('before\n');
+    expect((await shadowService.getStorageStatus(sessionId)).gitObjectsShared).toBe(false);
+    expect((await fs.readdir(path.join(tmpDir, '.shadow-service', 'git-shadow', 'objects'), { withFileTypes: true })).some(entry => entry.isDirectory())).toBe(true);
+  });
+
   it('finalizes a turn and reloads its DAG state after a service restart', async () => {
     const sessionId = 'restart-session';
     const file = path.join(tmpDir, 'restart.txt');

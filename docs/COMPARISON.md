@@ -17,7 +17,7 @@ supported only when it is covered by the current implementation and tests.
 | Rescue/compensation | Yes | Snapshot-oriented | Journal-oriented | Varies |
 | Storage quotas and pruning | Explicit status + conservative prune, optional abandoned-branch prune, opt-in hard guards | Yes | Yes | Varies |
 | Durable interrupted-restore journal | Yes; startup restores rescue checkpoint | Store recovery | Yes | Varies |
-| Independent shadow store | Not yet; Git objects are reused | Yes | Yes | Usually local backups |
+| Independent shadow store | Opt-in `shadowStore: true`; Git refs remain private refs | Yes | Yes | Usually local backups |
 
 ## Choosing the right tool
 

@@ -79,6 +79,7 @@ export class TimeMachineService {
       webHost: options.config?.webHost ?? '127.0.0.1',
       maxSnapshots: Math.max(0, Math.floor(options.config?.maxSnapshots ?? 0)),
       maxStorageBytes: Math.max(0, Math.floor(options.config?.maxStorageBytes ?? 0)),
+      shadowStore: options.config?.shadowStore ?? false,
     };
 
     this.gitEngine = new GitPlumbingEngine({
@@ -86,6 +87,7 @@ export class TimeMachineService {
       refPrefix: this.config.refPrefix,
       preservePaths: [this.storageDir, ...this.config.preservePaths],
       quarantineDir: path.join(this.storageDir, 'ignored-quarantine'),
+      shadowObjectDir: this.config.shadowStore ? path.join(this.storageDir, 'git-shadow', 'objects') : undefined,
     });
 
     this.fallbackEngine = new FallbackSnapshotEngine({
@@ -461,7 +463,7 @@ export class TimeMachineService {
       sessions: sessions.length,
       checkpoints,
       pruneCandidates: leaves,
-      gitObjectsShared: await this.gitEngine.isGitRepo(),
+      gitObjectsShared: await this.gitEngine.isGitRepo() && !this.config.shadowStore,
     };
   }
 

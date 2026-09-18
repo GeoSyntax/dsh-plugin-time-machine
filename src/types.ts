@@ -84,6 +84,8 @@ export interface TimeMachineConfig {
   maxSnapshots?: number;
   /** Hard plugin-storage byte limit; 0 disables the guard. */
   maxStorageBytes?: number;
+  /** Store plugin-created Git objects outside the user's normal object directory. */
+  shadowStore?: boolean;
 }
 
 export interface RestoreOptions {

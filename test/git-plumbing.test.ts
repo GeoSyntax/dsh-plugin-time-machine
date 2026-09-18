@@ -106,4 +106,30 @@ describe('GitPlumbingEngine', () => {
 
     expect(second.treeOid).toBe(first.treeOid);
   });
+
+  it('can store plugin-created Git objects in an isolated shadow object directory', async () => {
+    const shadowObjectDir = path.join(tmpDir, '.dsh-tm', 'git-shadow', 'objects');
+    engine = new GitPlumbingEngine({ workDir: tmpDir, shadowObjectDir });
+    const file = path.join(tmpDir, 'shadow.txt');
+    await fs.writeFile(file, 'one\n', 'utf8');
+    const first = await engine.createSnapshot({ sessionId: 'shadow', checkpointId: 'one' });
+    await fs.writeFile(file, 'two\n', 'utf8');
+    const extra = path.join(tmpDir, 'extra.txt');
+    await fs.writeFile(extra, 'remove me\n', 'utf8');
+    const second = await engine.createSnapshot({ sessionId: 'shadow', checkpointId: 'two', parentCommitOid: first.commitOid });
+    expect(engine.usesShadowStore).toBe(true);
+    expect((await fs.readdir(shadowObjectDir, { withFileTypes: true })).some(entry => entry.isDirectory())).toBe(true);
+    expect((await engine.runGit(['cat-file', '-t', first.commitOid])).stdout.trim()).toBe('commit');
+    const treeFiles = await engine.runGit(['ls-tree', '-r', first.treeOid]);
+    const blobOid = treeFiles.stdout.trim().split(/\s+/)[2];
+    expect((await engine.runGit(['cat-file', '-t', blobOid])).stdout.trim()).toBe('blob');
+    await engine.getGitDir();
+    expect((await engine.runGit(['cat-file', '-t', blobOid])).stdout.trim()).toBe('blob');
+    expect((await engine.runGit(['cat-file', 'blob', blobOid])).stdout).toContain('one');
+    expect((await engine.runGit(['cat-file', 'blob', blobOid], {}, await engine.getRepoRoot())).stdout).toContain('one');
+    expect((await engine.getDiffBetween(first.commitOid, second.commitOid)).length).toBeGreaterThan(0);
+    await engine.restoreSnapshot(first.commitOid);
+    expect(await fs.readFile(file, 'utf8')).toBe('one\n');
+    await expect(fs.access(extra)).rejects.toThrow();
+  });
 });

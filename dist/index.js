@@ -24,11 +24,12 @@ __export(git_plumbing_exports, {
   WorkspaceDriftError: () => WorkspaceDriftError,
   WorkspaceRestoreConflictError: () => WorkspaceRestoreConflictError
 });
-import { execFile } from "child_process";
+import { execFile, spawn } from "child_process";
 import { randomUUID } from "crypto";
 import { promisify } from "util";
 import path2 from "path";
 import fs from "fs/promises";
+import zlib from "zlib";
 function encodeRefPart(value) {
   return Buffer.from(value, "utf8").toString("base64url") || "_";
 }
@@ -73,11 +74,17 @@ var init_git_plumbing = __esm({
       isRepoCached = null;
       repoRootCached = null;
       gitDirCached = null;
+      shadowObjectDir;
+      shadowReady;
       constructor(options) {
         this.workDir = path2.resolve(options.workDir);
         this.refPrefix = options.refPrefix || "refs/dsh-tm";
         this.preservePaths = (options.preservePaths ?? []).map((item) => path2.resolve(this.workDir, item));
         this.quarantineDir = options.quarantineDir ? path2.resolve(options.quarantineDir) : void 0;
+        this.shadowObjectDir = options.shadowObjectDir ? path2.resolve(options.shadowObjectDir) : void 0;
+      }
+      get usesShadowStore() {
+        return Boolean(this.shadowObjectDir);
       }
       async isGitRepo() {
         if (this.isRepoCached !== null) return this.isRepoCached;
@@ -102,12 +109,8 @@ var init_git_plumbing = __esm({
         return this.gitDirCached;
       }
       async runGit(args, extraEnv = {}, cwd = this.workDir) {
-        const env = {
-          ...process.env,
-          GIT_TERMINAL_PROMPT: "0",
-          GIT_CONFIG_NOSYSTEM: "1",
-          ...extraEnv
-        };
+        await this.ensureShadowStore();
+        const env = this.gitEnv(extraEnv);
         try {
           return await execFileAsync("git", args, {
             cwd,
@@ -184,6 +187,7 @@ Reason: ${errorMsg}`);
         const targetIgnored = new Set(options.targetIgnoredPaths ?? []);
         const ignoredToDelete = current.ignoredPaths.filter((item) => !targetIgnored.has(item));
         const targetFiles = new Set(await this.listTreeFileNames(targetTree));
+        const targetEntries = this.shadowObjectDir ? await this.listTreeEntries(targetTree) : [];
         const collisions = current.ignoredPaths.filter((item) => targetFiles.has(item));
         if (collisions.length && !options.deleteNewIgnoredPaths) {
           throw new WorkspaceRestoreConflictError(collisions);
@@ -201,7 +205,26 @@ Reason: ${errorMsg}`);
         const root = await this.getRepoRoot();
         const { indexFile } = await this.writeWorkspaceTree();
         try {
-          await this.runGit(["read-tree", "--reset", "-u", targetTree], { GIT_INDEX_FILE: indexFile }, root);
+          const restoreArgs = this.shadowObjectDir ? ["read-tree", "--reset", targetTree] : ["read-tree", "--reset", "-u", targetTree];
+          await this.runGit(restoreArgs, { GIT_INDEX_FILE: indexFile }, root);
+          if (this.shadowObjectDir) {
+            const currentFiles = await this.listTreeFileNames(current.treeOid);
+            for (const entry of targetEntries) {
+              const destination = await this.safeWorkspacePath(entry.path);
+              await fs.mkdir(path2.dirname(destination), { recursive: true });
+              await fs.rm(destination, { recursive: true, force: true });
+              const content = await this.readShadowBlob(entry.oid, root);
+              if (entry.mode === "120000") {
+                await fs.symlink(content.toString("utf8"), destination);
+              } else {
+                await fs.writeFile(destination, content);
+                await fs.chmod(destination, Number.parseInt(entry.mode, 8) & 511).catch(() => void 0);
+              }
+            }
+            for (const relative of currentFiles.filter((file) => !targetFiles.has(file)).sort(longestFirst)) {
+              await fs.rm(await this.safeWorkspacePath(relative), { recursive: true, force: true });
+            }
+          }
         } finally {
           await fs.rm(indexFile, { force: true }).catch(() => void 0);
         }
@@ -278,6 +301,51 @@ Reason: ${errorMsg}`);
           return [];
         }
       }
+      async runGitBuffer(args, extraEnv = {}, cwd = this.workDir) {
+        await this.ensureShadowStore();
+        return new Promise((resolve, reject) => {
+          const child = spawn("git", args, { cwd, env: this.gitEnv(extraEnv), windowsHide: true });
+          const chunks = [];
+          const errors = [];
+          child.stdout.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+          child.stderr.on("data", (chunk) => errors.push(Buffer.from(chunk)));
+          child.once("error", reject);
+          child.once("close", (code) => {
+            if (code === 0) return resolve(Buffer.concat(chunks));
+            reject(new Error(`Git plumbing command failed: git ${args.join(" ")}
+Reason: ${Buffer.concat(errors).toString("utf8")}`));
+          });
+        });
+      }
+      async readShadowBlob(oid, cwd) {
+        if (this.shadowObjectDir) {
+          const loose = path2.join(this.shadowObjectDir, oid.slice(0, 2), oid.slice(2));
+          const compressed = await fs.readFile(loose).catch(() => void 0);
+          if (compressed) {
+            try {
+              const inflated = zlib.inflateSync(compressed);
+              const separator = inflated.indexOf(0);
+              if (separator >= 0) return inflated.subarray(separator + 1);
+            } catch {
+            }
+          }
+        }
+        return this.runGitBuffer(["cat-file", "blob", oid], {}, cwd);
+      }
+      gitEnv(extraEnv) {
+        const env = {
+          ...process.env,
+          GIT_TERMINAL_PROMPT: "0",
+          GIT_CONFIG_NOSYSTEM: "1",
+          ...extraEnv
+        };
+        if (this.shadowObjectDir) {
+          env.GIT_OBJECT_DIRECTORY = this.shadowObjectDir;
+          const primaryObjects = path2.join(this.gitDirCached ?? path2.join(this.workDir, ".git"), "objects");
+          env.GIT_ALTERNATE_OBJECT_DIRECTORIES = [primaryObjects, env.GIT_ALTERNATE_OBJECT_DIRECTORIES].filter(Boolean).map((item) => item.replace(/\\/g, "/")).join(path2.delimiter);
+        }
+        return env;
+      }
       async writeWorkspaceTree() {
         const root = await this.getRepoRoot();
         const indexFile = path2.join(await this.getGitDir(), `dsh-tm-index-${randomUUID()}`);
@@ -334,6 +402,14 @@ Reason: ${errorMsg}`);
       async listTreeFileNames(treeOid) {
         const { stdout } = await this.runGit(["ls-tree", "-r", "-z", "--name-only", treeOid]);
         return stdout.split("\0").filter(Boolean).map(normalizeGitPath);
+      }
+      async listTreeEntries(treeOid) {
+        const { stdout } = await this.runGit(["ls-tree", "-r", "-z", treeOid]);
+        return stdout.split("\0").filter(Boolean).map((record) => {
+          const tab = record.indexOf("	");
+          const [mode, _type, oid] = record.slice(0, tab).split(" ");
+          return { mode, oid, path: normalizeGitPath(record.slice(tab + 1)) };
+        });
       }
       async computeChangedFiles(parentCommitOid, currentCommitOid) {
         try {
@@ -421,6 +497,11 @@ Reason: ${errorMsg}`);
         if (!exists) return false;
         await this.runGit(["update-ref", "-d", ref]);
         return true;
+      }
+      async ensureShadowStore() {
+        if (!this.shadowObjectDir) return;
+        this.shadowReady ??= fs.mkdir(this.shadowObjectDir, { recursive: true }).then(() => void 0);
+        await this.shadowReady;
       }
     };
   }
@@ -1082,13 +1163,15 @@ var TimeMachineService = class {
       preservePaths: options.config?.preservePaths ?? ["node_modules"],
       webHost: options.config?.webHost ?? "127.0.0.1",
       maxSnapshots: Math.max(0, Math.floor(options.config?.maxSnapshots ?? 0)),
-      maxStorageBytes: Math.max(0, Math.floor(options.config?.maxStorageBytes ?? 0))
+      maxStorageBytes: Math.max(0, Math.floor(options.config?.maxStorageBytes ?? 0)),
+      shadowStore: options.config?.shadowStore ?? false
     };
     this.gitEngine = new GitPlumbingEngine({
       workDir: this.workDir,
       refPrefix: this.config.refPrefix,
       preservePaths: [this.storageDir, ...this.config.preservePaths],
-      quarantineDir: path5.join(this.storageDir, "ignored-quarantine")
+      quarantineDir: path5.join(this.storageDir, "ignored-quarantine"),
+      shadowObjectDir: this.config.shadowStore ? path5.join(this.storageDir, "git-shadow", "objects") : void 0
     });
     this.fallbackEngine = new FallbackSnapshotEngine({
       workDir: this.workDir,
@@ -1398,7 +1481,7 @@ var TimeMachineService = class {
       sessions: sessions.length,
       checkpoints,
       pruneCandidates: leaves,
-      gitObjectsShared: await this.gitEngine.isGitRepo()
+      gitObjectsShared: await this.gitEngine.isGitRepo() && !this.config.shadowStore
     };
   }
   async prune(sessionId, options = {}) {
@@ -2072,7 +2155,8 @@ var Config = Schema.object({
   preservePaths: Schema.array(Schema.string()).default(["node_modules"]),
   webHost: Schema.string().default("127.0.0.1"),
   maxSnapshots: Schema.number().default(0),
-  maxStorageBytes: Schema.number().default(0)
+  maxStorageBytes: Schema.number().default(0),
+  shadowStore: Schema.boolean().default(false)
 });
 function apply(ctx, config = {}) {
   const workDir = path7.resolve(process.cwd());

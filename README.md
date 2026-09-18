@@ -29,6 +29,7 @@ dsh --profile web
 /tm-prune [keep-latest] [--older-than=<7d|12h|30m>]
 /tm-prune [keep-latest] --repack-shadow
 /tm-quarantine-migrate <backup-key>
+/tm-external-compensate <checkpoint> <effect-id> [--execute]
 /tm-preview <checkpoint>
 /tm-restore-files <checkpoint> <path...> [--plan=<id>]
 /tm-fork <checkpoint> <branch>

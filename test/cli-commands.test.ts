@@ -87,4 +87,22 @@ describe('registered DSH time-machine commands', () => {
     expect(result.text).toContain('cli-created-session');
     expect(await fs.readFile(file, 'utf8')).toBe('before\n');
   });
+
+  it('shows conflicting paths in tm-preview output', async () => {
+    const sessionId = 'cli-preview-session';
+    const file = path.join(root, 'preview.txt');
+    await fs.writeFile(file, 'before\n', 'utf8');
+    const checkpoint = await service.createTurnCheckpoint({
+      sessionId, turnIndex: 1, prompt: 'preview boundary', sessionState: { sessionId, messages: [] },
+    });
+    await fs.writeFile(file, 'after\n', 'utf8');
+    await service.finalizeTurnCheckpoint({ sessionId, checkpointId: checkpoint.id, status: 'success' });
+    await fs.writeFile(file, 'local drift\n', 'utf8');
+
+    const result = await handlers['tm-preview']({
+      agent: { session: { id: sessionId } }, rawInput: checkpoint.id,
+    });
+    expect(result.kind).toBe('success');
+    expect(result.text).toContain('Conflicting paths: preview.txt');
+  });
 });

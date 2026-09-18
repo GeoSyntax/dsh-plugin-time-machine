@@ -128,6 +128,7 @@ TM_DSH_SOURCE=/path/to/deepseek-harness pnpm smoke:dsh:source
 - 当前一个插件实例管理一个启动时 `workDir`；不同 session `cwd` 会被跳过。
 - 默认模式下 Git 快照复用用户仓库的 object database 和私有 refs；需要独立对象目录时开启 `shadowStore`。
 - `shadowStore: true` 会把插件新写入的 Git objects 放到 `storageDir/git-shadow/objects`，主仓库 objects 仅作为只读 alternate；这是 opt-in。删除插件 refs 时会清理 shadow loose objects；显式 `--repack-shadow` 会按私有 refs 重建 pack，但不会改写或执行用户仓库的全局 Git GC。
+- Shadow Git objects 当前仍是明文 at rest；`GET /api/storage` 会明确返回 `gitObjectsEncrypted: false`。只有 ignored-file quarantine 可通过 `quarantineEncryptionKeyEnv` 加密，不能把 shadow store 当作加密备份。
 - 工作区变更操作带有跨进程文件锁；`workspaceLockTimeoutMs` 控制等待其他 DSH 实例的最长时间。它能避免并发覆盖，但不会替代为多个 Agent 创建独立 worktree。
 - `maxQuarantineBytes` 可选限制 ignored 文件 quarantine 的总容量；超过上限时返回 `QUARANTINE_QUOTA_EXCEEDED`，不会丢弃备份。
 - `quarantineEncryptionKeyEnv` 可选指定一个环境变量名；启用后 ignored-file quarantine 使用 AES-256-GCM 加密，密钥本身不会写入 DAG、manifest 或 Git refs。缺少密钥、密文损坏或发现旧的明文 quarantine 会返回 `QUARANTINE_KEY_INVALID` 并保留备份，不会静默删除或混用数据；明文迁移必须由运维显式执行。

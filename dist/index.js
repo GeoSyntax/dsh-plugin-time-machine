@@ -2458,7 +2458,9 @@ var TimeMachineService = class {
       sessions: sessions.length,
       checkpoints,
       pruneCandidates: leaves,
-      gitObjectsShared: await this.gitEngine.isGitRepo() && !this.config.shadowStore
+      gitObjectsShared: await this.gitEngine.isGitRepo() && !this.config.shadowStore,
+      gitObjectsEncrypted: false,
+      quarantineEncrypted: Boolean(this.config.quarantineEncryptionKeyEnv && process.env[this.config.quarantineEncryptionKeyEnv])
     };
   }
   /** Report runtime capabilities so Web/CLI integrations can fail early. */

@@ -454,6 +454,8 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
     await shadowService.rewindToCheckpoint(sessionId, checkpoint.id, { mode: 'force' });
     expect(await fs.readFile(file, 'utf8')).toBe('before\n');
     expect((await shadowService.getStorageStatus(sessionId)).gitObjectsShared).toBe(false);
+    expect((await shadowService.getStorageStatus(sessionId)).gitObjectsEncrypted).toBe(false);
+    expect((await shadowService.getStorageStatus(sessionId)).quarantineEncrypted).toBe(false);
     expect((await fs.readdir(path.join(tmpDir, '.shadow-service', 'git-shadow', 'objects'), { withFileTypes: true })).some(entry => entry.isDirectory())).toBe(true);
     const prune = await shadowService.prune(sessionId, { keepLatest: 0, compactHistory: true, repackShadowObjects: true });
     expect(prune.shadowObjectsReclaimedBytes).toBeDefined();

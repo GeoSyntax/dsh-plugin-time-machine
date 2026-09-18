@@ -748,6 +748,8 @@ export class TimeMachineService {
       checkpoints,
       pruneCandidates: leaves,
       gitObjectsShared: await this.gitEngine.isGitRepo() && !this.config.shadowStore,
+      gitObjectsEncrypted: false,
+      quarantineEncrypted: Boolean(this.config.quarantineEncryptionKeyEnv && process.env[this.config.quarantineEncryptionKeyEnv]),
     };
   }
 

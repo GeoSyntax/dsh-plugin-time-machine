@@ -76,7 +76,9 @@ compaction do not run repository-wide Git GC. Manual age filtering is available
 through `/tm-prune --older-than=...` and `olderThanMs` in the Web API, but
 automatic time-based expiration is available as the opt-in
 `retentionMaxAgeMs` policy; it protects current and branch-head checkpoints.
-Shadow-object encryption is not implemented yet. Ignored-file quarantine can be
+Shadow-object encryption is not implemented yet. `GET /api/storage` exposes this
+as `gitObjectsEncrypted: false`, so integrations cannot mistake an independent
+shadow directory for an encrypted backup. Ignored-file quarantine can be
 encrypted with `quarantineEncryptionKeyEnv`.
 
 Further reading:

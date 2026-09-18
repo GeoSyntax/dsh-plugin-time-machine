@@ -220,6 +220,9 @@ export interface StorageStatus {
   checkpoints: number;
   pruneCandidates: number;
   gitObjectsShared: boolean;
+  /** Shadow Git objects are currently plaintext at rest; quarantine may differ. */
+  gitObjectsEncrypted: boolean;
+  quarantineEncrypted: boolean;
 }
 
 export interface PruneResult {

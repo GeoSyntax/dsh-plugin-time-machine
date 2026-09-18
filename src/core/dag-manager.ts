@@ -147,7 +147,9 @@ export class DAGStateManager {
       this.tree.currentBranch = newBranchName;
       this.tree.currentCheckpointId = checkpointId;
     });
-    return cloneJson(baseNode);
+    // The checkpoint remains owned by its original branch, but callers need a
+    // branch-local view for session restart/UI responses.
+    return cloneJson({ ...baseNode, branch: newBranchName });
   }
 
   validateFork(checkpointId: string, newBranchName: string): CheckpointNode {

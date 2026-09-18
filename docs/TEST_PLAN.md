@@ -52,11 +52,13 @@
 | ID | 验证项 | 证据 |
 |---|---|---|
 | B-01 | TypeScript 构建成功 | `pnpm build` |
-| B-02 | 11 个现有测试全部通过 | `pnpm test` |
+| B-02 | 全部自动化测试通过 | `pnpm test` |
 | B-03 | 打包内容只包含声明文件 | `pnpm pack --dry-run` |
 | B-04 | 依赖无 high/critical 漏洞 | `pnpm audit --prod --audit-level=high` |
 | B-05 | 构建后的 `dist` 与提交内容一致 | CI `git diff --exit-code -- dist/...` |
 | B-06 | DSH bundle 能发现插件 | `pnpm smoke:dsh` 或源码 DSH 等价命令 |
+| B-07 | 本地 DSH 源码宿主加载插件 | `TM_DSH_SOURCE=... pnpm smoke:dsh:source` |
+| B-08 | 本地 OpenAI-compatible 模型驱动真实 turn | `TM_DSH_LIVE=1 TM_GEMINI_API_KEY=... pnpm smoke:dsh:source` |
 
 ### L1：纯逻辑单元测试
 
@@ -263,10 +265,11 @@ artifacts/<run-id>/
 
 当前已经有证据：
 
-- L1 核心测试 11/11 通过。
+- L1 核心测试 15/15 通过。
 - 真实 DSH 源码宿主加载插件通过。
 - 真实本地模型请求和文件创建通过。
 - 真实 checkpoint DAG 和 Dashboard status/dag 通过。
+- Web API rewind/fork、Host/JSON 安全、Session fork 失败补偿和重启 DAG 持久化已有自动化覆盖。
 
 仍需补齐的 P0/P1 证据：
 

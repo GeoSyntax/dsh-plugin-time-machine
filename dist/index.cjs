@@ -719,7 +719,7 @@ var DAGStateManager = class {
       this.tree.currentBranch = newBranchName;
       this.tree.currentCheckpointId = checkpointId;
     });
-    return cloneJson(baseNode);
+    return cloneJson({ ...baseNode, branch: newBranchName });
   }
   validateFork(checkpointId, newBranchName) {
     const baseNode = this.getNode(checkpointId);
@@ -1253,7 +1253,8 @@ var TimeMachineWebServer = class {
           }
           await this.handleStatic(res, pathname);
         } catch (err) {
-          res.writeHead(500, { "Content-Type": "application/json" });
+          const status = err?.code === "BAD_REQUEST" ? 400 : 500;
+          res.writeHead(status, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ error: err.message || "Internal Server Error" }));
         }
       });
@@ -1353,7 +1354,8 @@ var TimeMachineWebServer = class {
       req.on("data", (chunk) => {
         size += Buffer.byteLength(chunk);
         if (size > 64 * 1024) {
-          reject(new Error("JSON payload exceeds 64 KiB"));
+          const error = Object.assign(new Error("JSON payload exceeds 64 KiB"), { code: "BAD_REQUEST" });
+          reject(error);
           req.destroy();
           return;
         }
@@ -1363,7 +1365,7 @@ var TimeMachineWebServer = class {
         try {
           resolve(data ? JSON.parse(data) : {});
         } catch (e) {
-          reject(new Error("Invalid JSON payload"));
+          reject(Object.assign(new Error("Invalid JSON payload"), { code: "BAD_REQUEST" }));
         }
       });
       req.on("error", reject);

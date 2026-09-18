@@ -132,4 +132,40 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
     });
     expect(await fs.readFile(path.join(tmpDir, 'secret.env'), 'utf8')).toBe('token=do-not-persist\n');
   });
+
+  it('finalizes a turn and reloads its DAG state after a service restart', async () => {
+    const sessionId = 'restart-session';
+    const file = path.join(tmpDir, 'restart.txt');
+    await fs.writeFile(file, 'before\n', 'utf8');
+    const checkpoint = await service.createTurnCheckpoint({
+      sessionId,
+      turnIndex: 1,
+      prompt: 'restart boundary',
+      sessionState: { sessionId, messages: [{ role: 'user', content: 'restart boundary' }] },
+      status: 'running',
+    });
+
+    await fs.writeFile(file, 'after\n', 'utf8');
+    const finalized = await service.finalizeTurnCheckpoint({
+      sessionId,
+      checkpointId: checkpoint.id,
+      status: 'failed',
+      errorMessage: 'simulated turn failure',
+      failedTools: [{ toolName: 'write', input: { file }, error: 'simulated turn failure' }],
+    });
+
+    expect(finalized.status).toBe('failed');
+    expect(finalized.errorMessage).toBe('simulated turn failure');
+    expect(finalized.settledGitTreeOid).toHaveLength(40);
+
+    const restarted = new TimeMachineService({
+      workDir: tmpDir,
+      storageDir: path.join(tmpDir, '.dsh-tm'),
+    });
+    const dag = await restarted.getDAGManager(sessionId);
+    const loaded = dag.getNode(checkpoint.id);
+    expect(loaded?.status).toBe('failed');
+    expect(loaded?.sessionState.messages).toHaveLength(1);
+    expect(loaded?.failedTools?.[0]?.toolName).toBe('write');
+  });
 });

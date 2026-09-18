@@ -24,6 +24,7 @@
     "dev": "tsup --watch",
     "prepack": "pnpm build",
     "smoke:dsh": "node test/smoke-dsh.mjs",
+    "smoke:dsh:source": "node test/smoke-dsh-source.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "benchmark": "tsx test/benchmark.ts",

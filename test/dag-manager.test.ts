@@ -82,11 +82,13 @@ describe('DAGStateManager', () => {
     await dag.addNode(node2);
 
     // 从 chk_1 分叉出新探索分支
-    await dag.forkBranch('chk_1', 'exp/jwt-auth', 'Alternative JWT auth');
+    const forked = await dag.forkBranch('chk_1', 'exp/jwt-auth', 'Alternative JWT auth');
 
     expect(dag.tree.currentBranch).toBe('exp/jwt-auth');
     expect(dag.tree.currentCheckpointId).toBe('chk_1');
     expect(dag.tree.branches['exp/jwt-auth'].forkedFromId).toBe('chk_1');
+    expect(forked.branch).toBe('exp/jwt-auth');
+    expect(dag.getNode('chk_1')?.branch).toBe('main');
 
     // 验证废弃子树能够正确识别出在 node2 处的失败
     const abandoned = dag.getAbandonedSubtrees('chk_1', 'exp/jwt-auth');

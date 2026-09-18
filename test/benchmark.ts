@@ -99,12 +99,15 @@ async function runBenchmark() {
   console.log(pc.bold('📊 BENCHMARK RESULTS (Average of 5 Turns):'));
   console.log('───────────────────────────────────────────────────────────────────');
   console.log(`⏱️  Snapshot Latency:`);
+  const latencyRatio = avgGitTime / avgCopyTime;
   console.log(`   Traditional Copy  : ${pc.red(avgCopyTime.toFixed(2) + ' ms')}`);
-  console.log(`   Git Plumbing (Ours): ${pc.green(pc.bold(avgGitTime.toFixed(2) + ' ms'))}  -> ${pc.cyan(pc.bold((avgCopyTime / avgGitTime).toFixed(1) + 'x faster!'))}`);
+  console.log(`   Git Plumbing (Ours): ${pc.green(pc.bold(avgGitTime.toFixed(2) + ' ms'))}  -> ${pc.yellow(`${latencyRatio.toFixed(1)}x copy latency`)}`);
+  console.log(pc.dim('   Note: Git plumbing trades small-workspace latency for immutable history, isolated indexes, and deduplicated storage.'));
   console.log('');
   console.log(`💾 Total Storage Footprint:`);
+  const storageRatio = gitObjectsSize / Math.max(copyDiskSize, 1);
   console.log(`   Traditional Copy  : ${pc.red((copyDiskSize / 1024).toFixed(1) + ' KB')}`);
-  console.log(`   Git Plumbing (Ours): ${pc.green(pc.bold((gitObjectsSize / 1024).toFixed(1) + ' KB'))}  -> ${pc.cyan(pc.bold('Significant deduplication!'))}`);
+  console.log(`   Git Plumbing (Ours): ${pc.green(pc.bold((gitObjectsSize / 1024).toFixed(1) + ' KB'))}  -> ${pc.cyan(`${storageRatio.toFixed(1)}x copy storage`)}`);
   console.log('───────────────────────────────────────────────────────────────────\n');
 
   // 清理临时文件

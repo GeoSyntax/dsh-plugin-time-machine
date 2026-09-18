@@ -117,6 +117,12 @@ interface RestorePreview {
     workspaceDrifted: boolean;
     requiresForce: boolean;
 }
+interface SelectiveRestoreResult {
+    checkpointId: string;
+    restoredPaths: string[];
+    rescueCheckpointId?: string;
+    resultCheckpointId?: string;
+}
 interface ReflectionSummary {
     hasPastFailures: boolean;
     failedNodeCount: number;
@@ -237,6 +243,8 @@ declare class TimeMachineService {
      * 核心：回滚物理工作区与会话状态至指定快照
      */
     rewindToCheckpoint(sessionId: string, checkpointId: string, options?: RestoreOptions): Promise<RestoreResult>;
+    /** Restore selected workspace paths without changing the DSH conversation. */
+    restoreSelectedPaths(sessionId: string, checkpointId: string, paths: string[], options?: Pick<RestoreOptions, 'mode'>): Promise<SelectiveRestoreResult>;
     /**
      * 核心：从历史任意快照点 Fork 开辟新的平行探索分支
      */
@@ -289,6 +297,10 @@ interface GitRestoreOptions {
     deleteNewIgnoredPaths?: boolean;
     ignoredBackupKey?: string;
 }
+interface GitSelectiveRestoreOptions {
+    expectedCurrentTreeOid?: string;
+    mode?: 'safe' | 'force';
+}
 declare class WorkspaceDriftError extends Error {
     readonly details: string[];
     readonly code = "WORKSPACE_DRIFT";
@@ -330,6 +342,8 @@ declare class GitPlumbingEngine {
     restoreSnapshot(commitOrTreeOid: string, options?: GitRestoreOptions): Promise<{
         deletedIgnoredPaths: string[];
     }>;
+    /** Restore only selected tracked workspace paths using a disposable index. */
+    restoreSelectedPaths(commitOrTreeOid: string, paths: string[], options?: GitSelectiveRestoreOptions): Promise<string[]>;
     /** Restore quarantined ignored content without ever writing it into Git objects. */
     restoreIgnoredBackup(key: string): Promise<void>;
     getDiffBetween(baseOid: string, targetOid: string): Promise<DiffResult[]>;
@@ -369,6 +383,7 @@ declare class FallbackSnapshotEngine {
     }>;
     inspectWorkspace(): Promise<string>;
     restoreSnapshot(sessionId: string, checkpointId: string): Promise<void>;
+    restoreSelectedPaths(sessionId: string, checkpointId: string, paths: string[]): Promise<string[]>;
     private captureTree;
     private scanTree;
     private isPreserved;
@@ -449,4 +464,4 @@ declare class TimeMachinePlugin {
     constructor(ctx: Context, config?: Config);
 }
 
-export { type CheckpointNode, Config, type DAGManagerOptions, DAGStateManager, type DAGTree, type DiffResult, type FallbackOptions, FallbackSnapshotEngine, type FileChange, GitPlumbingEngine, type GitPlumbingOptions, type GitRestoreOptions, type GitSnapshot, ReflectionAdvisor, type ReflectionSummary, type RestoreOptions, type RestorePreview, type RestoreResult, type SessionMessage, type SessionState, type TimeMachineConfig, TimeMachinePlugin, TimeMachineService, type TimeMachineServiceOptions, WorkspaceDriftError, WorkspaceRestoreConflictError, apply, collectFailedTools, TimeMachinePlugin as default, name };
+export { type CheckpointNode, Config, type DAGManagerOptions, DAGStateManager, type DAGTree, type DiffResult, type FallbackOptions, FallbackSnapshotEngine, type FileChange, GitPlumbingEngine, type GitPlumbingOptions, type GitRestoreOptions, type GitSelectiveRestoreOptions, type GitSnapshot, ReflectionAdvisor, type ReflectionSummary, type RestoreOptions, type RestorePreview, type RestoreResult, type SelectiveRestoreResult, type SessionMessage, type SessionState, type TimeMachineConfig, TimeMachinePlugin, TimeMachineService, type TimeMachineServiceOptions, WorkspaceDriftError, WorkspaceRestoreConflictError, apply, collectFailedTools, TimeMachinePlugin as default, name };

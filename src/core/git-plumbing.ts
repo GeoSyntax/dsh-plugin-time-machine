@@ -30,6 +30,11 @@ export interface GitRestoreOptions {
   ignoredBackupKey?: string;
 }
 
+export interface GitSelectiveRestoreOptions {
+  expectedCurrentTreeOid?: string;
+  mode?: 'safe' | 'force';
+}
+
 export class WorkspaceDriftError extends Error {
   readonly code = 'WORKSPACE_DRIFT';
 
@@ -215,6 +220,61 @@ export class GitPlumbingEngine {
       await fs.rm(indexFile, { force: true }).catch(() => undefined);
     }
     return { deletedIgnoredPaths };
+  }
+
+  /** Restore only selected tracked workspace paths using a disposable index. */
+  async restoreSelectedPaths(
+    commitOrTreeOid: string,
+    paths: string[],
+    options: GitSelectiveRestoreOptions = {},
+  ): Promise<string[]> {
+    if (!(await this.isGitRepo())) throw new Error(`Working directory '${this.workDir}' is not a valid Git repository.`);
+    const normalized = [...new Set(paths.map(normalizeGitPath).filter(Boolean))];
+    if (normalized.length === 0) throw new Error('At least one workspace path is required.');
+    for (const relative of normalized) await this.safeWorkspacePath(relative);
+
+    const mode = options.mode ?? 'safe';
+    const current = await this.inspectWorkspace();
+    const ignoredSelection = current.ignoredPaths.filter(file => normalized.some(path => file === path || file.startsWith(`${path}/`)));
+    if (ignoredSelection.length) throw new WorkspaceRestoreConflictError(ignoredSelection);
+    if (mode === 'safe' && options.expectedCurrentTreeOid && current.treeOid !== options.expectedCurrentTreeOid) {
+      const changed = await this.diffNameOnly(options.expectedCurrentTreeOid, current.treeOid);
+      const selectedDrift = changed.filter(file => normalized.some(path => file === path || file.startsWith(`${path}/`)));
+      if (selectedDrift.length) throw new WorkspaceDriftError(selectedDrift);
+    }
+
+    const { stdout: treeStdout } = await this.runGit(['rev-parse', `${commitOrTreeOid}^{tree}`]);
+    const targetTree = treeStdout.trim();
+    const targetFiles = await this.listTreeFileNames(targetTree);
+    const currentFiles = await this.listTreeFileNames(current.treeOid);
+    const selectedTargetFiles = targetFiles.filter(file => normalized.some(path => file === path || file.startsWith(`${path}/`)));
+    const selectedCurrentFiles = currentFiles.filter(file => normalized.some(path => file === path || file.startsWith(`${path}/`)));
+    if (selectedTargetFiles.length === 0 && selectedCurrentFiles.length === 0) {
+      throw new Error(`None of the selected paths exist in the current or target snapshot: ${normalized.join(', ')}`);
+    }
+    const exportDir = path.join(await fs.mkdtemp(path.join(await fs.mkdtemp(path.join(this.workDir, '.dsh-tm-export-')), 'snapshot-')));
+    const indexFile = path.join(await this.getGitDir(), `dsh-tm-index-${randomUUID()}`);
+    try {
+      await fs.mkdir(exportDir, { recursive: true });
+      await this.runGit(['read-tree', targetTree], { GIT_INDEX_FILE: indexFile });
+      await this.runGit(['checkout-index', '--all', `--prefix=${exportDir}${path.sep}`], { GIT_INDEX_FILE: indexFile });
+      const targetSet = new Set(selectedTargetFiles);
+      for (const relative of selectedCurrentFiles) {
+        if (targetSet.has(relative)) continue;
+        await fs.rm(await this.safeWorkspacePath(relative), { recursive: true, force: true });
+      }
+      for (const relative of selectedTargetFiles) {
+        const source = path.join(exportDir, ...relative.split('/'));
+        const destination = await this.safeWorkspacePath(relative);
+        await fs.mkdir(path.dirname(destination), { recursive: true });
+        await fs.rm(destination, { recursive: true, force: true });
+        await fs.cp(source, destination, { recursive: true, force: true, verbatimSymlinks: true });
+      }
+      return normalized;
+    } finally {
+      await fs.rm(indexFile, { force: true }).catch(() => undefined);
+      await fs.rm(path.dirname(exportDir), { recursive: true, force: true }).catch(() => undefined);
+    }
   }
 
   /** Restore quarantined ignored content without ever writing it into Git objects. */

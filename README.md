@@ -26,11 +26,12 @@ dsh --profile web
 ```text
 /tm-tree
 /tm-preview <checkpoint>
+/tm-restore-files <checkpoint> <path...>
 /tm-fork <checkpoint> <branch>
 /tm-rewind <checkpoint>
 ```
 
-插件会在每个 turn 开始前创建 checkpoint。`/tm-tree` 显示当前 DAG；`/tm-preview` 在不修改文件的情况下列出回滚影响；`/tm-fork` 从旧状态创建平行会话；`/tm-rewind` 恢复工作区并通过 DSH `sessionController` 创建对齐的新会话。Web 仪表盘的 rewind 也会先执行同样的预览。
+插件会在每个 turn 开始前创建 checkpoint。`/tm-tree` 显示当前 DAG；`/tm-preview` 在不修改文件的情况下列出回滚影响；`/tm-restore-files` 只恢复指定路径并保持当前会话不变；`/tm-fork` 从旧状态创建平行会话；`/tm-rewind` 恢复工作区并通过 DSH `sessionController` 创建对齐的新会话。Web 仪表盘的 rewind 也会先执行同样的预览。
 
 ## What you can do
 
@@ -41,6 +42,7 @@ dsh --profile web
 - **回顾失败原因:** failed turn、stderr 和失败工具会生成 fork 前的 reflection advisory，减少重复踩坑。
 - **运行在非 Git 目录:** fallback 后端使用 manifest 和内容哈希快照，支持普通文件、目录和 symlink。
 - **先看再回滚:** Git 工作区提供文本 diff；非 Git fallback 至少列出将被目标快照覆盖的路径，并明确提示暂不提供文本 diff。
+- **选择性恢复:** `/tm-restore-files` 只写入指定文件/目录，并创建 rescue 和结果 checkpoint；它不会伪造会话回滚。
 
 ## Safety model
 

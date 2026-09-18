@@ -154,6 +154,30 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
     expect((await service.getDAGManager(sessionId)).tree.currentCheckpointId).toBe(second.id);
   });
 
+  it('restores selected paths while preserving other workspace files and conversation state', async () => {
+    const sessionId = 'selective-session';
+    const left = path.join(tmpDir, 'left.txt');
+    const right = path.join(tmpDir, 'right.txt');
+    await fs.writeFile(left, 'left-v1\n', 'utf8');
+    await fs.writeFile(right, 'right-v1\n', 'utf8');
+    const first = await service.createTurnCheckpoint({
+      sessionId, turnIndex: 1, prompt: 'initial', sessionState: { sessionId, messages: [{ role: 'user', content: 'keep me' }] },
+    });
+    await fs.writeFile(left, 'left-v2\n', 'utf8');
+    await fs.writeFile(right, 'right-v2\n', 'utf8');
+    await service.createTurnCheckpoint({
+      sessionId, turnIndex: 2, prompt: 'change both', sessionState: { sessionId, messages: [{ role: 'user', content: 'current' }] },
+    });
+
+    const result = await service.restoreSelectedPaths(sessionId, first.id, ['left.txt']);
+    expect(result.restoredPaths).toEqual(['left.txt']);
+    expect(await fs.readFile(left, 'utf8')).toBe('left-v1\n');
+    expect(await fs.readFile(right, 'utf8')).toBe('right-v2\n');
+    const dag = await service.getDAGManager(sessionId);
+    expect(dag.getCurrentNode()?.tags).toContain('selective-restore');
+    expect(dag.getCurrentNode()?.sessionState.messages[0]?.content).toBe('current');
+  });
+
   it('finalizes a turn and reloads its DAG state after a service restart', async () => {
     const sessionId = 'restart-session';
     const file = path.join(tmpDir, 'restart.txt');
@@ -231,6 +255,14 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
       await fs.writeFile(file, 'v2\n', 'utf8');
       await fallback.rewindToCheckpoint('fallback-session', checkpoint.id, { mode: 'force' });
       expect(await fs.readFile(file, 'utf8')).toBe('v1\n');
+
+      await fs.writeFile(file, 'v3\n', 'utf8');
+      const untouched = path.join(fallbackRoot, 'untouched.txt');
+      await fs.writeFile(untouched, 'keep\n', 'utf8');
+      const selective = await fallback.restoreSelectedPaths('fallback-session', checkpoint.id, ['state.txt']);
+      expect(selective.restoredPaths).toEqual(['state.txt']);
+      expect(await fs.readFile(file, 'utf8')).toBe('v1\n');
+      expect(await fs.readFile(untouched, 'utf8')).toBe('keep\n');
     } finally {
       await fs.rm(fallbackRoot, { recursive: true, force: true });
     }

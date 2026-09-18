@@ -108,6 +108,41 @@ export class FallbackSnapshotEngine {
     }
   }
 
+  async restoreSelectedPaths(sessionId: string, checkpointId: string, paths: string[]): Promise<string[]> {
+    const normalized = [...new Set(paths.map(normalizeFallbackPath).filter(Boolean))];
+    if (normalized.length === 0) throw new Error('At least one workspace path is required.');
+    const snapshotDir = this.getCheckpointDir(sessionId, checkpointId);
+    const raw = await fs.readFile(path.join(snapshotDir, 'manifest.json'), 'utf8');
+    const manifest = parseManifest(raw);
+    const filesDir = path.join(snapshotDir, 'files');
+    const selected = (entry: SnapshotEntry) => normalized.some(item => entry.path === item || entry.path.startsWith(`${item}/`));
+    const currentEntries = (await this.scanTree(this.workDir)).filter(selected).sort(deepestFirst);
+    const targetEntries = manifest.entries.filter(selected);
+    if (currentEntries.length === 0 && targetEntries.length === 0) {
+      throw new Error(`None of the selected paths exist in the current or target snapshot: ${normalized.join(', ')}`);
+    }
+    const targetPaths = new Set(targetEntries.map(entry => entry.path));
+    for (const entry of currentEntries) {
+      if (!targetPaths.has(entry.path)) await fs.rm(this.resolveSafe(entry.path), { recursive: true, force: true });
+    }
+    for (const entry of targetEntries.filter(item => item.type === 'directory').sort(shallowestFirst)) {
+      const destination = this.resolveSafe(entry.path);
+      await fs.mkdir(destination, { recursive: true, mode: entry.mode });
+    }
+    for (const entry of targetEntries.filter(item => item.type !== 'directory')) {
+      const destination = this.resolveSafe(entry.path);
+      await fs.mkdir(path.dirname(destination), { recursive: true });
+      await fs.rm(destination, { recursive: true, force: true });
+      if (entry.type === 'file') {
+        await fs.copyFile(path.join(filesDir, ...entry.path.split('/')), destination);
+        await fs.chmod(destination, entry.mode).catch(() => undefined);
+      } else {
+        await fs.symlink(entry.linkTarget!, destination);
+      }
+    }
+    return normalized;
+  }
+
   private async captureTree(sourceRoot: string, destinationRoot: string): Promise<SnapshotEntry[]> {
     const entries = await this.scanTree(sourceRoot);
     for (const entry of entries) {
@@ -190,6 +225,12 @@ function validateRelativePath(value: string): void {
   if (!value || value.includes('\0') || value.includes('\\') || path.posix.isAbsolute(value) || value.split('/').some(part => part === '' || part === '.' || part === '..')) {
     throw new Error(`Unsafe relative path '${value}'.`);
   }
+}
+
+function normalizeFallbackPath(value: string): string {
+  const normalized = value.replace(/\\/g, '/').replace(/^\.\//, '');
+  validateRelativePath(normalized);
+  return normalized;
 }
 
 function deepestFirst(left: SnapshotEntry, right: SnapshotEntry): number {

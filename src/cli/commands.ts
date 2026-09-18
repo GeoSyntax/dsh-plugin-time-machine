@@ -72,6 +72,21 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
     });
 
     scope.commands.register({
+      name: 'tm-restore-files',
+      description: 'Restore selected workspace paths from a checkpoint without changing conversation',
+      input: { hint: '<checkpoint> <path...> [--force]' },
+      handler: async ({ agent, rawInput }: CommandInvocationLike): Promise<CommandResult> => {
+        const args = rawInput.trim().split(/\s+/).filter(Boolean);
+        const positionals = args.filter(arg => !arg.startsWith('--'));
+        if (positionals.length < 2) return { kind: 'error', text: 'Usage: /tm-restore-files <checkpoint> <path...> [--force]' };
+        const result = await service.restoreSelectedPaths(agent.session.id, positionals[0], positionals.slice(1), {
+          mode: args.includes('--force') ? 'force' : undefined,
+        });
+        return { kind: 'success', text: `Restored ${result.restoredPaths.join(', ')} from ${positionals[0]}. Conversation unchanged. Result checkpoint: ${result.resultCheckpointId ?? 'none'}.` };
+      },
+    });
+
+    scope.commands.register({
       name: 'tm-fork',
       description: 'Create a named exploration branch from a checkpoint',
       input: { hint: '<checkpoint> <branch> [--force]' },

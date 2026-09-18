@@ -230,6 +230,54 @@ Reason: ${errorMsg}`);
         }
         return { deletedIgnoredPaths };
       }
+      /** Restore only selected tracked workspace paths using a disposable index. */
+      async restoreSelectedPaths(commitOrTreeOid, paths, options = {}) {
+        if (!await this.isGitRepo()) throw new Error(`Working directory '${this.workDir}' is not a valid Git repository.`);
+        const normalized = [...new Set(paths.map(normalizeGitPath).filter(Boolean))];
+        if (normalized.length === 0) throw new Error("At least one workspace path is required.");
+        for (const relative of normalized) await this.safeWorkspacePath(relative);
+        const mode = options.mode ?? "safe";
+        const current = await this.inspectWorkspace();
+        const ignoredSelection = current.ignoredPaths.filter((file) => normalized.some((path7) => file === path7 || file.startsWith(`${path7}/`)));
+        if (ignoredSelection.length) throw new WorkspaceRestoreConflictError(ignoredSelection);
+        if (mode === "safe" && options.expectedCurrentTreeOid && current.treeOid !== options.expectedCurrentTreeOid) {
+          const changed = await this.diffNameOnly(options.expectedCurrentTreeOid, current.treeOid);
+          const selectedDrift = changed.filter((file) => normalized.some((path7) => file === path7 || file.startsWith(`${path7}/`)));
+          if (selectedDrift.length) throw new WorkspaceDriftError(selectedDrift);
+        }
+        const { stdout: treeStdout } = await this.runGit(["rev-parse", `${commitOrTreeOid}^{tree}`]);
+        const targetTree = treeStdout.trim();
+        const targetFiles = await this.listTreeFileNames(targetTree);
+        const currentFiles = await this.listTreeFileNames(current.treeOid);
+        const selectedTargetFiles = targetFiles.filter((file) => normalized.some((path7) => file === path7 || file.startsWith(`${path7}/`)));
+        const selectedCurrentFiles = currentFiles.filter((file) => normalized.some((path7) => file === path7 || file.startsWith(`${path7}/`)));
+        if (selectedTargetFiles.length === 0 && selectedCurrentFiles.length === 0) {
+          throw new Error(`None of the selected paths exist in the current or target snapshot: ${normalized.join(", ")}`);
+        }
+        const exportDir = import_node_path.default.join(await import_promises.default.mkdtemp(import_node_path.default.join(await import_promises.default.mkdtemp(import_node_path.default.join(this.workDir, ".dsh-tm-export-")), "snapshot-")));
+        const indexFile = import_node_path.default.join(await this.getGitDir(), `dsh-tm-index-${(0, import_node_crypto.randomUUID)()}`);
+        try {
+          await import_promises.default.mkdir(exportDir, { recursive: true });
+          await this.runGit(["read-tree", targetTree], { GIT_INDEX_FILE: indexFile });
+          await this.runGit(["checkout-index", "--all", `--prefix=${exportDir}${import_node_path.default.sep}`], { GIT_INDEX_FILE: indexFile });
+          const targetSet = new Set(selectedTargetFiles);
+          for (const relative of selectedCurrentFiles) {
+            if (targetSet.has(relative)) continue;
+            await import_promises.default.rm(await this.safeWorkspacePath(relative), { recursive: true, force: true });
+          }
+          for (const relative of selectedTargetFiles) {
+            const source = import_node_path.default.join(exportDir, ...relative.split("/"));
+            const destination = await this.safeWorkspacePath(relative);
+            await import_promises.default.mkdir(import_node_path.default.dirname(destination), { recursive: true });
+            await import_promises.default.rm(destination, { recursive: true, force: true });
+            await import_promises.default.cp(source, destination, { recursive: true, force: true, verbatimSymlinks: true });
+          }
+          return normalized;
+        } finally {
+          await import_promises.default.rm(indexFile, { force: true }).catch(() => void 0);
+          await import_promises.default.rm(import_node_path.default.dirname(exportDir), { recursive: true, force: true }).catch(() => void 0);
+        }
+      }
       /** Restore quarantined ignored content without ever writing it into Git objects. */
       async restoreIgnoredBackup(key) {
         if (!this.quarantineDir) return;
@@ -501,6 +549,40 @@ var FallbackSnapshotEngine = class {
       }
     }
   }
+  async restoreSelectedPaths(sessionId, checkpointId, paths) {
+    const normalized = [...new Set(paths.map(normalizeFallbackPath).filter(Boolean))];
+    if (normalized.length === 0) throw new Error("At least one workspace path is required.");
+    const snapshotDir = this.getCheckpointDir(sessionId, checkpointId);
+    const raw = await import_promises2.default.readFile(import_node_path2.default.join(snapshotDir, "manifest.json"), "utf8");
+    const manifest = parseManifest(raw);
+    const filesDir = import_node_path2.default.join(snapshotDir, "files");
+    const selected = (entry) => normalized.some((item) => entry.path === item || entry.path.startsWith(`${item}/`));
+    const currentEntries = (await this.scanTree(this.workDir)).filter(selected).sort(deepestFirst);
+    const targetEntries = manifest.entries.filter(selected);
+    if (currentEntries.length === 0 && targetEntries.length === 0) {
+      throw new Error(`None of the selected paths exist in the current or target snapshot: ${normalized.join(", ")}`);
+    }
+    const targetPaths = new Set(targetEntries.map((entry) => entry.path));
+    for (const entry of currentEntries) {
+      if (!targetPaths.has(entry.path)) await import_promises2.default.rm(this.resolveSafe(entry.path), { recursive: true, force: true });
+    }
+    for (const entry of targetEntries.filter((item) => item.type === "directory").sort(shallowestFirst)) {
+      const destination = this.resolveSafe(entry.path);
+      await import_promises2.default.mkdir(destination, { recursive: true, mode: entry.mode });
+    }
+    for (const entry of targetEntries.filter((item) => item.type !== "directory")) {
+      const destination = this.resolveSafe(entry.path);
+      await import_promises2.default.mkdir(import_node_path2.default.dirname(destination), { recursive: true });
+      await import_promises2.default.rm(destination, { recursive: true, force: true });
+      if (entry.type === "file") {
+        await import_promises2.default.copyFile(import_node_path2.default.join(filesDir, ...entry.path.split("/")), destination);
+        await import_promises2.default.chmod(destination, entry.mode).catch(() => void 0);
+      } else {
+        await import_promises2.default.symlink(entry.linkTarget, destination);
+      }
+    }
+    return normalized;
+  }
   async captureTree(sourceRoot, destinationRoot) {
     const entries = await this.scanTree(sourceRoot);
     for (const entry of entries) {
@@ -577,6 +659,11 @@ function validateRelativePath(value) {
   if (!value || value.includes("\0") || value.includes("\\") || import_node_path2.default.posix.isAbsolute(value) || value.split("/").some((part) => part === "" || part === "." || part === "..")) {
     throw new Error(`Unsafe relative path '${value}'.`);
   }
+}
+function normalizeFallbackPath(value) {
+  const normalized = value.replace(/\\/g, "/").replace(/^\.\//, "");
+  validateRelativePath(normalized);
+  return normalized;
 }
 function deepestFirst(left, right) {
   return right.path.split("/").length - left.path.split("/").length || right.path.localeCompare(left.path);
@@ -1093,6 +1180,59 @@ var TimeMachineService = class {
       };
     });
   }
+  /** Restore selected workspace paths without changing the DSH conversation. */
+  async restoreSelectedPaths(sessionId, checkpointId, paths, options = {}) {
+    return this.operations.run(this.workDir, async () => {
+      const dag = await this.getDAGManager(sessionId);
+      const target = dag.getNode(checkpointId);
+      if (!target) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
+      const current = dag.getCurrentNode();
+      let rescue;
+      if (current) {
+        rescue = await this.createTurnCheckpointUnlocked({
+          sessionId,
+          turnIndex: current.turnIndex,
+          prompt: "[automatic selective-restore rescue point]",
+          summary: `Rescue point before selectively restoring ${checkpointId}`,
+          sessionState: current.sessionState,
+          status: "success",
+          tags: ["rescue", "selective-restore"]
+        });
+      }
+      try {
+        const isGit = await this.gitEngine.isGitRepo();
+        if (isGit && !target.gitCommitOid.startsWith("fallback_")) {
+          await this.gitEngine.restoreSelectedPaths(target.gitCommitOid, paths, {
+            mode: options.mode ?? this.config.restoreMode,
+            expectedCurrentTreeOid: rescue?.gitTreeOid ?? current?.gitTreeOid
+          });
+        } else {
+          await this.fallbackEngine.restoreSelectedPaths(target.sessionState.sessionId, target.id, paths);
+        }
+        const resultNode = await this.createTurnCheckpointUnlocked({
+          sessionId,
+          turnIndex: current?.turnIndex ?? target.turnIndex,
+          prompt: `[selective restore] ${checkpointId}`,
+          summary: `Restored selected paths from ${checkpointId}`,
+          sessionState: current?.sessionState ?? target.sessionState,
+          status: "success",
+          tags: ["selective-restore"]
+        });
+        return {
+          checkpointId,
+          restoredPaths: [...new Set(paths)],
+          rescueCheckpointId: rescue?.id,
+          resultCheckpointId: resultNode.id
+        };
+      } catch (error) {
+        if (rescue) {
+          await this.restoreNode(rescue, void 0, { mode: "force", createRescuePoint: false });
+          await dag.rewindTo(rescue.id);
+        }
+        throw error;
+      }
+    });
+  }
   /**
    * 核心：从历史任意快照点 Fork 开辟新的平行探索分支
    */
@@ -1393,6 +1533,18 @@ var TimeMachineWebServer = class {
       res.end(JSON.stringify({ success: true, result, conversation }));
       return;
     }
+    if (pathname === "/api/restore-files" && req.method === "POST") {
+      const body = await this.readJsonBody(req);
+      const sessionId = body.sessionId || "default";
+      const paths = Array.isArray(body.paths) ? body.paths.filter((item) => typeof item === "string") : [];
+      if (!body.checkpointId || paths.length === 0) throw Object.assign(new Error("checkpointId and non-empty paths are required"), { code: "BAD_REQUEST" });
+      const result = await this.service.restoreSelectedPaths(sessionId, body.checkpointId, paths, {
+        mode: body.force === true ? "force" : void 0
+      });
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: true, result }));
+      return;
+    }
     if (pathname === "/api/fork" && req.method === "POST") {
       const body = await this.readJsonBody(req);
       const { sessionId, checkpointId, branchName, description } = body;
@@ -1571,6 +1723,20 @@ function registerCliCommands(ctx, service) {
         const files = preview.diffs.length ? preview.diffs.map((item) => `${item.status} ${item.file}`).join(", ") : "no managed file changes";
         const ignored = preview.ignoredPathsToDelete.length ? ` Ignored paths to delete: ${preview.ignoredPathsToDelete.join(", ")}.` : "";
         return { kind: "success", text: `Preview ${checkpointId}: ${drift}. Changes: ${files}.${ignored}` };
+      }
+    });
+    scope.commands.register({
+      name: "tm-restore-files",
+      description: "Restore selected workspace paths from a checkpoint without changing conversation",
+      input: { hint: "<checkpoint> <path...> [--force]" },
+      handler: async ({ agent, rawInput }) => {
+        const args = rawInput.trim().split(/\s+/).filter(Boolean);
+        const positionals = args.filter((arg) => !arg.startsWith("--"));
+        if (positionals.length < 2) return { kind: "error", text: "Usage: /tm-restore-files <checkpoint> <path...> [--force]" };
+        const result = await service.restoreSelectedPaths(agent.session.id, positionals[0], positionals.slice(1), {
+          mode: args.includes("--force") ? "force" : void 0
+        });
+        return { kind: "success", text: `Restored ${result.restoredPaths.join(", ")} from ${positionals[0]}. Conversation unchanged. Result checkpoint: ${result.resultCheckpointId ?? "none"}.` };
       }
     });
     scope.commands.register({

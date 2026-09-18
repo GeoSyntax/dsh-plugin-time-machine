@@ -13,6 +13,7 @@ import type {
   RestorePreview,
   RestoreOptions,
   RestoreResult,
+  SelectiveRestoreResult,
   SessionState,
   TimeMachineConfig,
 } from './types.js';
@@ -216,6 +217,57 @@ export class TimeMachineService {
         rescueCheckpointId: restored.rescue?.id,
         deletedIgnoredPaths: restored.deletedIgnoredPaths,
       };
+    });
+  }
+
+  /** Restore selected workspace paths without changing the DSH conversation. */
+  async restoreSelectedPaths(
+    sessionId: string,
+    checkpointId: string,
+    paths: string[],
+    options: Pick<RestoreOptions, 'mode'> = {},
+  ): Promise<SelectiveRestoreResult> {
+    return this.operations.run(this.workDir, async () => {
+      const dag = await this.getDAGManager(sessionId);
+      const target = dag.getNode(checkpointId);
+      if (!target) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
+      const current = dag.getCurrentNode();
+      let rescue: CheckpointNode | undefined;
+      if (current) {
+        rescue = await this.createTurnCheckpointUnlocked({
+          sessionId, turnIndex: current.turnIndex, prompt: '[automatic selective-restore rescue point]',
+          summary: `Rescue point before selectively restoring ${checkpointId}`, sessionState: current.sessionState,
+          status: 'success', tags: ['rescue', 'selective-restore'],
+        });
+      }
+      try {
+        const isGit = await this.gitEngine.isGitRepo();
+        if (isGit && !target.gitCommitOid.startsWith('fallback_')) {
+          await this.gitEngine.restoreSelectedPaths(target.gitCommitOid, paths, {
+            mode: options.mode ?? this.config.restoreMode,
+            expectedCurrentTreeOid: rescue?.gitTreeOid ?? current?.gitTreeOid,
+          });
+        } else {
+          await this.fallbackEngine.restoreSelectedPaths(target.sessionState.sessionId, target.id, paths);
+        }
+        const resultNode = await this.createTurnCheckpointUnlocked({
+          sessionId, turnIndex: current?.turnIndex ?? target.turnIndex,
+          prompt: `[selective restore] ${checkpointId}`, summary: `Restored selected paths from ${checkpointId}`,
+          sessionState: current?.sessionState ?? target.sessionState, status: 'success', tags: ['selective-restore'],
+        });
+        return {
+          checkpointId,
+          restoredPaths: [...new Set(paths)],
+          rescueCheckpointId: rescue?.id,
+          resultCheckpointId: resultNode.id,
+        };
+      } catch (error) {
+        if (rescue) {
+          await this.restoreNode(rescue, undefined, { mode: 'force', createRescuePoint: false });
+          await dag.rewindTo(rescue.id);
+        }
+        throw error;
+      }
     });
   }
 

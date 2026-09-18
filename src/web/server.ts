@@ -141,6 +141,19 @@ export class TimeMachineWebServer {
       return;
     }
 
+    if (pathname === '/api/restore-files' && req.method === 'POST') {
+      const body = await this.readJsonBody(req);
+      const sessionId = body.sessionId || 'default';
+      const paths = Array.isArray(body.paths) ? body.paths.filter((item: unknown): item is string => typeof item === 'string') : [];
+      if (!body.checkpointId || paths.length === 0) throw Object.assign(new Error('checkpointId and non-empty paths are required'), { code: 'BAD_REQUEST' });
+      const result = await this.service.restoreSelectedPaths(sessionId, body.checkpointId, paths, {
+        mode: body.force === true ? 'force' : undefined,
+      });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, result }));
+      return;
+    }
+
     if (pathname === '/api/fork' && req.method === 'POST') {
       const body = await this.readJsonBody(req);
       const { sessionId, checkpointId, branchName, description } = body;

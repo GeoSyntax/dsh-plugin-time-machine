@@ -120,6 +120,13 @@ export interface RestorePreview {
   requiresForce: boolean;
 }
 
+export interface SelectiveRestoreResult {
+  checkpointId: string;
+  restoredPaths: string[];
+  rescueCheckpointId?: string;
+  resultCheckpointId?: string;
+}
+
 export interface ReflectionSummary {
   hasPastFailures: boolean;
   failedNodeCount: number;

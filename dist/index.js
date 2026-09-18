@@ -468,27 +468,29 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
             await this.runGit(["read-tree", "--empty"], env, root);
           }
           const protectedPaths = this.protectedRepoPaths(root);
-          const { stdout: candidates } = await this.runGit([
-            "ls-files",
-            "-z",
-            "--cached",
-            "--modified",
-            "--deleted",
-            "--others",
-            "--exclude-standard"
-          ], {}, root);
-          const candidateFiles = candidates.split("\0").filter(Boolean).map(normalizeGitPath).filter((file) => !protectedPaths.some(
-            (relative) => file === relative || file.startsWith(`${relative}/`)
-          ));
-          if (enforceSnapshotLimits) await this.assertSnapshotSize(root, candidateFiles);
-          for (let offset = 0; offset < candidateFiles.length; offset += 128) {
-            await this.runGit(["add", "-A", "--", ...candidateFiles.slice(offset, offset + 128)], env, root);
+          if (enforceSnapshotLimits || protectedPaths.length === 0) {
+            const { stdout: candidates } = await this.runGit([
+              "ls-files",
+              "-z",
+              "--cached",
+              "--modified",
+              "--deleted",
+              "--others",
+              "--exclude-standard"
+            ], {}, root);
+            const candidateFiles = candidates.split("\0").filter(Boolean).map(normalizeGitPath).filter((file) => !protectedPaths.some(
+              (relative) => file === relative || file.startsWith(`${relative}/`)
+            ));
+            if (enforceSnapshotLimits) await this.assertSnapshotSize(root, candidateFiles);
+            for (let offset = 0; offset < candidateFiles.length; offset += 128) {
+              await this.runGit(["add", "-A", "--", ...candidateFiles.slice(offset, offset + 128)], env, root);
+            }
+          } else {
+            const excludes = protectedPaths.map((relative) => `:(exclude)${relative}`);
+            await this.runGit(["add", "-A", "--", ".", ...excludes], env, root);
           }
-          const { stdout: indexedFiles } = await this.runGit(["ls-files", "-z"], env, root);
-          const indexedEntries = indexedFiles.split("\0").filter(Boolean);
-          const protectedEntries = indexedEntries.filter((file) => protectedPaths.some(
-            (relative) => file === relative || file.startsWith(`${relative}/`)
-          ));
+          const { stdout: indexedFiles } = protectedPaths.length === 0 ? { stdout: "" } : await this.runGit(["ls-files", "-z", "--cached", "--", ...protectedPaths], env, root);
+          const protectedEntries = indexedFiles.split("\0").filter(Boolean).map(normalizeGitPath);
           for (let offset = 0; offset < protectedEntries.length; offset += 128) {
             await this.runGit(
               ["update-index", "--force-remove", "--", ...protectedEntries.slice(offset, offset + 128)],

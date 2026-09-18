@@ -126,7 +126,7 @@ TM_DSH_SOURCE=/path/to/deepseek-harness pnpm smoke:dsh:source
 - 当前 manifest 只声明 `web` profile；原生 TUI 不在兼容承诺范围内。
 - Hermes Agent v2 已有自己的 checkpoint/rollback；本插件适合需要 DSH Session fork、DAG 探索或失败反思的场景。
 
-问题定义、设计取舍、同类能力对照和完整验收矩阵见 [docs/PROBLEM.md](docs/PROBLEM.md)、[docs/COMPARISON.md](docs/COMPARISON.md)、[DESIGN.md](DESIGN.md) 和 [docs/TEST_PLAN.md](docs/TEST_PLAN.md)。
+问题定义、设计取舍、同类能力对照、社区路线图和完整验收矩阵见 [docs/PROBLEM.md](docs/PROBLEM.md)、[docs/COMPARISON.md](docs/COMPARISON.md)、[docs/ROADMAP.md](docs/ROADMAP.md)、[DESIGN.md](DESIGN.md) 和 [docs/TEST_PLAN.md](docs/TEST_PLAN.md)。
 
 ## License
 

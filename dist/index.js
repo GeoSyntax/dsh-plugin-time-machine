@@ -129,7 +129,8 @@ var init_git_plumbing = __esm({
       async getRepoRoot() {
         if (this.repoRootCached) return this.repoRootCached;
         const { stdout } = await this.runGit(["rev-parse", "--show-toplevel"]);
-        this.repoRootCached = path2.resolve(stdout.trim());
+        this.repoRootCached = await fs.realpath(path2.resolve(stdout.trim())).catch(() => path2.resolve(stdout.trim()));
+        this.preservePaths = await Promise.all(this.preservePaths.map(async (absolute) => await fs.realpath(absolute).catch(() => absolute)));
         return this.repoRootCached;
       }
       async getGitDir() {

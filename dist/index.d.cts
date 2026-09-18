@@ -403,7 +403,7 @@ declare class QuarantineQuotaError extends Error {
 declare class GitPlumbingEngine {
     readonly workDir: string;
     readonly refPrefix: string;
-    private readonly preservePaths;
+    private preservePaths;
     private readonly quarantineDir?;
     private isRepoCached;
     private repoRootCached;

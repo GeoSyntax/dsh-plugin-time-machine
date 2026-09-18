@@ -269,7 +269,7 @@ artifacts/<run-id>/
 
 当前已经有证据：
 
-- L1 核心测试 22/22 通过；新增 DSH durable `tool/call`/`tool/result` 失败配对、反思输入提取，以及失败 fork 点反思测试。
+- L1 核心测试 23/23 通过；新增 DSH durable `tool/call`/`tool/result` 失败配对、反思输入提取、失败 fork 点反思，以及 Web fork 失败补偿测试。
 - Git 与 fallback 恢复完成后均执行工作区摘要校验；持久化 DAG 加载会校验节点、父节点、分支和会话归属。
 - 真实 DSH 源码宿主加载插件通过。
 - 真实本地模型请求、文件创建、turn 结束后的 finalized checkpoint 落盘通过。

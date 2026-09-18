@@ -146,6 +146,47 @@ describe('TimeMachineWebServer', () => {
     expect(current.tags).toContain('rescue');
   });
 
+  it('should compensate a physical fork when conversation restart fails', async () => {
+    const file = path.join(tmpDir, 'fork-compensation.txt');
+    await fs.writeFile(file, 'before\n', 'utf8');
+    const first = await service.createTurnCheckpoint({
+      sessionId: 'fork-compensation-session',
+      turnIndex: 1,
+      prompt: 'before',
+      sessionState: { sessionId: 'fork-compensation-session', messages: [] },
+    });
+    await fs.writeFile(file, 'after\n', 'utf8');
+    await service.createTurnCheckpoint({
+      sessionId: 'fork-compensation-session',
+      turnIndex: 2,
+      prompt: 'after',
+      sessionState: { sessionId: 'fork-compensation-session', messages: [] },
+    });
+
+    await server.stop();
+    server = new TimeMachineWebServer(service, testPort, '127.0.0.1', {
+      restartConversation: async () => { throw new Error('simulated fork session failure'); },
+    });
+    await server.start();
+
+    const response = await fetch(`http://localhost:${testPort}/api/fork`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        sessionId: 'fork-compensation-session',
+        checkpointId: first.id,
+        branchName: 'failed-web-hotfix',
+      }),
+    });
+    expect(response.status).toBe(500);
+    expect((await response.json()).error).toContain('simulated fork session failure');
+    expect(await fs.readFile(file, 'utf8')).toBe('after\n');
+
+    const dag = await (await fetch(`http://localhost:${testPort}/api/dag?sessionId=fork-compensation-session`)).json();
+    const current = dag.nodes[dag.currentCheckpointId];
+    expect(current.tags).toContain('rescue');
+  });
+
   it('should reject hostile host headers, malformed JSON, and missing API capabilities', async () => {
     const hostile = await requestWithHost(testPort, 'attacker.example');
     expect(hostile).toBe(403);

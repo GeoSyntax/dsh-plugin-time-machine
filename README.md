@@ -92,6 +92,22 @@ dsh --profile web
 
 Web dashboard 只绑定 loopback，并拒绝非本机 Host 和跨 origin 请求。`/tm-rewind` 与 `/tm-fork` 需要宿主提供 `sessionController`，否则插件会拒绝只恢复文件的危险降级行为。
 
+## Verification
+
+```bash
+pnpm test
+pnpm test:release
+pnpm benchmark
+```
+
+如果本地有从源码构建的 DSH，可验证真实宿主加载（不会调用模型）：
+
+```bash
+TM_DSH_SOURCE=/path/to/deepseek-harness pnpm smoke:dsh:source
+```
+
+要验证真实 OpenAI-compatible endpoint 的文件创建、重启续接和工具失败记录，额外设置 `TM_DSH_LIVE=1`、`TM_DSH_LIVE_RESTART=1`、`TM_DSH_LIVE_TOOL_FAILURE=1`、`TM_GEMINI_BASE_URL`、`TM_GEMINI_MODEL` 和 `TM_GEMINI_API_KEY`。测试会使用临时 `DSH_HOME` 与临时工作区，不会修改当前仓库。
+
 ## Notes
 
 - 当前一个插件实例管理一个启动时 `workDir`；不同 session `cwd` 会被跳过。

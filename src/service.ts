@@ -441,6 +441,7 @@ export class TimeMachineService {
         : [];
       const conflictingPaths = [...new Set([
         ...driftDiffs.map(diff => diff.file),
+        ...(!isGit && current && expectedTree && currentState.treeOid !== expectedTree ? ['(fallback workspace; content diff unavailable)'] : []),
         ...symmetricDifference(expectedIgnored, currentState.ignoredPaths).map(item => `(ignored) ${item}`),
       ])].sort();
       const workspaceDrifted = Boolean(current && (

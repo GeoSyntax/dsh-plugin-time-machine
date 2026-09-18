@@ -1669,6 +1669,7 @@ var TimeMachineService = class {
       const driftDiffs = isGit && current && expectedTree && currentState.treeOid !== expectedTree ? await this.gitEngine.getDiffBetween(expectedTree, currentState.treeOid) : [];
       const conflictingPaths = [.../* @__PURE__ */ new Set([
         ...driftDiffs.map((diff) => diff.file),
+        ...!isGit && current && expectedTree && currentState.treeOid !== expectedTree ? ["(fallback workspace; content diff unavailable)"] : [],
         ...symmetricDifference2(expectedIgnored, currentState.ignoredPaths).map((item) => `(ignored) ${item}`)
       ])].sort();
       const workspaceDrifted = Boolean(current && (currentState.treeOid !== expectedTree || !sameStrings(currentState.ignoredPaths, expectedIgnored)));

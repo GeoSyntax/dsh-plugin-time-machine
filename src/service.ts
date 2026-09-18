@@ -311,7 +311,11 @@ export class TimeMachineService {
       const expectedIgnored = current.settledIgnoredPaths ?? current.ignoredPaths ?? [];
       if (actual.treeOid !== expectedTree || !sameStrings(actual.ignoredPaths, expectedIgnored)) {
         const { WorkspaceDriftError } = await import('./core/git-plumbing.js');
-        throw new WorkspaceDriftError(['workspace no longer matches the active checkpoint']);
+        const details = actual.treeOid === expectedTree
+          ? ['workspace no longer matches the active checkpoint']
+          : [`managed tree changed (expected ${expectedTree}, observed ${actual.treeOid})`];
+        if (!sameStrings(actual.ignoredPaths, expectedIgnored)) details.push('ignored path set changed');
+        throw new WorkspaceDriftError(details);
       }
     }
 

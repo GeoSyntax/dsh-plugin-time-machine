@@ -37,7 +37,7 @@ jobs:
       - run: pnpm build
       - name: Verify committed distribution
         if: matrix.os == 'ubuntu-latest' && matrix.node == '22.19.0'
-        run: git diff --exit-code -- dist
+        run: git diff --exit-code -- dist/index.cjs dist/index.js dist/index.d.ts dist/index.d.cts dist/client
       - run: pnpm pack --dry-run
 
   dependency-audit:

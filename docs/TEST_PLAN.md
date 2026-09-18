@@ -61,6 +61,7 @@
 | B-08 | 本地 OpenAI-compatible 模型驱动真实 turn | `TM_DSH_LIVE=1 TM_GEMINI_API_KEY=... pnpm smoke:dsh:source` |
 | B-09 | 同一 DSH_HOME/workspace 重启并保留 DAG | `TM_DSH_LIVE=1 TM_DSH_LIVE_RESTART=1 TM_GEMINI_API_KEY=... pnpm smoke:dsh:source` |
 | B-10 | 真实 DSH Web 宿主 session + checkpoint + fork + rewind | `TM_GEMINI_API_KEY=... pnpm smoke:dsh:web` |
+| B-11 | 真实 DSH 模型端点失败仍持久化 failed checkpoint 和错误证据 | `TM_DSH_SOURCE=... pnpm smoke:dsh:failure` |
 
 ### L1：纯逻辑单元测试
 
@@ -273,6 +274,7 @@ artifacts/<run-id>/
 - 真实本地模型请求、文件创建、turn 结束后的 finalized checkpoint 落盘通过。
 - 使用同一 `DSH_HOME` 与 workspace 的 live restart 测试通过，第二次运行保留并新增 DAG checkpoint。
 - 真实 DSH Web 宿主通过 `session/create`、`session/prompt` 驱动 turn，并完成真实 `/api/fork` 与 `/api/rewind`。
+- 真实 DSH 不可达模型端点会产生并持久化 `failed` checkpoint，且保留错误证据。
 - Web UI 在 fork/rewind 后采用服务端返回的新 conversation sessionId，后续 DAG 查询不再使用旧会话。
 - CLI 命令注册层已自动化覆盖 `/tm-tree`、`/tm-fork`、`/tm-rewind`，包括 sessionController 返回的新会话身份和工作区恢复。
 - `turn/end` 生命周期会从 DSH 持久事件中提取失败工具、输入和错误原因，并传入 checkpoint 反思顾问；已用接近真实 DSH 消息结构的单元测试覆盖。
@@ -283,7 +285,7 @@ artifacts/<run-id>/
 
 1. 同一个持久 Web session 中真实执行 `/tm-tree`、`/tm-rewind`、`/tm-fork`。
 2. 真实 Session fork 失败后的补偿验收。
-3. 真实模型失败 turn 的 `failed` checkpoint 和反思链路。
+3. 真实模型工具调用失败后，`failedTools` 能在 failed checkpoint 中持久化，并在真实 fork 后进入反思提示。
 4. 重启后从同一 DSH_HOME 恢复 DAG 和 session 边界。
 5. Windows Git 新版本临时索引兼容性专项测试。
 

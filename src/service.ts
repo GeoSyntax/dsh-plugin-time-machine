@@ -525,6 +525,7 @@ export class TimeMachineService {
       if (node.gitCommitOid.startsWith('fallback_')) reclaimedBytes += await this.fallbackEngine.removeSnapshot(sessionId, node.id);
       else if (await this.gitEngine.isGitRepo() && await this.gitEngine.deleteCheckpointRef(sessionId, node.id)) gitRefsRemoved += 1;
     }
+    if (this.config.shadowStore) await this.gitEngine.pruneShadowObjects();
     return { reclaimedBytes, gitRefsRemoved };
   }
 

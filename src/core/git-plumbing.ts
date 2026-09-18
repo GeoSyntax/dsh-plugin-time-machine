@@ -24,6 +24,12 @@ export interface GitSnapshot {
   ignoredPaths: string[];
 }
 
+export interface ShadowGcResult {
+  removedObjects: number;
+  reclaimedBytes: number;
+  packedObjectsSkipped: boolean;
+}
+
 export interface GitRestoreOptions {
   expectedCurrentTreeOid?: string;
   expectedCurrentIgnoredPaths?: string[];
@@ -534,6 +540,44 @@ export class GitPlumbingEngine {
     if (!exists) return false;
     await this.runGit(['update-ref', '-d', ref]);
     return true;
+  }
+
+  /** Remove unreachable loose objects from the opt-in shadow store only. */
+  async pruneShadowObjects(): Promise<ShadowGcResult> {
+    if (!this.shadowObjectDir) return { removedObjects: 0, reclaimedBytes: 0, packedObjectsSkipped: false };
+    const { stdout: refs } = await this.runGit(['for-each-ref', '--format=%(refname)', this.refPrefix]).catch(() => ({ stdout: '', stderr: '' }));
+    const refNames = refs.split('\n').map(item => item.trim()).filter(Boolean);
+    const reachable = new Set<string>();
+    if (refNames.length) {
+      const { stdout } = await this.runGit(['rev-list', '--objects', ...refNames]);
+      for (const line of stdout.split('\n')) {
+        const oid = line.trim().split(/\s+/, 1)[0];
+        if (/^[0-9a-f]{40}$/.test(oid)) reachable.add(oid);
+      }
+    }
+    let removedObjects = 0;
+    let reclaimedBytes = 0;
+    const entries = await fs.readdir(this.shadowObjectDir, { withFileTypes: true }).catch(() => [] as import('node:fs').Dirent[]);
+    let packedObjectsSkipped = false;
+    for (const entry of entries) {
+      if (entry.name === 'pack' && entry.isDirectory()) {
+        packedObjectsSkipped = (await fs.readdir(path.join(this.shadowObjectDir, entry.name)).catch(() => [])).length > 0;
+        continue;
+      }
+      if (!entry.isDirectory() || !/^[0-9a-f]{2}$/.test(entry.name)) continue;
+      const directory = path.join(this.shadowObjectDir, entry.name);
+      for (const object of await fs.readdir(directory, { withFileTypes: true }).catch(() => [] as import('node:fs').Dirent[])) {
+        if (!object.isFile() || !/^[0-9a-f]{38}$/.test(object.name)) continue;
+        const oid = `${entry.name}${object.name}`;
+        if (reachable.has(oid)) continue;
+        const file = path.join(directory, object.name);
+        reclaimedBytes += (await fs.stat(file).catch(() => ({ size: 0 }))).size;
+        await fs.rm(file, { force: true });
+        removedObjects += 1;
+      }
+      await fs.rmdir(directory).catch(() => undefined);
+    }
+    return { removedObjects, reclaimedBytes, packedObjectsSkipped };
   }
 
   private async ensureShadowStore(): Promise<void> {

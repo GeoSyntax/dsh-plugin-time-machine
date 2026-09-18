@@ -17,7 +17,7 @@ supported only when it is covered by the current implementation and tests.
 | Rescue/compensation | Yes | Snapshot-oriented | Journal-oriented | Varies |
 | Storage quotas and pruning | Explicit status, conservative prune, explicit history compaction, optional abandoned-branch prune, opt-in hard guards | Yes | Yes | Varies |
 | Durable interrupted-restore journal | Yes; startup restores rescue checkpoint | Store recovery | Yes | Varies |
-| Independent shadow store | Opt-in `shadowStore: true`; Git refs remain private refs | Yes | Yes | Usually local backups |
+| Independent shadow store | Opt-in `shadowStore: true`; private loose-object GC, packed objects conservative | Yes | Yes | Usually local backups |
 
 ## Choosing the right tool
 
@@ -37,10 +37,10 @@ workspace-only; it restores selected paths, keeps the current conversation
 messages, and records rescue/result checkpoints instead of pretending the
 conversation was rewound.
 
-The remaining roadmap is finer-grained shadow-object garbage collection and
-multi-agent workspace isolation. Quota-driven compaction is opt-in via
-`autoPrune`; restore journals are durable and replayed on startup. Pruning and
-history compaction do not run repository-wide Git GC.
+The remaining roadmap is packed shadow-object repacking and multi-agent
+workspace isolation. Quota-driven compaction is opt-in via `autoPrune`; restore
+journals are durable and replayed on startup. Pruning and history compaction do
+not run repository-wide Git GC.
 
 Further reading:
 

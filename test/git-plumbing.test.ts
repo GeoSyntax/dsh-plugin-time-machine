@@ -131,5 +131,9 @@ describe('GitPlumbingEngine', () => {
     await engine.restoreSnapshot(first.commitOid);
     expect(await fs.readFile(file, 'utf8')).toBe('one\n');
     await expect(fs.access(extra)).rejects.toThrow();
+    await engine.cleanupSession('shadow');
+    const gc = await engine.pruneShadowObjects();
+    expect(gc.removedObjects).toBeGreaterThan(0);
+    expect(gc.packedObjectsSkipped).toBe(false);
   });
 });

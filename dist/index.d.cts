@@ -345,6 +345,11 @@ interface GitSnapshot {
     changedFiles: FileChange[];
     ignoredPaths: string[];
 }
+interface ShadowGcResult {
+    removedObjects: number;
+    reclaimedBytes: number;
+    packedObjectsSkipped: boolean;
+}
 interface GitRestoreOptions {
     expectedCurrentTreeOid?: string;
     expectedCurrentIgnoredPaths?: string[];
@@ -423,6 +428,8 @@ declare class GitPlumbingEngine {
     private parseUnifiedDiff;
     cleanupSession(sessionId: string): Promise<void>;
     deleteCheckpointRef(sessionId: string, checkpointId: string): Promise<boolean>;
+    /** Remove unreachable loose objects from the opt-in shadow store only. */
+    pruneShadowObjects(): Promise<ShadowGcResult>;
     private ensureShadowStore;
 }
 
@@ -533,4 +540,4 @@ declare class TimeMachinePlugin {
     constructor(ctx: Context, config?: Config);
 }
 
-export { type CheckpointNode, Config, type DAGManagerOptions, DAGStateManager, type DAGTree, type DiffResult, type FallbackOptions, FallbackSnapshotEngine, type FileChange, GitPlumbingEngine, type GitPlumbingOptions, type GitRestoreOptions, type GitSelectiveRestoreOptions, type GitSnapshot, type PruneResult, ReflectionAdvisor, type ReflectionSummary, type RestoreOptions, type RestorePreview, type RestoreResult, type SelectiveRestoreResult, type SessionMessage, type SessionState, StorageQuotaError, type StorageStatus, type TimeMachineConfig, TimeMachinePlugin, TimeMachineService, type TimeMachineServiceOptions, WorkspaceDriftError, WorkspaceRestoreConflictError, apply, collectFailedTools, TimeMachinePlugin as default, name };
+export { type CheckpointNode, Config, type DAGManagerOptions, DAGStateManager, type DAGTree, type DiffResult, type FallbackOptions, FallbackSnapshotEngine, type FileChange, GitPlumbingEngine, type GitPlumbingOptions, type GitRestoreOptions, type GitSelectiveRestoreOptions, type GitSnapshot, type PruneResult, ReflectionAdvisor, type ReflectionSummary, type RestoreOptions, type RestorePreview, type RestoreResult, type SelectiveRestoreResult, type SessionMessage, type SessionState, type ShadowGcResult, StorageQuotaError, type StorageStatus, type TimeMachineConfig, TimeMachinePlugin, TimeMachineService, type TimeMachineServiceOptions, WorkspaceDriftError, WorkspaceRestoreConflictError, apply, collectFailedTools, TimeMachinePlugin as default, name };

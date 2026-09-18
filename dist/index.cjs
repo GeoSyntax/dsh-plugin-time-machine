@@ -521,6 +521,43 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
         await this.runGit(["update-ref", "-d", ref]);
         return true;
       }
+      /** Remove unreachable loose objects from the opt-in shadow store only. */
+      async pruneShadowObjects() {
+        if (!this.shadowObjectDir) return { removedObjects: 0, reclaimedBytes: 0, packedObjectsSkipped: false };
+        const { stdout: refs } = await this.runGit(["for-each-ref", "--format=%(refname)", this.refPrefix]).catch(() => ({ stdout: "", stderr: "" }));
+        const refNames = refs.split("\n").map((item) => item.trim()).filter(Boolean);
+        const reachable = /* @__PURE__ */ new Set();
+        if (refNames.length) {
+          const { stdout } = await this.runGit(["rev-list", "--objects", ...refNames]);
+          for (const line of stdout.split("\n")) {
+            const oid = line.trim().split(/\s+/, 1)[0];
+            if (/^[0-9a-f]{40}$/.test(oid)) reachable.add(oid);
+          }
+        }
+        let removedObjects = 0;
+        let reclaimedBytes = 0;
+        const entries = await import_promises.default.readdir(this.shadowObjectDir, { withFileTypes: true }).catch(() => []);
+        let packedObjectsSkipped = false;
+        for (const entry of entries) {
+          if (entry.name === "pack" && entry.isDirectory()) {
+            packedObjectsSkipped = (await import_promises.default.readdir(import_node_path.default.join(this.shadowObjectDir, entry.name)).catch(() => [])).length > 0;
+            continue;
+          }
+          if (!entry.isDirectory() || !/^[0-9a-f]{2}$/.test(entry.name)) continue;
+          const directory = import_node_path.default.join(this.shadowObjectDir, entry.name);
+          for (const object of await import_promises.default.readdir(directory, { withFileTypes: true }).catch(() => [])) {
+            if (!object.isFile() || !/^[0-9a-f]{38}$/.test(object.name)) continue;
+            const oid = `${entry.name}${object.name}`;
+            if (reachable.has(oid)) continue;
+            const file = import_node_path.default.join(directory, object.name);
+            reclaimedBytes += (await import_promises.default.stat(file).catch(() => ({ size: 0 }))).size;
+            await import_promises.default.rm(file, { force: true });
+            removedObjects += 1;
+          }
+          await import_promises.default.rmdir(directory).catch(() => void 0);
+        }
+        return { removedObjects, reclaimedBytes, packedObjectsSkipped };
+      }
       async ensureShadowStore() {
         if (!this.shadowObjectDir) return;
         this.shadowReady ??= import_promises.default.mkdir(this.shadowObjectDir, { recursive: true }).then(() => void 0);
@@ -1607,6 +1644,7 @@ var TimeMachineService = class {
       if (node.gitCommitOid.startsWith("fallback_")) reclaimedBytes += await this.fallbackEngine.removeSnapshot(sessionId, node.id);
       else if (await this.gitEngine.isGitRepo() && await this.gitEngine.deleteCheckpointRef(sessionId, node.id)) gitRefsRemoved += 1;
     }
+    if (this.config.shadowStore) await this.gitEngine.pruneShadowObjects();
     return { reclaimedBytes, gitRefsRemoved };
   }
   pruneCandidates(dag) {

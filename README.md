@@ -160,6 +160,10 @@ Git status 报告的变更路径。小仓库仍有 Git 进程启动开销，但�
 
 问题定义、设计取舍、同类能力对照、社区路线图和完整验收矩阵见 [docs/PROBLEM.md](docs/PROBLEM.md)、[docs/COMPARISON.md](docs/COMPARISON.md)、[docs/ROADMAP.md](docs/ROADMAP.md)、[DESIGN.md](DESIGN.md) 和 [docs/TEST_PLAN.md](docs/TEST_PLAN.md)。
 
+DSH 原生消息操作的扩展边界和 companion package 验收条件见
+[docs/DSH_NATIVE_UI.md](docs/DSH_NATIVE_UI.md)。当前版本不会把未实现的 React
+client slot 集成伪装成已支持能力。
+
 ## License
 
 MIT

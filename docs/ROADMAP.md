@@ -62,6 +62,10 @@ portable fallback.
 **Acceptance:** the action carries the session-bound restore-plan token, shows
 conflict paths before mutation, and reports the new forked session id.
 
+The host slot and the companion-package boundary are documented in
+[DSH_NATIVE_UI.md](./DSH_NATIVE_UI.md); the service package intentionally does not
+claim this client surface until the separate Web package exists.
+
 ### Explicit partial-capture mode (opt-in only) — implemented
 
 Community users can opt into Change Ledger-style oversized-file skipping with

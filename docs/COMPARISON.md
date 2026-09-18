@@ -16,7 +16,7 @@ supported only when it is covered by the current implementation and tests.
 | External side-effect ledger | Adapter declarations persist reversibility, compensation and failure semantics; named adapters support dry-run, explicit execution and idempotency fences; missing adapters are surfaced as `adapterAvailable: false`; fork reflection still warns | Product-specific | Varies | Usually absent |
 | Selective file restore | `tm-restore-files`, Web API | Yes | Yes | Varies |
 | Conversation/session alignment | DSH `sessionController` fork | Product-specific | Product-specific | Usually undo/redo or same window |
-| Agent-write ledger / hand-edit preservation | Explicit opt-in `enableAgentWriteLedger` + `recordAgentWrite()` + `--preserve-hand-edits`; missing evidence remains fail-closed | Hermes records hashes of agent writes and keeps later hand-edits by default; `--all` opts into overwrite | Product-specific | Varies |
+| Agent-write ledger / hand-edit preservation | Explicit opt-in `enableAgentWriteLedger`; native `write`/`edit`/`str_replace_editor` events auto-record, other integrations use `recordAgentWrite()`; `--preserve-hand-edits` remains fail-closed without evidence | Hermes records hashes of agent writes and keeps later hand-edits by default; `--all` opts into overwrite | Product-specific | Varies |
 | DAG branches | Yes, persistent | No user-facing DAG | Ledger history | Usually linear |
 | Failed-tool reflection | Yes | No equivalent | No equivalent | No equivalent |
 | Rescue/compensation | Yes | Snapshot-oriented | Journal-oriented | Varies |

@@ -4,13 +4,14 @@
 
 1. 从干净的 `main` 开始，确认 Node.js 与 pnpm 版本符合 `package.json`。
 2. 更新 `package.json` 版本、`CHANGELOG.md`、兼容范围和必要的存储迁移说明。
-3. 运行：
+3. 运行统一发布门禁：
 
    ```bash
    pnpm install --frozen-lockfile
-   pnpm check
-   pnpm audit --prod --audit-level=high
+   pnpm test:release
    ```
+
+   `test:release` 会依次执行 23 项自动化测试、构建、打包清单、生产依赖审计和 `git diff --check`。
 
 4. 确认 `pnpm build` 后 `dist/` 已同步，并审查 `pnpm pack --dry-run` 文件清单。
 5. 在临时 DSH home/profile 中安装生成的 tarball，执行 `--dump-config`、创建 checkpoint、safe rewind、卸载 smoke test。

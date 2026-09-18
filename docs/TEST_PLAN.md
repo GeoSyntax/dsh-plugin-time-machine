@@ -57,6 +57,7 @@
 | B-04 | 依赖无 high/critical 漏洞 | `pnpm audit --prod --audit-level=high` |
 | B-05 | 构建后的 `dist` 与提交内容一致 | CI `git diff --exit-code -- dist/...` |
 | B-06 | DSH bundle 能发现插件 | `pnpm smoke:dsh` 或源码 DSH 等价命令 |
+| B-06a | 本地发布门禁一次性通过 | `pnpm test:release` |
 | B-07 | 本地 DSH 源码宿主加载插件 | `TM_DSH_SOURCE=... pnpm smoke:dsh:source` |
 | B-08 | 本地 OpenAI-compatible 模型驱动真实 turn | `TM_DSH_LIVE=1 TM_GEMINI_API_KEY=... pnpm smoke:dsh:source` |
 | B-09 | 同一 DSH_HOME/workspace 重启并保留 DAG | `TM_DSH_LIVE=1 TM_DSH_LIVE_RESTART=1 TM_GEMINI_API_KEY=... pnpm smoke:dsh:source` |

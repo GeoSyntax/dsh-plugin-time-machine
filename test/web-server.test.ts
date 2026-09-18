@@ -153,6 +153,19 @@ describe('TimeMachineWebServer', () => {
     expect(await fs.readFile(right, 'utf8')).toBe('live-right\n');
   });
 
+  it('reports Git merge capability when the workspace is a normal repository', async () => {
+    await execAsync('git', ['init'], { cwd: tmpDir });
+    await execAsync('git', ['config', 'user.name', 'TestBot'], { cwd: tmpDir });
+    await execAsync('git', ['config', 'user.email', 'bot@test.com'], { cwd: tmpDir });
+    const response = await fetch(`http://localhost:${testPort}/api/capabilities`);
+    expect(response.status).toBe(200);
+    const capabilities = (await response.json()).capabilities;
+    expect(capabilities.git).toBe(true);
+    expect(capabilities.fallback).toBe(false);
+    expect(capabilities.mergeRestore).toBe(true);
+    expect(capabilities.workspaceIsolation).toBe('shared-lock');
+  });
+
   it('exposes a read-only rewind preview endpoint', async () => {
     const file = path.join(tmpDir, 'preview.txt');
     await fs.writeFile(file, 'v1\n', 'utf8');

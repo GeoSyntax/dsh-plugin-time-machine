@@ -11,7 +11,7 @@
    pnpm test:release
    ```
 
-   `test:release` 会依次执行 23 项自动化测试、构建、打包清单、生产依赖审计和 `git diff --check`。
+   `test:release` 会依次执行完整行为测试（测试数量随版本变化）、构建、打包清单、生产依赖审计和 `git diff --check`。
 
 4. 确认 `pnpm build` 后 `dist/` 已同步，并审查 `pnpm pack --dry-run` 文件清单。
 5. 在临时 DSH home/profile 中安装生成的 tarball，执行 `--dump-config`、创建 checkpoint、safe rewind、卸载 smoke test。

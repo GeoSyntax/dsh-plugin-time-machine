@@ -101,7 +101,8 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
         const drift = preview.requiresForce ? 'workspace drift detected; --force may be required' : 'workspace matches active checkpoint';
         const files = preview.diffs.length ? preview.diffs.map(item => `${item.status} ${item.file}`).join(', ') : 'no managed file changes';
         const ignored = preview.ignoredPathsToDelete.length ? ` Ignored paths to delete: ${preview.ignoredPathsToDelete.join(', ')}.` : '';
-        return { kind: 'success', text: `Preview ${checkpointId}: ${drift}. Changes: ${files}.${ignored}` };
+        const conflicts = preview.conflictingPaths.length ? ` Conflicting paths: ${preview.conflictingPaths.join(', ')}.` : '';
+        return { kind: 'success', text: `Preview ${checkpointId}: ${drift}. Changes: ${files}.${ignored}${conflicts}` };
       },
     });
 

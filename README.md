@@ -12,6 +12,12 @@ dsh plugin --profile web add github:GeoSyntax/dsh-plugin-time-machine
 
 当前发布目标是 DSH `>=0.1.5-rc.2 <0.2.0` 的 `web` profile，要求 Node.js `^22.19.0 || >=24.0.0`。仓库会提交预构建的 `dist/`，GitHub dependency 安装不需要构建插件。
 
+当前版本尚未发布到 npm；在 npm release 完成前请使用上面的 GitHub 安装方式。发布后可改用：
+
+```bash
+dsh plugin --profile web add npm:dsh-plugin-time-machine
+```
+
 ## Quickstart
 
 在目标工作区执行：

@@ -84,6 +84,9 @@
     "url": "https://github.com/GeoSyntax/dsh-plugin-time-machine/issues"
   },
   "homepage": "https://github.com/GeoSyntax/dsh-plugin-time-machine#readme",
+  "publishConfig": {
+    "access": "public"
+  },
   "packageManager": "pnpm@10.29.1",
   "engines": {
     "node": "^22.19.0 || >=24.0.0"

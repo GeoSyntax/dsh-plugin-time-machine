@@ -1,6 +1,6 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { GitPlumbingEngine } from './core/git-plumbing.js';
 import { FallbackSnapshotEngine } from './core/fallback-engine.js';
 import { DAGStateManager } from './core/dag-manager.js';
@@ -12,6 +12,7 @@ import type {
   ExternalEffectRecord,
   ExternalEffectAdapter,
   ExternalEffectCompensationResult,
+  AgentWriteRecord,
   DAGTree,
   DiffResult,
   ReflectionSummary,
@@ -119,6 +120,7 @@ export class TimeMachineService {
       maxSnapshotFileBytes: Math.max(0, Math.floor(options.config?.maxSnapshotFileBytes ?? 0)),
       maxSnapshotBytes: Math.max(0, Math.floor(options.config?.maxSnapshotBytes ?? 0)),
       allowPartialSnapshots: options.config?.allowPartialSnapshots ?? false,
+      enableAgentWriteLedger: options.config?.enableAgentWriteLedger ?? false,
     };
 
     this.gitEngine = new GitPlumbingEngine({
@@ -285,6 +287,42 @@ export class TimeMachineService {
         settledIgnoredPaths: settled?.ignoredPaths,
       });
     });
+  }
+
+  /**
+   * Record a successful Agent write. This is deliberately an integration API:
+   * the core never guesses authorship from a tool name or file timestamp.
+   */
+  async recordAgentWrite(
+    sessionId: string,
+    checkpointId: string,
+    write: Omit<AgentWriteRecord, 'recordedAt' | 'sha256'> & { sha256?: string },
+  ): Promise<CheckpointNode> {
+    return this.runWorkspaceOperation(async () => {
+      if (!this.config.enableAgentWriteLedger) throw new Error('Agent-write ledger is disabled; set enableAgentWriteLedger: true.');
+      const normalized = normalizeRelativePath(write.path);
+      if (!normalized) throw new Error('Agent write path must be workspace-relative.');
+      const sha256 = write.sha256 ?? await this.hashWorkspacePath(normalized);
+      if (!/^[a-f0-9]{64}$/i.test(sha256)) throw new Error('Agent write sha256 must be a 64-character hexadecimal digest.');
+      const dag = await this.getDAGManager(sessionId);
+      const node = dag.getNode(checkpointId);
+      if (!node) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
+      const record: AgentWriteRecord = {
+        path: normalized,
+        sha256: sha256.toLowerCase(),
+        recordedAt: Date.now(),
+        ...(write.operation ? { operation: write.operation } : {}),
+      };
+      const previous = (node.agentWrites ?? []).filter(item => item.path !== normalized);
+      return dag.updateNode(checkpointId, { agentWrites: [...previous, record] });
+    });
+  }
+
+  async getAgentWriteLedger(sessionId: string, checkpointId: string): Promise<AgentWriteRecord[]> {
+    const dag = await this.getDAGManager(sessionId);
+    const node = dag.getNode(checkpointId);
+    if (!node) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
+    return cloneJson(node.agentWrites ?? []);
   }
 
   /**
@@ -771,8 +809,9 @@ export class TimeMachineService {
     partialSnapshots: boolean;
     /** Safe dirty-path overlay is available for normal Git workspaces. */
     incrementalCapture: boolean;
-    /** Current restore semantics; no automatic authorship inference is performed. */
-    handEditPolicy: 'reject-drift';
+    /** Current restore semantics; ledger mode is explicit and opt-in. */
+    handEditPolicy: 'reject-drift' | 'ledger-opt-in';
+    agentWriteLedger: boolean;
     externalEffectLedger: true;
     externalEffectAdapters: string[];
     workspaceIsolation: 'shared-lock';
@@ -785,6 +824,7 @@ export class TimeMachineService {
       maxSnapshotFileBytes: number;
       maxSnapshotBytes: number;
       allowPartialSnapshots: boolean;
+      enableAgentWriteLedger: boolean;
       maxQuarantineBytes: number;
       workspaceLockTimeoutMs: number;
     };
@@ -806,7 +846,8 @@ export class TimeMachineService {
       quarantineMigration: git && Boolean(this.config.quarantineEncryptionKeyEnv),
       partialSnapshots: git && this.config.allowPartialSnapshots && (this.config.maxSnapshotFileBytes > 0 || this.config.maxSnapshotBytes > 0),
       incrementalCapture: usable && this.config.maxSnapshotFileBytes === 0 && this.config.maxSnapshotBytes === 0,
-      handEditPolicy: 'reject-drift',
+      handEditPolicy: this.config.enableAgentWriteLedger ? 'ledger-opt-in' : 'reject-drift',
+      agentWriteLedger: this.config.enableAgentWriteLedger,
       externalEffectLedger: true,
       externalEffectAdapters: this.listExternalEffectAdapters(),
       workspaceIsolation: 'shared-lock',
@@ -819,6 +860,7 @@ export class TimeMachineService {
         maxSnapshotFileBytes: this.config.maxSnapshotFileBytes,
         maxSnapshotBytes: this.config.maxSnapshotBytes,
         allowPartialSnapshots: this.config.allowPartialSnapshots,
+        enableAgentWriteLedger: this.config.enableAgentWriteLedger,
         maxQuarantineBytes: this.config.maxQuarantineBytes,
         workspaceLockTimeoutMs: this.config.workspaceLockTimeoutMs,
       },
@@ -979,6 +1021,8 @@ export class TimeMachineService {
   ): Promise<{ rescue?: CheckpointNode; deletedIgnoredPaths: string[]; journalId?: string }> {
     const current = dag.getCurrentNode() ?? undefined;
     const mode = options.mode ?? this.config.restoreMode;
+    const preserveHandEdits = options.preserveVerifiedHandEdits === true;
+    const preservedPaths = preserveHandEdits && current ? await this.findVerifiedHandEdits(current) : [];
     if (await this.gitEngine.isGitRepo()) await this.gitEngine.assertSupportedWorkspace();
 
     if (mode === 'safe' && current) {
@@ -991,12 +1035,16 @@ export class TimeMachineService {
         const { WorkspaceDriftError } = await import('./core/git-plumbing.js');
         const changed = actual.treeOid === expectedTree
           ? []
-          : (await this.gitEngine.getDiffBetween(expectedTree, actual.treeOid)).map(item => item.file);
-        const details = actual.treeOid === expectedTree
-          ? ['workspace no longer matches the active checkpoint']
-          : [`managed tree changed (expected ${expectedTree}, observed ${actual.treeOid})${changed.length ? `: ${changed.join(', ')}` : ''}`];
-        if (!sameStrings(actual.ignoredPaths, expectedIgnored)) details.push('ignored path set changed');
-        throw new WorkspaceDriftError(details);
+          : (await this.gitEngine.getDiffBetween(expectedTree, actual.treeOid)).map(item => item.file)
+            .filter(file => !preservedPaths.some(path => file === path || file.startsWith(`${path}/`)));
+        const ignoredDrift = !sameStrings(actual.ignoredPaths, expectedIgnored);
+        if (changed.length || ignoredDrift) {
+          const details = actual.treeOid === expectedTree
+            ? ['workspace no longer matches the active checkpoint']
+            : [`managed tree changed (expected ${expectedTree}, observed ${actual.treeOid})${changed.length ? `: ${changed.join(', ')}` : ''}`];
+          if (ignoredDrift) details.push('ignored path set changed');
+          throw new WorkspaceDriftError(details);
+        }
       }
     }
 
@@ -1028,6 +1076,7 @@ export class TimeMachineService {
         ...options,
         mode,
         ignoredBackupKey: rescue?.ignoredBackupKey,
+        preservePaths: preservedPaths,
       });
       await this.updateRestoreJournal(journalId, 'workspace-restored');
       return { rescue, deletedIgnoredPaths: result.deletedIgnoredPaths, journalId };
@@ -1062,11 +1111,17 @@ export class TimeMachineService {
         deleteNewIgnoredPaths: options.deleteNewIgnoredPaths,
         ignoredBackupKey: options.ignoredBackupKey,
         omittedPaths: target.omittedPaths ?? [],
+        preservePaths: options.preservePaths ?? [],
       });
       if (target.ignoredBackupKey) await this.gitEngine.restoreIgnoredBackup(target.ignoredBackupKey);
-      const verified = await this.gitEngine.inspectWorkspace({ omitPaths: target.omittedPaths ?? [] });
+      const preservePaths = options.preservePaths ?? [];
+      const verified = await this.gitEngine.inspectWorkspace({ omitPaths: [...(target.omittedPaths ?? []), ...preservePaths] });
       const expectedTree = options.mode === 'merge' ? result.restoredTreeOid : target.gitTreeOid;
-      if (verified.treeOid !== expectedTree || !sameStrings(verified.ignoredPaths, target.ignoredPaths ?? [])) {
+      const treeMismatch = verified.treeOid !== expectedTree;
+      const allowedMismatch = treeMismatch && preservePaths.length
+        ? (await this.gitEngine.getDiffBetween(expectedTree, verified.treeOid)).every(item => preservePaths.some(path => item.file === path || item.file.startsWith(`${path}/`)))
+        : false;
+      if ((treeMismatch && !allowedMismatch) || (!sameStrings(verified.ignoredPaths, target.ignoredPaths ?? []))) {
         throw new Error(`Workspace integrity check failed after restoring checkpoint '${target.id}'.`);
       }
       return result;
@@ -1080,6 +1135,30 @@ export class TimeMachineService {
       throw new Error(`Fallback workspace integrity check failed after restoring checkpoint '${target.id}'.`);
     }
     return { deletedIgnoredPaths: [] };
+  }
+
+  private async findVerifiedHandEdits(current: CheckpointNode): Promise<string[]> {
+    const records = current.agentWrites ?? [];
+    const preserved: string[] = [];
+    for (const record of records) {
+      if (!normalizeRelativePath(record.path) || !/^[a-f0-9]{64}$/i.test(record.sha256)) {
+        throw new Error(`AGENT_WRITE_LEDGER_INVALID: checkpoint '${current.id}' contains invalid write evidence.`);
+      }
+      const actual = await this.hashWorkspacePath(record.path).catch(() => undefined);
+      if (actual && actual !== record.sha256) preserved.push(record.path);
+    }
+    return preserved;
+  }
+
+  private async hashWorkspacePath(relative: string): Promise<string> {
+    const absolute = path.resolve(this.workDir, relative);
+    if (!absolute.startsWith(`${path.resolve(this.workDir)}${path.sep}`)) throw new Error('Path escapes workspace.');
+    const stat = await fs.lstat(absolute);
+    const hash = createHash('sha256');
+    if (stat.isSymbolicLink()) hash.update(`symlink:${await fs.readlink(absolute)}`);
+    else if (stat.isFile()) hash.update(await fs.readFile(absolute));
+    else throw new Error(`Agent write path '${relative}' is not a regular file or symlink.`);
+    return hash.digest('hex');
   }
 
   async completeRestoreJournal(journalId?: string): Promise<void> {
@@ -1140,6 +1219,14 @@ export class TimeMachineService {
 
 function cloneJson<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function normalizeRelativePath(value: string): string {
+  const normalized = value.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '');
+  if (!normalized || normalized === '.' || normalized.startsWith('/') || normalized === '..' || normalized.startsWith('../') || normalized.includes('\0') || normalized.split('/').includes('..')) {
+    throw new Error(`Invalid workspace-relative path '${value}'.`);
+  }
+  return normalized;
 }
 
 function sameStrings(left: string[], right: string[]): boolean {

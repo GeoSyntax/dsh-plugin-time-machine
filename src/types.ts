@@ -75,6 +75,14 @@ export interface ExternalEffectCompensationResult {
   note?: string;
 }
 
+/** A successful Agent-side write observed by an integration. */
+export interface AgentWriteRecord {
+  path: string;
+  sha256: string;
+  recordedAt: number;
+  operation?: 'create' | 'modify' | 'delete';
+}
+
 export interface CheckpointNode {
   id: string;
   parentId: string | null;
@@ -102,6 +110,8 @@ export interface CheckpointNode {
   omittedPaths?: string[];
   /** External mutations declared by integrations; never compensated implicitly. */
   externalEffects?: ExternalEffectRecord[];
+  /** Explicit Agent-write evidence used by opt-in hand-edit preservation. */
+  agentWrites?: AgentWriteRecord[];
 }
 
 export interface DAGTree {
@@ -155,6 +165,8 @@ export interface TimeMachineConfig {
   maxSnapshotBytes?: number;
   /** Opt in to omitting files that exceed snapshot limits; disabled by default. */
   allowPartialSnapshots?: boolean;
+  /** Record integration-supplied Agent writes for explicit hand-edit preservation. */
+  enableAgentWriteLedger?: boolean;
 }
 
 export interface RestoreOptions {
@@ -167,6 +179,10 @@ export interface RestoreOptions {
   ignoredBackupKey?: string;
   /** Session-bound token returned by previewRestore; consumed by the next restore. */
   restorePlanId?: string;
+  /** Preserve paths whose current content differs from the recorded Agent hash. */
+  preserveVerifiedHandEdits?: boolean;
+  /** Internal path list calculated from the active Agent-write ledger. */
+  preservePaths?: string[];
 }
 
 export interface RestoreResult {

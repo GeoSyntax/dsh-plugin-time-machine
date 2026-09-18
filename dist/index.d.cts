@@ -71,6 +71,13 @@ interface ExternalEffectCompensationResult {
     replayed: boolean;
     note?: string;
 }
+/** A successful Agent-side write observed by an integration. */
+interface AgentWriteRecord {
+    path: string;
+    sha256: string;
+    recordedAt: number;
+    operation?: 'create' | 'modify' | 'delete';
+}
 interface CheckpointNode {
     id: string;
     parentId: string | null;
@@ -102,6 +109,8 @@ interface CheckpointNode {
     omittedPaths?: string[];
     /** External mutations declared by integrations; never compensated implicitly. */
     externalEffects?: ExternalEffectRecord[];
+    /** Explicit Agent-write evidence used by opt-in hand-edit preservation. */
+    agentWrites?: AgentWriteRecord[];
 }
 interface DAGTree {
     sessionId: string;
@@ -153,6 +162,8 @@ interface TimeMachineConfig {
     maxSnapshotBytes?: number;
     /** Opt in to omitting files that exceed snapshot limits; disabled by default. */
     allowPartialSnapshots?: boolean;
+    /** Record integration-supplied Agent writes for explicit hand-edit preservation. */
+    enableAgentWriteLedger?: boolean;
 }
 interface RestoreOptions {
     mode?: 'safe' | 'merge' | 'force';
@@ -164,6 +175,10 @@ interface RestoreOptions {
     ignoredBackupKey?: string;
     /** Session-bound token returned by previewRestore; consumed by the next restore. */
     restorePlanId?: string;
+    /** Preserve paths whose current content differs from the recorded Agent hash. */
+    preserveVerifiedHandEdits?: boolean;
+    /** Internal path list calculated from the active Agent-write ledger. */
+    preservePaths?: string[];
 }
 interface RestoreResult {
     targetNode: CheckpointNode;
@@ -264,7 +279,7 @@ declare class DAGStateManager {
      * 获取指定 ID 的节点
      */
     getNode(checkpointId: string): CheckpointNode | null;
-    updateNode(checkpointId: string, patch: Partial<Pick<CheckpointNode, 'status' | 'errorMessage' | 'failedTools' | 'summary' | 'settledGitTreeOid' | 'settledIgnoredPaths' | 'ignoredBackupKey' | 'externalEffects'>>): Promise<CheckpointNode>;
+    updateNode(checkpointId: string, patch: Partial<Pick<CheckpointNode, 'status' | 'errorMessage' | 'failedTools' | 'summary' | 'settledGitTreeOid' | 'settledIgnoredPaths' | 'ignoredBackupKey' | 'externalEffects' | 'agentWrites'>>): Promise<CheckpointNode>;
     /** Remove only leaf checkpoints that are not current or a branch head. */
     removeLeafNodes(checkpointIds: string[]): Promise<CheckpointNode[]>;
     /** Remove historical nodes while reparenting surviving children to the nearest ancestor. */
@@ -365,6 +380,14 @@ declare class TimeMachineService {
         }>;
     }): Promise<CheckpointNode>;
     /**
+     * Record a successful Agent write. This is deliberately an integration API:
+     * the core never guesses authorship from a tool name or file timestamp.
+     */
+    recordAgentWrite(sessionId: string, checkpointId: string, write: Omit<AgentWriteRecord, 'recordedAt' | 'sha256'> & {
+        sha256?: string;
+    }): Promise<CheckpointNode>;
+    getAgentWriteLedger(sessionId: string, checkpointId: string): Promise<AgentWriteRecord[]>;
+    /**
      * Record an external mutation against a checkpoint. The core deliberately
      * does not execute compensation; an adapter can later use this declaration
      * to perform an explicit, user-approved reversal.
@@ -449,8 +472,9 @@ declare class TimeMachineService {
         partialSnapshots: boolean;
         /** Safe dirty-path overlay is available for normal Git workspaces. */
         incrementalCapture: boolean;
-        /** Current restore semantics; no automatic authorship inference is performed. */
-        handEditPolicy: 'reject-drift';
+        /** Current restore semantics; ledger mode is explicit and opt-in. */
+        handEditPolicy: 'reject-drift' | 'ledger-opt-in';
+        agentWriteLedger: boolean;
         externalEffectLedger: true;
         externalEffectAdapters: string[];
         workspaceIsolation: 'shared-lock';
@@ -467,6 +491,7 @@ declare class TimeMachineService {
             maxSnapshotFileBytes: number;
             maxSnapshotBytes: number;
             allowPartialSnapshots: boolean;
+            enableAgentWriteLedger: boolean;
             maxQuarantineBytes: number;
             workspaceLockTimeoutMs: number;
         };
@@ -487,6 +512,8 @@ declare class TimeMachineService {
     private enforceStorageQuota;
     private restoreWithRescue;
     private restoreNode;
+    private findVerifiedHandEdits;
+    private hashWorkspacePath;
     completeRestoreJournal(journalId?: string): Promise<void>;
     private createRestoreJournal;
     private updateRestoreJournal;
@@ -549,6 +576,8 @@ interface GitRestoreOptions {
     ignoredBackupKey?: string;
     /** Paths omitted from the target snapshot; preserve their live content. */
     omittedPaths?: string[];
+    /** Live paths to preserve after restore because verified hand-edits differ. */
+    preservePaths?: string[];
 }
 interface GitSelectiveRestoreOptions {
     expectedCurrentTreeOid?: string;
@@ -814,4 +843,4 @@ declare class TimeMachinePlugin {
     constructor(ctx: Context, config?: Config);
 }
 
-export { type CheckpointNode, Config, type DAGManagerOptions, DAGStateManager, type DAGTree, type DiffResult, type ExternalEffectAdapter, type ExternalEffectCompensationContext, type ExternalEffectCompensationResult, type ExternalEffectRecord, type FallbackOptions, FallbackSnapshotEngine, type FileChange, GitPlumbingEngine, type GitPlumbingOptions, type GitRestoreOptions, type GitSelectiveRestoreOptions, type GitSnapshot, type PruneResult, QuarantineKeyError, type QuarantineMigrationResult, QuarantineQuotaError, ReflectionAdvisor, type ReflectionSummary, type RestoreOptions, RestorePlanError, type RestorePreview, type RestoreResult, type SelectiveRestoreResult, type SessionMessage, type SessionState, type ShadowGcResult, type ShadowRepackResult, SnapshotSizeError, StorageQuotaError, type StorageStatus, type TimeMachineConfig, TimeMachinePlugin, TimeMachineService, type TimeMachineServiceOptions, UnsupportedWorkspaceStateError, type WorkspaceCapabilities, WorkspaceDriftError, WorkspaceMergeConflictError, WorkspaceRestoreConflictError, apply, collectFailedTools, TimeMachinePlugin as default, name };
+export { type AgentWriteRecord, type CheckpointNode, Config, type DAGManagerOptions, DAGStateManager, type DAGTree, type DiffResult, type ExternalEffectAdapter, type ExternalEffectCompensationContext, type ExternalEffectCompensationResult, type ExternalEffectRecord, type FallbackOptions, FallbackSnapshotEngine, type FileChange, GitPlumbingEngine, type GitPlumbingOptions, type GitRestoreOptions, type GitSelectiveRestoreOptions, type GitSnapshot, type PruneResult, QuarantineKeyError, type QuarantineMigrationResult, QuarantineQuotaError, ReflectionAdvisor, type ReflectionSummary, type RestoreOptions, RestorePlanError, type RestorePreview, type RestoreResult, type SelectiveRestoreResult, type SessionMessage, type SessionState, type ShadowGcResult, type ShadowRepackResult, SnapshotSizeError, StorageQuotaError, type StorageStatus, type TimeMachineConfig, TimeMachinePlugin, TimeMachineService, type TimeMachineServiceOptions, UnsupportedWorkspaceStateError, type WorkspaceCapabilities, WorkspaceDriftError, WorkspaceMergeConflictError, WorkspaceRestoreConflictError, apply, collectFailedTools, TimeMachinePlugin as default, name };

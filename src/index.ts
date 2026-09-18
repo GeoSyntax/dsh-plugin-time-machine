@@ -33,6 +33,7 @@ export const Config: Schema<Config> = Schema.object({
   maxSnapshotFileBytes: Schema.number().default(0),
   maxSnapshotBytes: Schema.number().default(0),
   allowPartialSnapshots: Schema.boolean().default(false),
+  enableAgentWriteLedger: Schema.boolean().default(false),
 });
 
 interface SessionEventLike {

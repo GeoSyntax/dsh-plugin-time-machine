@@ -147,6 +147,7 @@ export class TimeMachineWebServer {
       const sourceSessionId = sessionId || 'default';
       const result = await this.service.rewindToCheckpoint(sourceSessionId, checkpointId, {
         mode: body.force === true ? 'force' : body.merge === true ? 'merge' : undefined,
+        preserveVerifiedHandEdits: body.preserveVerifiedHandEdits === true,
         deleteNewIgnoredPaths: body.deleteNewIgnoredPaths === true,
         restorePlanId: typeof body.restorePlanId === 'string' ? body.restorePlanId : undefined,
       });

@@ -84,6 +84,8 @@ export interface GitRestoreOptions {
   ignoredBackupKey?: string;
   /** Paths omitted from the target snapshot; preserve their live content. */
   omittedPaths?: string[];
+  /** Live paths to preserve after restore because verified hand-edits differ. */
+  preservePaths?: string[];
 }
 
 export interface GitSelectiveRestoreOptions {
@@ -384,9 +386,11 @@ export class GitPlumbingEngine {
 
     const mode = options.mode ?? 'safe';
     const current = await this.inspectWorkspace();
+    const preservePaths = [...new Set((options.preservePaths ?? []).map(normalizeGitPath).filter(Boolean))];
     if (mode === 'safe' && options.expectedCurrentTreeOid && current.treeOid !== options.expectedCurrentTreeOid) {
-      const details = await this.diffNameOnly(options.expectedCurrentTreeOid, current.treeOid);
-      throw new WorkspaceDriftError(details.length ? details : ['managed files']);
+      const details = (await this.diffNameOnly(options.expectedCurrentTreeOid, current.treeOid))
+        .filter(item => !preservePaths.some(path => item === path || item.startsWith(`${path}/`)));
+      if (details.length) throw new WorkspaceDriftError(details);
     }
     if (mode === 'safe' && options.expectedCurrentIgnoredPaths) {
       const expected = new Set(options.expectedCurrentIgnoredPaths);
@@ -422,8 +426,9 @@ export class GitPlumbingEngine {
     // Partial snapshots intentionally omit oversized paths. Preserve the live
     // content across read-tree so a rewind never destroys data the checkpoint
     // explicitly said it did not capture.
-    const omittedStash = options.omittedPaths?.length
-      ? await this.stashWorkspacePaths(options.omittedPaths)
+    const preserved = [...new Set([...(options.omittedPaths ?? []), ...preservePaths])];
+    const omittedStash = preserved.length
+      ? await this.stashWorkspacePaths(preserved)
       : undefined;
 
     const root = await this.getRepoRoot();

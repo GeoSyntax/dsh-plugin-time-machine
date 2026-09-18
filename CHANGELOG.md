@@ -17,13 +17,17 @@
 - External-effect ledger with dry-run compensation adapters, idempotency fences,
   unknown-outcome persistence, and structured unavailable-adapter errors.
 - Versioned runtime capability discovery through `GET /api/capabilities`.
+- Explicit Agent-write ledger integration: `recordAgentWrite()` records SHA-256
+  evidence and `--preserve-hand-edits` preserves only verified post-write edits;
+  missing evidence remains fail-closed.
 - CLI, Web API, Dashboard, DSH source smoke tests, cross-platform CI, and
   machine-readable benchmark output.
 
 ### Safety boundaries
 
-- `handEditPolicy` is currently `reject-drift`: the core does not infer whether
-  a changed path belongs to the Agent or a user.
+- `handEditPolicy` remains `reject-drift` by default. `ledger-opt-in` is
+  available only when integrations enable the explicit Agent-write ledger; the
+  core still never guesses authorship.
 - `workspaceIsolation` is `shared-lock`, not an independent worktree or
   container.
 - `shadowStoreEncryption` and native DSH message-action UI are not implemented.

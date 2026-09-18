@@ -158,6 +158,26 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
     expect(await fs.readFile(right, 'utf8')).toBe('live-right\n');
   });
 
+  it('preserves a verified hand-edit when an integration supplies the Agent-write ledger', async () => {
+    const ledgerService = new TimeMachineService({
+      workDir: tmpDir,
+      storageDir: path.join(tmpDir, '.dsh-tm-ledger'),
+      config: { enableAgentWriteLedger: true },
+    });
+    const sessionId = 'agent-write-ledger';
+    const file = path.join(tmpDir, 'ledger.txt');
+    await fs.writeFile(file, 'base\n', 'utf8');
+    const base = await ledgerService.createTurnCheckpoint({ sessionId, turnIndex: 1, prompt: 'base', sessionState: { sessionId, messages: [] } });
+    await fs.writeFile(file, 'agent\n', 'utf8');
+    const agent = await ledgerService.createTurnCheckpoint({ sessionId, turnIndex: 2, prompt: 'agent write', sessionState: { sessionId, messages: [] } });
+    await ledgerService.recordAgentWrite(sessionId, agent.id, { path: 'ledger.txt', operation: 'modify' });
+    await fs.writeFile(file, 'human\n', 'utf8');
+
+    await ledgerService.rewindToCheckpoint(sessionId, base.id, { preserveVerifiedHandEdits: true });
+    expect(await fs.readFile(file, 'utf8')).toBe('human\n');
+    expect((await ledgerService.getAgentWriteLedger(sessionId, agent.id))[0].path).toBe('ledger.txt');
+  });
+
   it('previews rewind impact without mutating files or DAG state', async () => {
     const sessionId = 'preview-session';
     const file = path.join(tmpDir, 'preview.txt');

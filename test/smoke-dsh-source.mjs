@@ -74,11 +74,18 @@ try {
         provider: gemini-local
         model: ${process.env.TM_GEMINI_MODEL ?? 'gemini-3.8-flash'}
         cwd: !!js process.cwd()
+
+- id: time-machine
+  config:
+    enableAgentWriteLedger: true
 `, 'utf8');
 
   const config = run(['--profile', profile, '--patch', patchFile, '--dump-config']);
   if (!config.includes('dsh-plugin-time-machine') || !config.includes('gemini-local')) {
     throw new Error('Source DSH profile did not activate the plugin and Gemini overlay.');
+  }
+  if (!config.includes('enableAgentWriteLedger')) {
+    throw new Error('Source DSH profile did not enable the Agent-write ledger in the plugin configuration.');
   }
 
   if (live) {
@@ -86,7 +93,7 @@ try {
     run([
       '--profile', profile,
       '--patch', patchFile,
-      'Create hello.txt with exactly the text DSH-TM-SOURCE-OK, then confirm briefly.',
+      'Use the native write tool (not bash or any shell command) to create hello.txt with exactly the text DSH-TM-SOURCE-OK, then confirm briefly.',
     ], { timeout: 180_000 });
     const content = await readFile(path.join(workspace, 'hello.txt'), 'utf8');
     if (content.trim() !== 'DSH-TM-SOURCE-OK') throw new Error('Live DSH did not create the expected file.');
@@ -99,7 +106,11 @@ try {
     if (!nodes.some((node) => ['success', 'failed', 'aborted'].includes(node.status))) {
       throw new Error('Live DSH DAG has no finalized turn checkpoint.');
     }
+    if (!nodes.some((node) => (node.agentWrites?.length ?? 0) > 0)) {
+      throw new Error('Live DSH DAG has no automatic Agent-write ledger evidence.');
+    }
     console.log(`Source DSH persisted ${nodes.length} finalized checkpoint(s).`);
+    console.log('Source DSH native write event was captured in the Agent-write ledger.');
 
     if (process.env.TM_DSH_LIVE_RESTART === '1') {
       run([

@@ -60,14 +60,14 @@
 | B-06 | DSH bundle 能发现插件 | `pnpm smoke:dsh` 或源码 DSH 等价命令 |
 | B-06a | 本地发布门禁一次性通过 | `pnpm test:release` |
 | B-07 | 本地 DSH 源码宿主加载插件 | `TM_DSH_SOURCE=... pnpm smoke:dsh:source` |
-| B-08 | 本地 OpenAI-compatible 模型驱动真实 turn | `TM_DSH_LIVE=1 TM_GEMINI_API_KEY=... pnpm smoke:dsh:source` |
+| B-08 | 本地 OpenAI-compatible 模型驱动真实 turn，并持久化 Agent-write ledger | `TM_DSH_LIVE=1 TM_GEMINI_API_KEY=... TM_GEMINI_BASE_URL=http://127.0.0.1:8081/v1 pnpm smoke:dsh:source` |
 | B-09 | 同一 DSH_HOME/workspace 重启并保留 DAG | `TM_DSH_LIVE=1 TM_DSH_LIVE_RESTART=1 TM_GEMINI_API_KEY=... pnpm smoke:dsh:source` |
 | B-10 | 真实 DSH Web 宿主 session + checkpoint + fork + rewind | `TM_GEMINI_API_KEY=... pnpm smoke:dsh:web` |
 | B-11 | 真实 DSH 模型端点失败仍持久化 failed checkpoint 和错误证据 | `TM_DSH_SOURCE=... pnpm smoke:dsh:failure` |
 | B-12 | 真实 DSH 工具失败事件提取为 `failedTools` | `TM_DSH_LIVE_TOOL_FAILURE=1 TM_GEMINI_API_KEY=... pnpm smoke:dsh:source` |
 | B-13 | 本地发布门禁包含跨进程锁回归和 shadow loose/packed-object 回收 | `pnpm test:release` |
 | B-14 | Git 三方合并恢复保留非冲突漂移并报告冲突路径 | `pnpm test -- --run test/git-plumbing.test.ts test/service.test.ts test/web-server.test.ts` |
-| B-15 | DSH 原生 write/edit 事件自动进入 Agent-write ledger，并在 turn/end 前完成落盘 | 真实 DSH fixture：依次发出 `fs/observed`、`tools/result`、`turn/end`，再检查 checkpoint 的 `agentWrites` |
+| B-15 | DSH 原生 write/edit 事件自动进入 Agent-write ledger，并在 turn/end 前完成落盘 | Cordis 事件级 fixture + 真实 DSH live fixture；后者强制原生 `write` 工具并检查持久化 checkpoint 的 `agentWrites` |
 
 ### L1：纯逻辑单元测试
 

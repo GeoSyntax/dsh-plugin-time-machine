@@ -50,6 +50,7 @@ describe('TimeMachineWebServer', () => {
     const capabilitiesRes = await fetch(`http://localhost:${testPort}/api/capabilities`);
     expect(capabilitiesRes.status).toBe(200);
     const capabilities = (await capabilitiesRes.json()).capabilities;
+    expect(capabilities.version).toBe(1);
     expect(capabilities.fallback).toBe(true);
     expect(capabilities.mergeRestore).toBe(false);
     expect(capabilities.selectiveRestore).toBe(true);

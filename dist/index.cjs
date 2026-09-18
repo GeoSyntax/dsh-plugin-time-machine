@@ -2176,6 +2176,7 @@ var TimeMachineService = class {
     const workspace = git ? await this.gitEngine.inspectWorkspaceCapabilities() : { sparseCheckout: false, submodulePaths: [], inProgressOperation: null };
     const usable = git && !workspace.sparseCheckout && workspace.submodulePaths.length === 0 && !workspace.inProgressOperation;
     return {
+      version: 1,
       git,
       fallback: !git,
       mergeRestore: usable,

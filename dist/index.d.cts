@@ -351,6 +351,7 @@ declare class TimeMachineService {
     getStorageStatus(sessionId?: string): Promise<StorageStatus>;
     /** Report runtime capabilities so Web/CLI integrations can fail early. */
     getCapabilities(): Promise<{
+        version: 1;
         git: boolean;
         fallback: boolean;
         mergeRestore: boolean;

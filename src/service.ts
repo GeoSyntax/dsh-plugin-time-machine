@@ -606,6 +606,7 @@ export class TimeMachineService {
 
   /** Report runtime capabilities so Web/CLI integrations can fail early. */
   async getCapabilities(): Promise<{
+    version: 1;
     git: boolean;
     fallback: boolean;
     mergeRestore: boolean;
@@ -631,6 +632,7 @@ export class TimeMachineService {
       : { sparseCheckout: false, submodulePaths: [], inProgressOperation: null };
     const usable = git && !workspace.sparseCheckout && workspace.submodulePaths.length === 0 && !workspace.inProgressOperation;
     return {
+      version: 1,
       git,
       fallback: !git,
       mergeRestore: usable,

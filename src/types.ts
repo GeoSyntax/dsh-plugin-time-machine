@@ -88,6 +88,8 @@ export interface TimeMachineConfig {
   shadowStore?: boolean;
   /** Allow quota-triggered compaction before ordinary checkpoints; disabled by default. */
   autoPrune?: boolean;
+  /** Maximum time to wait for another process to finish a workspace operation. */
+  workspaceLockTimeoutMs?: number;
 }
 
 export interface RestoreOptions {

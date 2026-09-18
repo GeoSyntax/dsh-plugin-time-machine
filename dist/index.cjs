@@ -261,19 +261,19 @@ Reason: ${errorMsg}`);
         for (const relative of normalized) await this.safeWorkspacePath(relative);
         const mode = options.mode ?? "safe";
         const current = await this.inspectWorkspace();
-        const ignoredSelection = current.ignoredPaths.filter((file) => normalized.some((path7) => file === path7 || file.startsWith(`${path7}/`)));
+        const ignoredSelection = current.ignoredPaths.filter((file) => normalized.some((path8) => file === path8 || file.startsWith(`${path8}/`)));
         if (ignoredSelection.length) throw new WorkspaceRestoreConflictError(ignoredSelection);
         if (mode === "safe" && options.expectedCurrentTreeOid && current.treeOid !== options.expectedCurrentTreeOid) {
           const changed = await this.diffNameOnly(options.expectedCurrentTreeOid, current.treeOid);
-          const selectedDrift = changed.filter((file) => normalized.some((path7) => file === path7 || file.startsWith(`${path7}/`)));
+          const selectedDrift = changed.filter((file) => normalized.some((path8) => file === path8 || file.startsWith(`${path8}/`)));
           if (selectedDrift.length) throw new WorkspaceDriftError(selectedDrift);
         }
         const { stdout: treeStdout } = await this.runGit(["rev-parse", `${commitOrTreeOid}^{tree}`]);
         const targetTree = treeStdout.trim();
         const targetFiles = await this.listTreeFileNames(targetTree);
         const currentFiles = await this.listTreeFileNames(current.treeOid);
-        const selectedTargetFiles = targetFiles.filter((file) => normalized.some((path7) => file === path7 || file.startsWith(`${path7}/`)));
-        const selectedCurrentFiles = currentFiles.filter((file) => normalized.some((path7) => file === path7 || file.startsWith(`${path7}/`)));
+        const selectedTargetFiles = targetFiles.filter((file) => normalized.some((path8) => file === path8 || file.startsWith(`${path8}/`)));
+        const selectedCurrentFiles = currentFiles.filter((file) => normalized.some((path8) => file === path8 || file.startsWith(`${path8}/`)));
         if (selectedTargetFiles.length === 0 && selectedCurrentFiles.length === 0) {
           throw new Error(`None of the selected paths exist in the current or target snapshot: ${normalized.join(", ")}`);
         }
@@ -587,15 +587,15 @@ __export(index_exports, {
 });
 module.exports = __toCommonJS(index_exports);
 init_cjs_shims();
-var import_node_path6 = __toESM(require("path"), 1);
+var import_node_path7 = __toESM(require("path"), 1);
 var import_schemastery = __toESM(require("@deepseek-ai/schemastery"), 1);
 var import_picocolors2 = __toESM(require("picocolors"), 1);
 
 // src/service.ts
 init_cjs_shims();
-var import_node_path4 = __toESM(require("path"), 1);
-var import_promises4 = __toESM(require("fs/promises"), 1);
-var import_node_crypto4 = require("crypto");
+var import_node_path5 = __toESM(require("path"), 1);
+var import_promises5 = __toESM(require("fs/promises"), 1);
+var import_node_crypto5 = require("crypto");
 init_git_plumbing();
 
 // src/core/fallback-engine.ts
@@ -1233,6 +1233,78 @@ var KeyedOperationLock = class {
   }
 };
 
+// src/core/workspace-lock.ts
+init_cjs_shims();
+var import_promises4 = __toESM(require("fs/promises"), 1);
+var import_node_path4 = __toESM(require("path"), 1);
+var import_node_os = __toESM(require("os"), 1);
+var import_node_crypto4 = require("crypto");
+var WorkspaceBusyError = class extends Error {
+  code = "WORKSPACE_BUSY";
+  constructor(lockPath, timeoutMs) {
+    super(`Workspace is busy (lock: ${lockPath}); waited ${timeoutMs}ms.`);
+    this.name = "WorkspaceBusyError";
+  }
+};
+var WorkspaceFileLock = class {
+  lockPath;
+  timeoutMs;
+  retryMs;
+  staleMs;
+  constructor(lockPath, options = {}) {
+    this.lockPath = import_node_path4.default.resolve(lockPath);
+    this.timeoutMs = Math.max(0, Math.floor(options.timeoutMs ?? 3e4));
+    this.retryMs = Math.max(5, Math.floor(options.retryMs ?? 25));
+    this.staleMs = Math.max(this.retryMs, Math.floor(options.staleMs ?? 12e4));
+  }
+  async run(operation) {
+    const token = (0, import_node_crypto4.randomUUID)();
+    const handle = await this.acquire(token);
+    try {
+      return await operation();
+    } finally {
+      await handle.close().catch(() => void 0);
+      await this.release(token);
+    }
+  }
+  async acquire(token) {
+    await import_promises4.default.mkdir(import_node_path4.default.dirname(this.lockPath), { recursive: true });
+    const startedAt = Date.now();
+    while (true) {
+      try {
+        const handle = await import_promises4.default.open(this.lockPath, "wx");
+        await handle.writeFile(JSON.stringify({ token, pid: process.pid, host: import_node_os.default.hostname(), createdAt: Date.now() }), "utf8");
+        return handle;
+      } catch (error) {
+        if (error?.code !== "EEXIST") throw error;
+        await this.removeDeadOwner();
+        if (Date.now() - startedAt >= this.timeoutMs) throw new WorkspaceBusyError(this.lockPath, this.timeoutMs);
+        await new Promise((resolve) => setTimeout(resolve, this.retryMs));
+      }
+    }
+  }
+  async removeDeadOwner() {
+    const stat = await import_promises4.default.stat(this.lockPath).catch(() => void 0);
+    if (!stat) return;
+    const owner = await import_promises4.default.readFile(this.lockPath, "utf8").then((value) => JSON.parse(value)).catch(() => ({}));
+    const age = Date.now() - (owner.createdAt ?? stat.mtimeMs);
+    if (owner.pid && owner.pid !== process.pid) {
+      try {
+        process.kill(owner.pid, 0);
+        return;
+      } catch {
+        await import_promises4.default.rm(this.lockPath, { force: true }).catch(() => void 0);
+        return;
+      }
+    }
+    if (age > this.staleMs) await import_promises4.default.rm(this.lockPath, { force: true }).catch(() => void 0);
+  }
+  async release(token) {
+    const owner = await import_promises4.default.readFile(this.lockPath, "utf8").then((value) => JSON.parse(value)).catch(() => void 0);
+    if (owner?.token === token) await import_promises4.default.rm(this.lockPath, { force: true }).catch(() => void 0);
+  }
+};
+
 // src/service.ts
 var StorageQuotaError = class extends Error {
   code = "STORAGE_QUOTA_EXCEEDED";
@@ -1251,11 +1323,12 @@ var TimeMachineService = class {
   recoveredSessions = /* @__PURE__ */ new Set();
   advisor = new ReflectionAdvisor();
   operations = new KeyedOperationLock();
+  workspaceLock;
   journalDir;
   constructor(options) {
-    this.workDir = import_node_path4.default.resolve(options.workDir);
-    this.storageDir = options.storageDir ? import_node_path4.default.resolve(options.storageDir) : import_node_path4.default.join(this.workDir, ".dsh", "time-machine");
-    this.journalDir = import_node_path4.default.join(this.storageDir, "restore-journals");
+    this.workDir = import_node_path5.default.resolve(options.workDir);
+    this.storageDir = options.storageDir ? import_node_path5.default.resolve(options.storageDir) : import_node_path5.default.join(this.workDir, ".dsh", "time-machine");
+    this.journalDir = import_node_path5.default.join(this.storageDir, "restore-journals");
     this.config = {
       autoSnapshot: options.config?.autoSnapshot ?? true,
       enableReflectionAdvisor: options.config?.enableReflectionAdvisor ?? true,
@@ -1269,20 +1342,27 @@ var TimeMachineService = class {
       maxSnapshots: Math.max(0, Math.floor(options.config?.maxSnapshots ?? 0)),
       maxStorageBytes: Math.max(0, Math.floor(options.config?.maxStorageBytes ?? 0)),
       shadowStore: options.config?.shadowStore ?? false,
-      autoPrune: options.config?.autoPrune ?? false
+      autoPrune: options.config?.autoPrune ?? false,
+      workspaceLockTimeoutMs: Math.max(0, Math.floor(options.config?.workspaceLockTimeoutMs ?? 3e4))
     };
     this.gitEngine = new GitPlumbingEngine({
       workDir: this.workDir,
       refPrefix: this.config.refPrefix,
       preservePaths: [this.storageDir, ...this.config.preservePaths],
-      quarantineDir: import_node_path4.default.join(this.storageDir, "ignored-quarantine"),
-      shadowObjectDir: this.config.shadowStore ? import_node_path4.default.join(this.storageDir, "git-shadow", "objects") : void 0
+      quarantineDir: import_node_path5.default.join(this.storageDir, "ignored-quarantine"),
+      shadowObjectDir: this.config.shadowStore ? import_node_path5.default.join(this.storageDir, "git-shadow", "objects") : void 0
     });
     this.fallbackEngine = new FallbackSnapshotEngine({
       workDir: this.workDir,
-      storageDir: import_node_path4.default.join(this.storageDir, "fallback_backups"),
+      storageDir: import_node_path5.default.join(this.storageDir, "fallback_backups"),
       preservePaths: [this.storageDir, ...this.config.preservePaths]
     });
+    this.workspaceLock = new WorkspaceFileLock(import_node_path5.default.join(this.storageDir, ".workspace.lock"), {
+      timeoutMs: this.config.workspaceLockTimeoutMs
+    });
+  }
+  runWorkspaceOperation(operation) {
+    return this.operations.run(this.workDir, () => this.workspaceLock.run(operation));
   }
   /**
    * 获取或初始化指定会话的 DAG 管理器
@@ -1307,7 +1387,7 @@ var TimeMachineService = class {
    * 核心：创建原子双轨快照（状态轨 + 工作区轨）
    */
   async createTurnCheckpoint(params) {
-    return this.operations.run(this.workDir, () => this.createTurnCheckpointUnlocked(params));
+    return this.runWorkspaceOperation(() => this.createTurnCheckpointUnlocked(params));
   }
   async createTurnCheckpointUnlocked(params) {
     const dag = await this.getDAGManager(params.sessionId);
@@ -1316,7 +1396,7 @@ var TimeMachineService = class {
       if (this.config.autoPrune) await this.autoPruneForQuota(dag);
       await this.enforceStorageQuota(dag);
     }
-    const checkpointId = `chk_t${params.turnIndex}_${(0, import_node_crypto4.randomUUID)().replace(/-/g, "").slice(0, 12)}`;
+    const checkpointId = `chk_t${params.turnIndex}_${(0, import_node_crypto5.randomUUID)().replace(/-/g, "").slice(0, 12)}`;
     const currentNode = dag.getCurrentNode();
     const parentCommitOid = currentNode ? currentNode.gitCommitOid : null;
     let treeOid = "";
@@ -1366,7 +1446,7 @@ var TimeMachineService = class {
     return cloneJson2(node);
   }
   async finalizeTurnCheckpoint(params) {
-    return this.operations.run(this.workDir, async () => {
+    return this.runWorkspaceOperation(async () => {
       const dag = await this.getDAGManager(params.sessionId);
       const settled = await this.gitEngine.isGitRepo() ? await this.gitEngine.inspectWorkspace() : { treeOid: await this.fallbackEngine.inspectWorkspace(), ignoredPaths: [] };
       return dag.updateNode(params.checkpointId, {
@@ -1382,7 +1462,7 @@ var TimeMachineService = class {
    * 核心：回滚物理工作区与会话状态至指定快照
    */
   async rewindToCheckpoint(sessionId, checkpointId, options = {}) {
-    return this.operations.run(this.workDir, async () => {
+    return this.runWorkspaceOperation(async () => {
       const dag = await this.getDAGManager(sessionId);
       const target = dag.getNode(checkpointId);
       if (!target) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
@@ -1412,7 +1492,7 @@ var TimeMachineService = class {
   }
   /** Restore selected workspace paths without changing the DSH conversation. */
   async restoreSelectedPaths(sessionId, checkpointId, paths, options = {}) {
-    return this.operations.run(this.workDir, async () => {
+    return this.runWorkspaceOperation(async () => {
       const dag = await this.getDAGManager(sessionId);
       const target = dag.getNode(checkpointId);
       if (!target) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
@@ -1481,7 +1561,7 @@ var TimeMachineService = class {
    * 核心：从历史任意快照点 Fork 开辟新的平行探索分支
    */
   async forkNewBranch(params) {
-    return this.operations.run(this.workDir, async () => {
+    return this.runWorkspaceOperation(async () => {
       const dag = await this.getDAGManager(params.sessionId);
       const baseNode = dag.validateFork(params.fromCheckpointId, params.newBranchName);
       const restored = await this.restoreWithRescue(dag, baseNode, params.restore ?? {}, "fork");
@@ -1537,7 +1617,7 @@ var TimeMachineService = class {
    * does not create a rescue point, mutate the DAG, or touch workspace files.
    */
   async previewRestore(sessionId, checkpointId) {
-    return this.operations.run(this.workDir, async () => {
+    return this.runWorkspaceOperation(async () => {
       const dag = await this.getDAGManager(sessionId);
       const target = dag.getNode(checkpointId);
       if (!target) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
@@ -1593,7 +1673,7 @@ var TimeMachineService = class {
     };
   }
   async prune(sessionId, options = {}) {
-    return this.operations.run(this.workDir, async () => {
+    return this.runWorkspaceOperation(async () => {
       const dag = await this.getDAGManager(sessionId);
       const keepLatest = Math.max(0, Math.floor(options.keepLatest ?? 20));
       const nodes = Object.values(dag.tree.nodes).sort((left, right) => right.timestamp - left.timestamp);
@@ -1656,12 +1736,12 @@ var TimeMachineService = class {
     return Object.values(dag.tree.nodes).filter((node) => !protectedIds.has(node.id) && !parents.has(node.id));
   }
   async listStoredSessions() {
-    const entries = await import_promises4.default.readdir(this.storageDir, { withFileTypes: true }).catch(() => []);
+    const entries = await import_promises5.default.readdir(this.storageDir, { withFileTypes: true }).catch(() => []);
     const sessions = /* @__PURE__ */ new Set();
     for (const entry of entries) {
       if (!entry.isFile() || !entry.name.startsWith("dag_") || !entry.name.endsWith(".json")) continue;
       try {
-        const tree = JSON.parse(await import_promises4.default.readFile(import_node_path4.default.join(this.storageDir, entry.name), "utf8"));
+        const tree = JSON.parse(await import_promises5.default.readFile(import_node_path5.default.join(this.storageDir, entry.name), "utf8"));
         if (typeof tree.sessionId === "string") sessions.add(tree.sessionId);
       } catch {
       }
@@ -1769,53 +1849,53 @@ var TimeMachineService = class {
   }
   async completeRestoreJournal(journalId) {
     if (!journalId) return;
-    await import_promises4.default.rm(import_node_path4.default.join(this.journalDir, `${journalId}.json`), { force: true }).catch(() => void 0);
+    await import_promises5.default.rm(import_node_path5.default.join(this.journalDir, `${journalId}.json`), { force: true }).catch(() => void 0);
   }
   async createRestoreJournal(params) {
-    const id = `restore_${(0, import_node_crypto4.randomUUID)().replace(/-/g, "")}`;
+    const id = `restore_${(0, import_node_crypto5.randomUUID)().replace(/-/g, "")}`;
     const journal = { version: 1, id, phase: "prepared", createdAt: Date.now(), ...params };
-    await import_promises4.default.mkdir(this.journalDir, { recursive: true });
-    const file = import_node_path4.default.join(this.journalDir, `${id}.json`);
-    const temporary = `${file}.${(0, import_node_crypto4.randomUUID)()}.tmp`;
+    await import_promises5.default.mkdir(this.journalDir, { recursive: true });
+    const file = import_node_path5.default.join(this.journalDir, `${id}.json`);
+    const temporary = `${file}.${(0, import_node_crypto5.randomUUID)()}.tmp`;
     try {
-      await import_promises4.default.writeFile(temporary, `${JSON.stringify(journal, null, 2)}
+      await import_promises5.default.writeFile(temporary, `${JSON.stringify(journal, null, 2)}
 `, { encoding: "utf8", flag: "wx" });
-      await import_promises4.default.rename(temporary, file);
+      await import_promises5.default.rename(temporary, file);
     } finally {
-      await import_promises4.default.rm(temporary, { force: true }).catch(() => void 0);
+      await import_promises5.default.rm(temporary, { force: true }).catch(() => void 0);
     }
     return id;
   }
   async updateRestoreJournal(journalId, phase) {
     if (!journalId) return;
-    const file = import_node_path4.default.join(this.journalDir, `${journalId}.json`);
-    const raw = await import_promises4.default.readFile(file, "utf8").catch(() => void 0);
+    const file = import_node_path5.default.join(this.journalDir, `${journalId}.json`);
+    const raw = await import_promises5.default.readFile(file, "utf8").catch(() => void 0);
     if (!raw) return;
     const journal = JSON.parse(raw);
     journal.phase = phase;
-    await import_promises4.default.writeFile(file, `${JSON.stringify(journal, null, 2)}
+    await import_promises5.default.writeFile(file, `${JSON.stringify(journal, null, 2)}
 `, "utf8");
   }
   async recoverInterruptedRestores(sessionId, dag) {
-    const entries = await import_promises4.default.readdir(this.journalDir, { withFileTypes: true }).catch(() => []);
+    const entries = await import_promises5.default.readdir(this.journalDir, { withFileTypes: true }).catch(() => []);
     for (const entry of entries) {
       if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
-      const file = import_node_path4.default.join(this.journalDir, entry.name);
+      const file = import_node_path5.default.join(this.journalDir, entry.name);
       let journal;
       try {
-        journal = JSON.parse(await import_promises4.default.readFile(file, "utf8"));
+        journal = JSON.parse(await import_promises5.default.readFile(file, "utf8"));
       } catch {
         continue;
       }
       if (journal.version !== 1 || journal.sessionId !== sessionId) continue;
       const rescue = dag.getNode(journal.rescueCheckpointId);
       if (!rescue) {
-        await import_promises4.default.rm(file, { force: true });
+        await import_promises5.default.rm(file, { force: true });
         continue;
       }
       await this.restoreNode(rescue, void 0, { mode: "force", createRescuePoint: false });
       await dag.rewindTo(rescue.id);
-      await import_promises4.default.rm(file, { force: true });
+      await import_promises5.default.rm(file, { force: true });
     }
   }
 };
@@ -1828,10 +1908,10 @@ function sameStrings(left, right) {
 async function directoryBytes(root) {
   let total = 0;
   const visit = async (directory) => {
-    for (const entry of await import_promises4.default.readdir(directory, { withFileTypes: true }).catch(() => [])) {
-      const absolute = import_node_path4.default.join(directory, entry.name);
+    for (const entry of await import_promises5.default.readdir(directory, { withFileTypes: true }).catch(() => [])) {
+      const absolute = import_node_path5.default.join(directory, entry.name);
       if (entry.isDirectory()) await visit(absolute);
-      else total += (await import_promises4.default.stat(absolute).catch(() => ({ size: 0 }))).size;
+      else total += (await import_promises5.default.stat(absolute).catch(() => ({ size: 0 }))).size;
     }
   };
   await visit(root);
@@ -1840,8 +1920,8 @@ async function directoryBytes(root) {
 async function countFiles(root) {
   let total = 0;
   const visit = async (directory) => {
-    for (const entry of await import_promises4.default.readdir(directory, { withFileTypes: true }).catch(() => [])) {
-      const absolute = import_node_path4.default.join(directory, entry.name);
+    for (const entry of await import_promises5.default.readdir(directory, { withFileTypes: true }).catch(() => [])) {
+      const absolute = import_node_path5.default.join(directory, entry.name);
       if (entry.isDirectory()) await visit(absolute);
       else total += 1;
     }
@@ -1853,8 +1933,8 @@ async function countFiles(root) {
 // src/web/server.ts
 init_cjs_shims();
 var import_node_http = __toESM(require("http"), 1);
-var import_node_path5 = __toESM(require("path"), 1);
-var import_promises5 = __toESM(require("fs/promises"), 1);
+var import_node_path6 = __toESM(require("path"), 1);
+var import_promises6 = __toESM(require("fs/promises"), 1);
 var import_node_url = require("url");
 var TimeMachineWebServer = class {
   server = null;
@@ -2066,21 +2146,21 @@ var TimeMachineWebServer = class {
       res.end("Not found");
       return;
     }
-    const currentFileDir = import_node_path5.default.dirname(new import_node_url.URL(importMetaUrl).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
+    const currentFileDir = import_node_path6.default.dirname(new import_node_url.URL(importMetaUrl).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
     const candidateDirs = [
-      import_node_path5.default.join(currentFileDir, "client"),
-      import_node_path5.default.join(currentFileDir, "../src/web/client"),
-      import_node_path5.default.join(currentFileDir, "web/client"),
-      import_node_path5.default.join(process.cwd(), "src/web/client"),
-      import_node_path5.default.join(process.cwd(), "dist/client")
+      import_node_path6.default.join(currentFileDir, "client"),
+      import_node_path6.default.join(currentFileDir, "../src/web/client"),
+      import_node_path6.default.join(currentFileDir, "web/client"),
+      import_node_path6.default.join(process.cwd(), "src/web/client"),
+      import_node_path6.default.join(process.cwd(), "dist/client")
     ];
     let fullPath = "";
     for (const dir of candidateDirs) {
-      const candidate = import_node_path5.default.resolve(dir, filePath);
-      const relative = import_node_path5.default.relative(import_node_path5.default.resolve(dir), candidate);
-      if (relative.startsWith("..") || import_node_path5.default.isAbsolute(relative)) continue;
+      const candidate = import_node_path6.default.resolve(dir, filePath);
+      const relative = import_node_path6.default.relative(import_node_path6.default.resolve(dir), candidate);
+      if (relative.startsWith("..") || import_node_path6.default.isAbsolute(relative)) continue;
       try {
-        await import_promises5.default.access(candidate);
+        await import_promises6.default.access(candidate);
         fullPath = candidate;
         break;
       } catch {
@@ -2088,8 +2168,8 @@ var TimeMachineWebServer = class {
     }
     try {
       if (!fullPath) throw new Error("Asset not found");
-      const content = await import_promises5.default.readFile(fullPath);
-      const ext = import_node_path5.default.extname(fullPath);
+      const content = await import_promises6.default.readFile(fullPath);
+      const ext = import_node_path6.default.extname(fullPath);
       const contentTypes = {
         ".html": "text/html; charset=utf-8",
         ".css": "text/css; charset=utf-8",
@@ -2300,10 +2380,11 @@ var Config = import_schemastery.default.object({
   maxSnapshots: import_schemastery.default.number().default(0),
   maxStorageBytes: import_schemastery.default.number().default(0),
   shadowStore: import_schemastery.default.boolean().default(false),
-  autoPrune: import_schemastery.default.boolean().default(false)
+  autoPrune: import_schemastery.default.boolean().default(false),
+  workspaceLockTimeoutMs: import_schemastery.default.number().default(3e4)
 });
 function apply(ctx, config = {}) {
-  const workDir = import_node_path6.default.resolve(process.cwd());
+  const workDir = import_node_path7.default.resolve(process.cwd());
   const service = new TimeMachineService({ workDir, config });
   ctx.provide("timeMachine", service);
   registerCliCommands(ctx, service);
@@ -2330,7 +2411,7 @@ function apply(ctx, config = {}) {
     scope.on("agent/pre-step", async ({ agent, turn, step }, next) => {
       if (!service.config.autoSnapshot || step !== 1) return next();
       const session = agent.session;
-      const cwd = session.header.cwd ? import_node_path6.default.resolve(session.header.cwd) : workDir;
+      const cwd = session.header.cwd ? import_node_path7.default.resolve(session.header.cwd) : workDir;
       if (cwd !== service.workDir) {
         scope.logger.warn(`[time-machine] skipped session ${session.id}: cwd ${cwd} differs from configured workspace ${service.workDir}`);
         return next();

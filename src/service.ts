@@ -6,6 +6,7 @@ import { FallbackSnapshotEngine } from './core/fallback-engine.js';
 import { DAGStateManager } from './core/dag-manager.js';
 import { ReflectionAdvisor } from './core/reflection-advisor.js';
 import { KeyedOperationLock } from './core/operation-lock.js';
+import { WorkspaceFileLock } from './core/workspace-lock.js';
 import type {
   CheckpointNode,
   DAGTree,
@@ -58,6 +59,7 @@ export class TimeMachineService {
   private recoveredSessions = new Set<string>();
   private advisor = new ReflectionAdvisor();
   private operations = new KeyedOperationLock();
+  private workspaceLock: WorkspaceFileLock;
   private readonly journalDir: string;
 
   constructor(options: TimeMachineServiceOptions) {
@@ -81,6 +83,7 @@ export class TimeMachineService {
       maxStorageBytes: Math.max(0, Math.floor(options.config?.maxStorageBytes ?? 0)),
       shadowStore: options.config?.shadowStore ?? false,
       autoPrune: options.config?.autoPrune ?? false,
+      workspaceLockTimeoutMs: Math.max(0, Math.floor(options.config?.workspaceLockTimeoutMs ?? 30000)),
     };
 
     this.gitEngine = new GitPlumbingEngine({
@@ -96,6 +99,13 @@ export class TimeMachineService {
       storageDir: path.join(this.storageDir, 'fallback_backups'),
       preservePaths: [this.storageDir, ...this.config.preservePaths],
     });
+    this.workspaceLock = new WorkspaceFileLock(path.join(this.storageDir, '.workspace.lock'), {
+      timeoutMs: this.config.workspaceLockTimeoutMs,
+    });
+  }
+
+  private runWorkspaceOperation<T>(operation: () => Promise<T>): Promise<T> {
+    return this.operations.run(this.workDir, () => this.workspaceLock.run(operation));
   }
 
   /**
@@ -132,7 +142,7 @@ export class TimeMachineService {
     failedTools?: Array<{ toolName: string; input: any; error: string }>;
     tags?: string[];
   }): Promise<CheckpointNode> {
-    return this.operations.run(this.workDir, () => this.createTurnCheckpointUnlocked(params));
+    return this.runWorkspaceOperation(() => this.createTurnCheckpointUnlocked(params));
   }
 
   private async createTurnCheckpointUnlocked(params: {
@@ -214,7 +224,7 @@ export class TimeMachineService {
     errorMessage?: string;
     failedTools?: Array<{ toolName: string; input: any; error: string }>;
   }): Promise<CheckpointNode> {
-    return this.operations.run(this.workDir, async () => {
+    return this.runWorkspaceOperation(async () => {
       const dag = await this.getDAGManager(params.sessionId);
       const settled = await this.gitEngine.isGitRepo()
         ? await this.gitEngine.inspectWorkspace()
@@ -233,7 +243,7 @@ export class TimeMachineService {
    * 核心：回滚物理工作区与会话状态至指定快照
    */
   async rewindToCheckpoint(sessionId: string, checkpointId: string, options: RestoreOptions = {}): Promise<RestoreResult> {
-    return this.operations.run(this.workDir, async () => {
+    return this.runWorkspaceOperation(async () => {
       const dag = await this.getDAGManager(sessionId);
       const target = dag.getNode(checkpointId);
       if (!target) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
@@ -269,7 +279,7 @@ export class TimeMachineService {
     paths: string[],
     options: Pick<RestoreOptions, 'mode'> = {},
   ): Promise<SelectiveRestoreResult> {
-    return this.operations.run(this.workDir, async () => {
+    return this.runWorkspaceOperation(async () => {
       const dag = await this.getDAGManager(sessionId);
       const target = dag.getNode(checkpointId);
       if (!target) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
@@ -340,7 +350,7 @@ export class TimeMachineService {
     rescueCheckpointId?: string;
     restoreJournalId?: string;
   }> {
-    return this.operations.run(this.workDir, async () => {
+    return this.runWorkspaceOperation(async () => {
       const dag = await this.getDAGManager(params.sessionId);
       const baseNode = dag.validateFork(params.fromCheckpointId, params.newBranchName);
       const restored = await this.restoreWithRescue(dag, baseNode, params.restore ?? {}, 'fork');
@@ -407,7 +417,7 @@ export class TimeMachineService {
    * does not create a rescue point, mutate the DAG, or touch workspace files.
    */
   async previewRestore(sessionId: string, checkpointId: string): Promise<RestorePreview> {
-    return this.operations.run(this.workDir, async () => {
+    return this.runWorkspaceOperation(async () => {
       const dag = await this.getDAGManager(sessionId);
       const target = dag.getNode(checkpointId);
       if (!target) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
@@ -472,7 +482,7 @@ export class TimeMachineService {
   }
 
   async prune(sessionId: string, options: { keepLatest?: number; abandonedBranches?: boolean; compactHistory?: boolean } = {}): Promise<PruneResult> {
-    return this.operations.run(this.workDir, async () => {
+    return this.runWorkspaceOperation(async () => {
       const dag = await this.getDAGManager(sessionId);
       const keepLatest = Math.max(0, Math.floor(options.keepLatest ?? 20));
       const nodes = Object.values(dag.tree.nodes).sort((left, right) => right.timestamp - left.timestamp);

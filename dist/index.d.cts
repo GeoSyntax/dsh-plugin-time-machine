@@ -90,6 +90,8 @@ interface TimeMachineConfig {
     shadowStore?: boolean;
     /** Allow quota-triggered compaction before ordinary checkpoints; disabled by default. */
     autoPrune?: boolean;
+    /** Maximum time to wait for another process to finish a workspace operation. */
+    workspaceLockTimeoutMs?: number;
 }
 interface RestoreOptions {
     mode?: 'safe' | 'force';
@@ -241,8 +243,10 @@ declare class TimeMachineService {
     private recoveredSessions;
     private advisor;
     private operations;
+    private workspaceLock;
     private readonly journalDir;
     constructor(options: TimeMachineServiceOptions);
+    private runWorkspaceOperation;
     /**
      * 获取或初始化指定会话的 DAG 管理器
      */

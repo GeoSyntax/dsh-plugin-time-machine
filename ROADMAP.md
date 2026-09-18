@@ -5,6 +5,7 @@
 ## 0.2.x — 社区验证
 
 - 在真实 DSH profile 上补充 GitHub/Linux/macOS/Windows 安装与回退验证；
+- CI 已在 Ubuntu、Windows、macOS 矩阵运行完整测试；真实 DSH 宿主 smoke 仍固定在 Linux。
 - 扩展 staged deletion、rename、nested repository、权限错误与异常中断测试；
 - 收集 Git/fallback 两种后端的可复现兼容性报告；
 - 已交付：真实 DSH smoke、safe restore、选择性恢复、跨进程锁和 shadow loose-object 回收；

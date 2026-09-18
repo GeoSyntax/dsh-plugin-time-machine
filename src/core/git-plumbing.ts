@@ -738,6 +738,7 @@ export class GitPlumbingEngine {
       }
       const protectedPaths = this.protectedRepoPaths(root);
       let omittedPaths: string[] = [...new Set(extraOmittedPaths.map(normalizeGitPath).filter(Boolean))];
+      for (const relative of omittedPaths) await this.safeWorkspacePath(relative);
       if (enforceSnapshotLimits) {
         const { stdout: candidates } = await this.runGit([
           'ls-files', '-z', '--cached', '--modified', '--deleted', '--others', '--exclude-standard',

@@ -85,6 +85,11 @@ describe('GitPlumbingEngine', () => {
     expect(inspected.treeOid).toBe(snapshot.treeOid);
   });
 
+  it('rejects malformed omitted paths before touching the temporary index', async () => {
+    await expect(engine.inspectWorkspace({ omitPaths: ['../outside.txt'] }))
+      .rejects.toThrow(/Unsafe workspace path/);
+  });
+
   it('should create snapshot without polluting git log', async () => {
     // 写入第一个文件
     const file1 = path.join(tmpDir, 'hello.txt');

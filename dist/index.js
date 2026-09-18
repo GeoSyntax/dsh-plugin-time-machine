@@ -632,6 +632,7 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
           }
           const protectedPaths = this.protectedRepoPaths(root);
           let omittedPaths = [...new Set(extraOmittedPaths.map(normalizeGitPath).filter(Boolean))];
+          for (const relative of omittedPaths) await this.safeWorkspacePath(relative);
           if (enforceSnapshotLimits) {
             const { stdout: candidates } = await this.runGit([
               "ls-files",

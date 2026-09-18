@@ -84,10 +84,12 @@ function createTimelineCard(node) {
 
   const files = Array.isArray(node.changedFiles) ? node.changedFiles : [];
   const omitted = Array.isArray(node.omittedPaths) ? node.omittedPaths : [];
+  const agentWrites = Array.isArray(node.agentWrites) ? node.agentWrites : [];
   const meta = element('div', 'card-meta');
   meta.append(
     element('span', '', `🕒 ${new Date(node.timestamp).toLocaleTimeString()}`),
     element('span', '', `📁 ${files.length} file(s) changed`),
+    ...(agentWrites.length ? [element('span', 'badge badge-success', `✎ ${agentWrites.length} Agent write(s)`)] : []),
     ...(omitted.length ? [element('span', 'badge badge-warning', `⚠ ${omitted.length} omitted`)] : []),
   );
   card.append(top, element('div', 'card-prompt', String(node.prompt || '')), meta);
@@ -116,7 +118,32 @@ function selectNode(nodeId) {
     metadataGroup(node),
   );
   if (node.summary) inspectorContent.append(infoGroup('Execution Summary', String(node.summary)));
+  inspectorContent.append(agentWritesGroup(node));
   inspectorContent.append(fileChangesGroup(node));
+}
+
+function agentWritesGroup(node) {
+  const writes = Array.isArray(node.agentWrites) ? node.agentWrites : [];
+  if (writes.length === 0) {
+    const empty = element('p', '', 'No verified Agent writes recorded for this checkpoint.');
+    empty.style.color = 'var(--text-muted)';
+    empty.style.fontSize = '0.8rem';
+    return group('Agent Write Ledger (0)', empty);
+  }
+  const list = element('ul', 'file-list');
+  for (const write of writes) {
+    const item = element('li', 'file-item');
+    const operation = String(write.operation || 'modify').toUpperCase();
+    const digest = String(write.sha256 || '');
+    item.append(
+      element('span', '', `✎ ${String(write.path)}`),
+      element('span', 'badge badge-success', operation),
+      element('code', '', digest ? `${digest.slice(0, 12)}…` : 'hash unavailable'),
+    );
+    item.title = digest ? `SHA-256: ${digest}` : 'SHA-256 unavailable';
+    list.append(item);
+  }
+  return group(`Agent Write Ledger (${writes.length})`, list);
 }
 
 function metadataGroup(node) {

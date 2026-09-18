@@ -85,6 +85,10 @@ describe('TimeMachineWebServer', () => {
     expect(htmlText).toContain('DSH Time Machine');
     expect(htmlText).toContain('Coordinated Session Fork');
 
+    const clientRes = await fetch(`http://localhost:${testPort}/app.js`);
+    expect(clientRes.status).toBe(200);
+    expect(await clientRes.text()).toContain('Agent Write Ledger');
+
     const blocked = await fetch(`http://localhost:${testPort}/api/status`, {
       headers: { Origin: 'https://attacker.example' },
     });

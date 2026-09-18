@@ -369,24 +369,29 @@ export class TimeMachineService {
       const effect = node.externalEffects?.find(item => item.id === effectId);
       if (!effect) throw new Error(`External effect '${effectId}' does not exist on checkpoint '${checkpointId}'.`);
       const adapter = this.externalEffectAdapters.get(effect.adapter);
-      if (!adapter) throw new Error(`No external effect adapter '${effect.adapter}' is registered.`);
       const idempotencyKey = options.idempotencyKey?.trim() || `dsh-tm:${sessionId}:${checkpointId}:${effectId}`;
       if (!idempotencyKey || idempotencyKey.length > 256 || /\s/.test(idempotencyKey)) {
         throw new Error('External compensation idempotencyKey must be non-empty, <=256 characters, and contain no whitespace.');
       }
       if (options.execute !== true) {
         return {
-          sessionId, checkpointId, effect: cloneJson(effect), adapter: adapter.name,
+          sessionId, checkpointId, effect: cloneJson(effect), adapter: effect.adapter,
+          adapterAvailable: adapter !== undefined,
           dryRun: true, idempotencyKey, replayed: false,
-          note: effect.status === 'compensated' ? 'Effect is already marked compensated.' : 'Dry run; no external mutation was requested.',
+          note: !adapter
+            ? `No external effect adapter '${effect.adapter}' is registered; dry-run only.`
+            : effect.status === 'compensated'
+              ? 'Effect is already marked compensated.'
+              : 'Dry run; no external mutation was requested.',
         };
       }
+      if (!adapter) throw new Error(`No external effect adapter '${effect.adapter}' is registered.`);
       if (!effect.reversible) throw new Error(`External effect '${effectId}' is declared irreversible.`);
       if (effect.compensationIdempotencyKey && effect.compensationIdempotencyKey !== idempotencyKey) {
         throw new Error(`External effect '${effectId}' already has a different compensation idempotency key.`);
       }
       if (effect.status === 'compensated' && effect.compensationIdempotencyKey === idempotencyKey) {
-        return { sessionId, checkpointId, effect: cloneJson(effect), adapter: adapter.name, dryRun: false, idempotencyKey, replayed: true };
+        return { sessionId, checkpointId, effect: cloneJson(effect), adapter: adapter.name, adapterAvailable: true, dryRun: false, idempotencyKey, replayed: true };
       }
 
       const attemptedAt = Date.now();
@@ -401,7 +406,7 @@ export class TimeMachineService {
         if (!outcome || !['compensated', 'unknown'].includes(outcome.status)) throw new Error('Adapter returned an invalid compensation status.');
         const updated = await mark({ status: outcome.status, ...(outcome.note ? { compensation: outcome.note } : {}) });
         const finalEffect = updated.externalEffects!.find(item => item.id === effectId)!;
-        return { sessionId, checkpointId, effect: cloneJson(finalEffect), adapter: adapter.name, dryRun: false, idempotencyKey, replayed: false, note: outcome.note };
+        return { sessionId, checkpointId, effect: cloneJson(finalEffect), adapter: adapter.name, adapterAvailable: true, dryRun: false, idempotencyKey, replayed: false, note: outcome.note };
       } catch (error) {
         await mark({ status: 'unknown' });
         throw Object.assign(new Error(`External compensation '${effectId}' is unknown after adapter failure: ${error instanceof Error ? error.message : String(error)}`), { code: 'EXTERNAL_COMPENSATION_UNKNOWN' });

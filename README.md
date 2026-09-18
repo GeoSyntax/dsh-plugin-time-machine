@@ -57,6 +57,7 @@ dsh --profile web
 - **明文 quarantine 迁移:** 启用 `quarantineEncryptionKeyEnv` 后，`/tm-quarantine-migrate <backup-key>` 或 `POST /api/quarantine-migrate` 可显式把旧明文备份转换为 AES-256-GCM；迁移失败会保留原目录，插件不会自动混用明文。
 - **显式部分快照（谨慎启用）:** 同时设置 `allowPartialSnapshots: true` 与快照大小上限后，超限 regular file 会记录在 checkpoint 的 `omittedPaths` 中并从不可变树排除；恢复时保留该路径的实时内容，不会假装已捕获。默认仍然拒绝超限快照并返回 `SNAPSHOT_SIZE_LIMIT`。
 - **外部副作用补偿边界:** 集成方可注册命名 compensation adapter；`/tm-external-compensate` 和 `POST /api/external-effects/compensate` 默认只 dry-run，只有显式 `--execute`/`execute: true` 才调用适配器。核心持久化幂等 key、结果和 unknown 状态，但不替适配器管理认证或远程事务。
+  dry-run 即使 adapter 尚未加载也会返回 `adapterAvailable: false` 的结构化告警；只有真正执行时才会因缺少 adapter 拒绝请求。
 
 ## Safety model
 

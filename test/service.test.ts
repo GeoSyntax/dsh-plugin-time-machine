@@ -691,6 +691,27 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
     expect(service.listExternalEffectAdapters()).not.toContain('demo-adapter');
   });
 
+  it('reports an unavailable adapter during dry-run without pretending compensation is possible', async () => {
+    const service = new TimeMachineService({ workDir: tmpDir, storageDir: path.join(tmpDir, '.missing-adapter') });
+    const sessionId = 'missing-adapter';
+    const checkpoint = await service.createTurnCheckpoint({
+      sessionId, turnIndex: 1, prompt: 'record', sessionState: { sessionId, messages: [] },
+    });
+    const updated = await service.recordExternalEffect(sessionId, checkpoint.id, {
+      id: 'remote-1', adapter: 'not-installed', operation: 'create remote', reversible: true,
+      compensation: 'delete remote', failureSemantics: 'remote result unknown', status: 'unresolved',
+    });
+    const effectId = updated.externalEffects!.at(-1)!.id;
+
+    const dryRun = await service.compensateExternalEffect(sessionId, checkpoint.id, effectId);
+    expect(dryRun).toMatchObject({
+      dryRun: true, adapter: 'not-installed', adapterAvailable: false,
+    });
+    expect(dryRun.note).toContain('not-installed');
+    await expect(service.compensateExternalEffect(sessionId, checkpoint.id, effectId, { execute: true }))
+      .rejects.toThrow("No external effect adapter 'not-installed' is registered.");
+  });
+
   it('verifies the restored workspace digest for the fallback engine', async () => {
     const fallbackRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-fallback-service-'));
     try {

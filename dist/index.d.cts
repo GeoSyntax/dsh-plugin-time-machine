@@ -64,6 +64,8 @@ interface ExternalEffectCompensationResult {
     checkpointId: string;
     effect: ExternalEffectRecord;
     adapter: string;
+    /** Whether the named adapter is currently registered in this process. */
+    adapterAvailable: boolean;
     dryRun: boolean;
     idempotencyKey: string;
     replayed: boolean;

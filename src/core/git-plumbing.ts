@@ -26,6 +26,12 @@ export interface GitSnapshot {
   ignoredPaths: string[];
 }
 
+export interface WorkspaceCapabilities {
+  sparseCheckout: boolean;
+  submodulePaths: string[];
+  inProgressOperation: string | null;
+}
+
 export interface ShadowGcResult {
   removedObjects: number;
   reclaimedBytes: number;
@@ -60,6 +66,20 @@ export class WorkspaceDriftError extends Error {
   constructor(public readonly details: string[]) {
     super(`Workspace changed after the latest checkpoint: ${details.slice(0, 8).join(', ')}`);
     this.name = 'WorkspaceDriftError';
+  }
+}
+
+export class UnsupportedWorkspaceStateError extends Error {
+  readonly code = 'UNSUPPORTED_WORKSPACE_STATE';
+
+  constructor(public readonly capabilities: WorkspaceCapabilities) {
+    const reasons = [
+      capabilities.sparseCheckout ? 'sparse checkout' : '',
+      capabilities.submodulePaths.length ? `submodules: ${capabilities.submodulePaths.join(', ')}` : '',
+      capabilities.inProgressOperation ? `in-progress ${capabilities.inProgressOperation}` : '',
+    ].filter(Boolean);
+    super(`Workspace state is not fully snapshot-safe: ${reasons.join('; ')}. Complete or disable the operation, then retry.`);
+    this.name = 'UnsupportedWorkspaceStateError';
   }
 }
 
@@ -163,6 +183,7 @@ export class GitPlumbingEngine {
     if (!(await this.isGitRepo())) {
       throw new Error(`Working directory '${this.workDir}' is not a valid Git repository.`);
     }
+    await this.assertSupportedWorkspace();
 
     const { treeOid, indexFile } = await this.writeWorkspaceTree();
     try {
@@ -234,11 +255,37 @@ export class GitPlumbingEngine {
     return { headOid, branch, operation: null };
   }
 
+  /** Detect Git modes whose contents are not fully represented by one worktree tree. */
+  async inspectWorkspaceCapabilities(): Promise<WorkspaceCapabilities> {
+    const control = await this.inspectControlPlane();
+    if (!(await this.isGitRepo())) {
+      return { sparseCheckout: false, submodulePaths: [], inProgressOperation: control.operation };
+    }
+    const sparseConfig = await this.runGit(['config', '--bool', '--get', 'core.sparseCheckout'])
+      .then(result => result.stdout.trim() === 'true')
+      .catch(() => false);
+    const gitDir = await this.getGitDir();
+    const sparseFile = await fs.access(path.join(gitDir, 'info', 'sparse-checkout')).then(() => true).catch(() => false);
+    const { stdout } = await this.runGit(['ls-files', '--stage', '-z']).catch(() => ({ stdout: '' }));
+    const submodulePaths = stdout.split('\0').filter(Boolean)
+      .map(entry => entry.match(/^160000\s+[0-9a-f]+\s+\d+\t(.+)$/)?.[1])
+      .filter((item): item is string => Boolean(item));
+    return { sparseCheckout: sparseConfig || sparseFile, submodulePaths, inProgressOperation: control.operation };
+  }
+
+  async assertSupportedWorkspace(): Promise<void> {
+    const capabilities = await this.inspectWorkspaceCapabilities();
+    if (capabilities.sparseCheckout || capabilities.submodulePaths.length || capabilities.inProgressOperation) {
+      throw new UnsupportedWorkspaceStateError(capabilities);
+    }
+  }
+
   /** Restore with an isolated index so the user's staged changes are never rewritten. */
   async restoreSnapshot(commitOrTreeOid: string, options: GitRestoreOptions = {}): Promise<{ deletedIgnoredPaths: string[] }> {
     if (!(await this.isGitRepo())) {
       throw new Error(`Working directory '${this.workDir}' is not a valid Git repository.`);
     }
+    await this.assertSupportedWorkspace();
 
     const mode = options.mode ?? 'safe';
     const current = await this.inspectWorkspace();
@@ -312,6 +359,7 @@ export class GitPlumbingEngine {
     options: GitSelectiveRestoreOptions = {},
   ): Promise<string[]> {
     if (!(await this.isGitRepo())) throw new Error(`Working directory '${this.workDir}' is not a valid Git repository.`);
+    await this.assertSupportedWorkspace();
     const normalized = [...new Set(paths.map(normalizeGitPath).filter(Boolean))];
     if (normalized.length === 0) throw new Error('At least one workspace path is required.');
     for (const relative of normalized) await this.safeWorkspacePath(relative);

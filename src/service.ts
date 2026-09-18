@@ -312,6 +312,7 @@ export class TimeMachineService {
       const target = dag.getNode(checkpointId);
       if (!target) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
       await this.consumeRestorePlan(sessionId, checkpointId, options.restorePlanId, dag);
+      if (await this.gitEngine.isGitRepo()) await this.gitEngine.assertSupportedWorkspace();
       const current = dag.getCurrentNode();
       let rescue: CheckpointNode | undefined;
       let journalId: string | undefined;
@@ -452,6 +453,7 @@ export class TimeMachineService {
       if (!target) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
       const current = dag.getCurrentNode();
       const isGit = await this.gitEngine.isGitRepo();
+      if (isGit) await this.gitEngine.assertSupportedWorkspace();
       const currentState = isGit
         ? await this.gitEngine.inspectWorkspace()
         : { treeOid: await this.fallbackEngine.inspectWorkspace(), ignoredPaths: [] };
@@ -725,6 +727,7 @@ export class TimeMachineService {
   ): Promise<{ rescue?: CheckpointNode; deletedIgnoredPaths: string[]; journalId?: string }> {
     const current = dag.getCurrentNode() ?? undefined;
     const mode = options.mode ?? this.config.restoreMode;
+    if (await this.gitEngine.isGitRepo()) await this.gitEngine.assertSupportedWorkspace();
 
     if (mode === 'safe' && current) {
       const actual = await this.gitEngine.isGitRepo()

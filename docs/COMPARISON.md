@@ -6,7 +6,7 @@ supported only when it is covered by the current implementation and tests.
 
 | Capability | Time Machine | Hermes checkpoints | Change Ledger | dsh-undo / dsh-rewind |
 | --- | --- | --- | --- | --- |
-| Full workspace snapshot | Git plumbing + non-Git fallback | Yes | Yes | Partial / lightweight |
+| Full workspace snapshot | Git plumbing + non-Git fallback; explicitly refuses sparse/submodule/in-progress Git states | Yes | Yes; explicit unsupported-state policy | Partial / lightweight |
 | Remove ordinary orphan files | Yes | Yes | Yes | Depends on tracked set |
 | Ignored-file safety | Preserve by default; quarantine on explicit delete | Configurable | Conflict-aware | Usually left untouched |
 | Preview before restore | `tm-preview`, Web API, Web confirmation, conflict paths, single-use session-bound plan | Yes | Yes; expiring plan and stale-plan fences | Limited |
@@ -42,7 +42,7 @@ The comparison is deliberately not a claim that Time Machine is ahead of every
 peer. Time Machine now has expiring, single-use, session-bound restore plans
 with Git HEAD/branch/in-progress-operation fences for reviewed Web/CLI restores.
 The current Change Ledger implementation still goes further with
-sparse-checkout and submodule policy; unsupported-file and per-file size
+unsupported-file and per-file size
 reporting; path-identity caches for large workspaces; and a host-native,
 message-anchored rewind action. We should adopt those ideas where they fit
 without copying their storage format.

@@ -377,6 +377,11 @@ interface GitSnapshot {
     changedFiles: FileChange[];
     ignoredPaths: string[];
 }
+interface WorkspaceCapabilities {
+    sparseCheckout: boolean;
+    submodulePaths: string[];
+    inProgressOperation: string | null;
+}
 interface ShadowGcResult {
     removedObjects: number;
     reclaimedBytes: number;
@@ -405,6 +410,11 @@ declare class WorkspaceDriftError extends Error {
     readonly details: string[];
     readonly code = "WORKSPACE_DRIFT";
     constructor(details: string[]);
+}
+declare class UnsupportedWorkspaceStateError extends Error {
+    readonly capabilities: WorkspaceCapabilities;
+    readonly code = "UNSUPPORTED_WORKSPACE_STATE";
+    constructor(capabilities: WorkspaceCapabilities);
 }
 declare class WorkspaceRestoreConflictError extends Error {
     readonly paths: string[];
@@ -454,6 +464,9 @@ declare class GitPlumbingEngine {
         branch: string;
         operation: string | null;
     }>;
+    /** Detect Git modes whose contents are not fully represented by one worktree tree. */
+    inspectWorkspaceCapabilities(): Promise<WorkspaceCapabilities>;
+    assertSupportedWorkspace(): Promise<void>;
     /** Restore with an isolated index so the user's staged changes are never rewritten. */
     restoreSnapshot(commitOrTreeOid: string, options?: GitRestoreOptions): Promise<{
         deletedIgnoredPaths: string[];
@@ -597,4 +610,4 @@ declare class TimeMachinePlugin {
     constructor(ctx: Context, config?: Config);
 }
 
-export { type CheckpointNode, Config, type DAGManagerOptions, DAGStateManager, type DAGTree, type DiffResult, type FallbackOptions, FallbackSnapshotEngine, type FileChange, GitPlumbingEngine, type GitPlumbingOptions, type GitRestoreOptions, type GitSelectiveRestoreOptions, type GitSnapshot, type PruneResult, QuarantineQuotaError, ReflectionAdvisor, type ReflectionSummary, type RestoreOptions, RestorePlanError, type RestorePreview, type RestoreResult, type SelectiveRestoreResult, type SessionMessage, type SessionState, type ShadowGcResult, type ShadowRepackResult, StorageQuotaError, type StorageStatus, type TimeMachineConfig, TimeMachinePlugin, TimeMachineService, type TimeMachineServiceOptions, WorkspaceDriftError, WorkspaceRestoreConflictError, apply, collectFailedTools, TimeMachinePlugin as default, name };
+export { type CheckpointNode, Config, type DAGManagerOptions, DAGStateManager, type DAGTree, type DiffResult, type FallbackOptions, FallbackSnapshotEngine, type FileChange, GitPlumbingEngine, type GitPlumbingOptions, type GitRestoreOptions, type GitSelectiveRestoreOptions, type GitSnapshot, type PruneResult, QuarantineQuotaError, ReflectionAdvisor, type ReflectionSummary, type RestoreOptions, RestorePlanError, type RestorePreview, type RestoreResult, type SelectiveRestoreResult, type SessionMessage, type SessionState, type ShadowGcResult, type ShadowRepackResult, StorageQuotaError, type StorageStatus, type TimeMachineConfig, TimeMachinePlugin, TimeMachineService, type TimeMachineServiceOptions, UnsupportedWorkspaceStateError, type WorkspaceCapabilities, WorkspaceDriftError, WorkspaceRestoreConflictError, apply, collectFailedTools, TimeMachinePlugin as default, name };

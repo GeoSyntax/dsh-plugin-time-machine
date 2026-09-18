@@ -22,6 +22,7 @@ var git_plumbing_exports = {};
 __export(git_plumbing_exports, {
   GitPlumbingEngine: () => GitPlumbingEngine,
   QuarantineQuotaError: () => QuarantineQuotaError,
+  UnsupportedWorkspaceStateError: () => UnsupportedWorkspaceStateError,
   WorkspaceDriftError: () => WorkspaceDriftError,
   WorkspaceRestoreConflictError: () => WorkspaceRestoreConflictError
 });
@@ -59,7 +60,7 @@ function symmetricDifference(left, right) {
 function longestFirst(left, right) {
   return right.split("/").length - left.split("/").length || right.localeCompare(left);
 }
-var execFileAsync, WorkspaceDriftError, WorkspaceRestoreConflictError, QuarantineQuotaError, GitPlumbingEngine;
+var execFileAsync, WorkspaceDriftError, UnsupportedWorkspaceStateError, WorkspaceRestoreConflictError, QuarantineQuotaError, GitPlumbingEngine;
 var init_git_plumbing = __esm({
   "src/core/git-plumbing.ts"() {
     "use strict";
@@ -73,6 +74,20 @@ var init_git_plumbing = __esm({
       }
       details;
       code = "WORKSPACE_DRIFT";
+    };
+    UnsupportedWorkspaceStateError = class extends Error {
+      constructor(capabilities) {
+        const reasons = [
+          capabilities.sparseCheckout ? "sparse checkout" : "",
+          capabilities.submodulePaths.length ? `submodules: ${capabilities.submodulePaths.join(", ")}` : "",
+          capabilities.inProgressOperation ? `in-progress ${capabilities.inProgressOperation}` : ""
+        ].filter(Boolean);
+        super(`Workspace state is not fully snapshot-safe: ${reasons.join("; ")}. Complete or disable the operation, then retry.`);
+        this.capabilities = capabilities;
+        this.name = "UnsupportedWorkspaceStateError";
+      }
+      capabilities;
+      code = "UNSUPPORTED_WORKSPACE_STATE";
     };
     WorkspaceRestoreConflictError = class extends Error {
       constructor(paths) {
@@ -159,6 +174,7 @@ Reason: ${errorMsg}`);
         if (!await this.isGitRepo()) {
           throw new Error(`Working directory '${this.workDir}' is not a valid Git repository.`);
         }
+        await this.assertSupportedWorkspace();
         const { treeOid, indexFile } = await this.writeWorkspaceTree();
         try {
           const commitMsg = params.message || `DSH Checkpoint [${params.sessionId}:${params.checkpointId}]`;
@@ -217,11 +233,31 @@ Reason: ${errorMsg}`);
         }
         return { headOid, branch, operation: null };
       }
+      /** Detect Git modes whose contents are not fully represented by one worktree tree. */
+      async inspectWorkspaceCapabilities() {
+        const control = await this.inspectControlPlane();
+        if (!await this.isGitRepo()) {
+          return { sparseCheckout: false, submodulePaths: [], inProgressOperation: control.operation };
+        }
+        const sparseConfig = await this.runGit(["config", "--bool", "--get", "core.sparseCheckout"]).then((result) => result.stdout.trim() === "true").catch(() => false);
+        const gitDir = await this.getGitDir();
+        const sparseFile = await fs.access(path2.join(gitDir, "info", "sparse-checkout")).then(() => true).catch(() => false);
+        const { stdout } = await this.runGit(["ls-files", "--stage", "-z"]).catch(() => ({ stdout: "" }));
+        const submodulePaths = stdout.split("\0").filter(Boolean).map((entry) => entry.match(/^160000\s+[0-9a-f]+\s+\d+\t(.+)$/)?.[1]).filter((item) => Boolean(item));
+        return { sparseCheckout: sparseConfig || sparseFile, submodulePaths, inProgressOperation: control.operation };
+      }
+      async assertSupportedWorkspace() {
+        const capabilities = await this.inspectWorkspaceCapabilities();
+        if (capabilities.sparseCheckout || capabilities.submodulePaths.length || capabilities.inProgressOperation) {
+          throw new UnsupportedWorkspaceStateError(capabilities);
+        }
+      }
       /** Restore with an isolated index so the user's staged changes are never rewritten. */
       async restoreSnapshot(commitOrTreeOid, options = {}) {
         if (!await this.isGitRepo()) {
           throw new Error(`Working directory '${this.workDir}' is not a valid Git repository.`);
         }
+        await this.assertSupportedWorkspace();
         const mode = options.mode ?? "safe";
         const current = await this.inspectWorkspace();
         if (mode === "safe" && options.expectedCurrentTreeOid && current.treeOid !== options.expectedCurrentTreeOid) {
@@ -284,6 +320,7 @@ Reason: ${errorMsg}`);
       /** Restore only selected tracked workspace paths using a disposable index. */
       async restoreSelectedPaths(commitOrTreeOid, paths, options = {}) {
         if (!await this.isGitRepo()) throw new Error(`Working directory '${this.workDir}' is not a valid Git repository.`);
+        await this.assertSupportedWorkspace();
         const normalized = [...new Set(paths.map(normalizeGitPath).filter(Boolean))];
         if (normalized.length === 0) throw new Error("At least one workspace path is required.");
         for (const relative of normalized) await this.safeWorkspacePath(relative);
@@ -1604,6 +1641,7 @@ var TimeMachineService = class {
       const target = dag.getNode(checkpointId);
       if (!target) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
       await this.consumeRestorePlan(sessionId, checkpointId, options.restorePlanId, dag);
+      if (await this.gitEngine.isGitRepo()) await this.gitEngine.assertSupportedWorkspace();
       const current = dag.getCurrentNode();
       let rescue;
       let journalId;
@@ -1731,6 +1769,7 @@ var TimeMachineService = class {
       if (!target) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
       const current = dag.getCurrentNode();
       const isGit = await this.gitEngine.isGitRepo();
+      if (isGit) await this.gitEngine.assertSupportedWorkspace();
       const currentState = isGit ? await this.gitEngine.inspectWorkspace() : { treeOid: await this.fallbackEngine.inspectWorkspace(), ignoredPaths: [] };
       const controlPlane = isGit ? await this.gitEngine.inspectControlPlane() : { headOid: null, branch: "", operation: null };
       const targetIgnoredPaths = target.ignoredPaths ?? [];
@@ -1959,6 +1998,7 @@ var TimeMachineService = class {
   async restoreWithRescue(dag, target, options, kind = "rewind") {
     const current = dag.getCurrentNode() ?? void 0;
     const mode = options.mode ?? this.config.restoreMode;
+    if (await this.gitEngine.isGitRepo()) await this.gitEngine.assertSupportedWorkspace();
     if (mode === "safe" && current) {
       const actual = await this.gitEngine.isGitRepo() ? await this.gitEngine.inspectWorkspace() : { treeOid: await this.fallbackEngine.inspectWorkspace(), ignoredPaths: [] };
       const expectedTree = current.settledGitTreeOid ?? current.gitTreeOid;
@@ -2171,7 +2211,7 @@ var TimeMachineWebServer = class {
           }
           await this.handleStatic(res, pathname);
         } catch (err) {
-          const status = err?.code === "BAD_REQUEST" ? 400 : err?.code === "RESTORE_PLAN_INVALID" ? 409 : 500;
+          const status = err?.code === "BAD_REQUEST" ? 400 : err?.code === "RESTORE_PLAN_INVALID" ? 409 : err?.code === "UNSUPPORTED_WORKSPACE_STATE" ? 422 : 500;
           res.writeHead(status, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ error: err.message || "Internal Server Error" }));
         }
@@ -2756,6 +2796,7 @@ export {
   StorageQuotaError,
   TimeMachinePlugin,
   TimeMachineService,
+  UnsupportedWorkspaceStateError,
   WorkspaceDriftError,
   WorkspaceRestoreConflictError,
   apply,

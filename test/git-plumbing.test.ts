@@ -35,6 +35,29 @@ describe('GitPlumbingEngine', () => {
     expect(isRepo).toBe(true);
   });
 
+  it('reports sparse checkout and refuses an incomplete snapshot', async () => {
+    await fs.writeFile(path.join(tmpDir, 'tracked.txt'), 'tracked\n', 'utf8');
+    await execAsync('git', ['add', 'tracked.txt'], { cwd: tmpDir });
+    await execAsync('git', ['commit', '-m', 'fixture'], { cwd: tmpDir });
+    await execAsync('git', ['sparse-checkout', 'init', '--cone'], { cwd: tmpDir });
+    const capabilities = await engine.inspectWorkspaceCapabilities();
+    expect(capabilities.sparseCheckout).toBe(true);
+    await expect(engine.createSnapshot({ sessionId: 'sparse', checkpointId: 'one' }))
+      .rejects.toMatchObject({ code: 'UNSUPPORTED_WORKSPACE_STATE' });
+  });
+
+  it('reports submodule gitlinks instead of pretending to capture nested content', async () => {
+    await fs.writeFile(path.join(tmpDir, 'tracked.txt'), 'tracked\n', 'utf8');
+    await execAsync('git', ['add', 'tracked.txt'], { cwd: tmpDir });
+    await execAsync('git', ['commit', '-m', 'fixture'], { cwd: tmpDir });
+    const { stdout: head } = await execAsync('git', ['rev-parse', 'HEAD'], { cwd: tmpDir });
+    await execAsync('git', ['update-index', '--add', '--cacheinfo', `160000,${head.trim()},nested-module`], { cwd: tmpDir });
+    const capabilities = await engine.inspectWorkspaceCapabilities();
+    expect(capabilities.submodulePaths).toEqual(['nested-module']);
+    await expect(engine.createSnapshot({ sessionId: 'submodule', checkpointId: 'one' }))
+      .rejects.toMatchObject({ code: 'UNSUPPORTED_WORKSPACE_STATE' });
+  });
+
   it('should create snapshot without polluting git log', async () => {
     // 写入第一个文件
     const file1 = path.join(tmpDir, 'hello.txt');

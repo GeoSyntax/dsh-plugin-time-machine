@@ -224,6 +224,24 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
     await expect(fs.access(path.join(journalDir, 'restore_crash.json'))).rejects.toThrow();
   });
 
+  it('enforces opt-in snapshot quotas without deleting history', async () => {
+    const quotaService = new TimeMachineService({
+      workDir: tmpDir,
+      storageDir: path.join(tmpDir, '.quota-tm'),
+      config: { maxSnapshots: 1 },
+    });
+    const sessionId = 'quota-session';
+    await fs.writeFile(path.join(tmpDir, 'quota.txt'), 'one\n', 'utf8');
+    const first = await quotaService.createTurnCheckpoint({
+      sessionId, turnIndex: 1, prompt: 'first', sessionState: { sessionId, messages: [] },
+    });
+    await fs.writeFile(path.join(tmpDir, 'quota.txt'), 'two\n', 'utf8');
+    await expect(quotaService.createTurnCheckpoint({
+      sessionId, turnIndex: 2, prompt: 'blocked', sessionState: { sessionId, messages: [] },
+    })).rejects.toMatchObject({ code: 'STORAGE_QUOTA_EXCEEDED' });
+    expect((await quotaService.getDAGManager(sessionId)).getNode(first.id)).not.toBeNull();
+  });
+
   it('finalizes a turn and reloads its DAG state after a service restart', async () => {
     const sessionId = 'restart-session';
     const file = path.join(tmpDir, 'restart.txt');

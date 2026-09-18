@@ -27,6 +27,15 @@ export interface TimeMachineServiceOptions {
   config?: TimeMachineConfig;
 }
 
+export class StorageQuotaError extends Error {
+  readonly code = 'STORAGE_QUOTA_EXCEEDED';
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'StorageQuotaError';
+  }
+}
+
 interface RestoreJournal {
   version: 1;
   id: string;
@@ -68,6 +77,8 @@ export class TimeMachineService {
       restoreMode: options.config?.restoreMode ?? 'safe',
       preservePaths: options.config?.preservePaths ?? ['node_modules'],
       webHost: options.config?.webHost ?? '127.0.0.1',
+      maxSnapshots: Math.max(0, Math.floor(options.config?.maxSnapshots ?? 0)),
+      maxStorageBytes: Math.max(0, Math.floor(options.config?.maxStorageBytes ?? 0)),
     };
 
     this.gitEngine = new GitPlumbingEngine({
@@ -133,6 +144,7 @@ export class TimeMachineService {
     tags?: string[];
   }): Promise<CheckpointNode> {
     const dag = await this.getDAGManager(params.sessionId);
+    await this.enforceStorageQuota(dag);
     const checkpointId = `chk_t${params.turnIndex}_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
 
     const currentNode = dag.getCurrentNode();
@@ -501,6 +513,22 @@ export class TimeMachineService {
       } catch { /* status must remain best-effort for corrupt/partial storage */ }
     }
     return [...sessions];
+  }
+
+  private async enforceStorageQuota(dag: DAGStateManager): Promise<void> {
+    if (this.config.maxSnapshots > 0 && Object.keys(dag.tree.nodes).length >= this.config.maxSnapshots) {
+      throw new StorageQuotaError(
+        `Session '${dag.tree.sessionId}' reached maxSnapshots=${this.config.maxSnapshots}. Run /tm-prune or increase the limit.`,
+      );
+    }
+    if (this.config.maxStorageBytes > 0) {
+      const bytes = await directoryBytes(this.storageDir);
+      if (bytes >= this.config.maxStorageBytes) {
+        throw new StorageQuotaError(
+          `Time Machine storage reached maxStorageBytes=${this.config.maxStorageBytes}. Run /tm-prune or increase the limit.`,
+        );
+      }
+    }
   }
 
   private async restoreWithRescue(

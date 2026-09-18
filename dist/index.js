@@ -1049,6 +1049,13 @@ var KeyedOperationLock = class {
 };
 
 // src/service.ts
+var StorageQuotaError = class extends Error {
+  code = "STORAGE_QUOTA_EXCEEDED";
+  constructor(message) {
+    super(message);
+    this.name = "StorageQuotaError";
+  }
+};
 var TimeMachineService = class {
   workDir;
   storageDir;
@@ -1073,7 +1080,9 @@ var TimeMachineService = class {
       enableWebUI: options.config?.enableWebUI ?? true,
       restoreMode: options.config?.restoreMode ?? "safe",
       preservePaths: options.config?.preservePaths ?? ["node_modules"],
-      webHost: options.config?.webHost ?? "127.0.0.1"
+      webHost: options.config?.webHost ?? "127.0.0.1",
+      maxSnapshots: Math.max(0, Math.floor(options.config?.maxSnapshots ?? 0)),
+      maxStorageBytes: Math.max(0, Math.floor(options.config?.maxStorageBytes ?? 0))
     };
     this.gitEngine = new GitPlumbingEngine({
       workDir: this.workDir,
@@ -1114,6 +1123,7 @@ var TimeMachineService = class {
   }
   async createTurnCheckpointUnlocked(params) {
     const dag = await this.getDAGManager(params.sessionId);
+    await this.enforceStorageQuota(dag);
     const checkpointId = `chk_t${params.turnIndex}_${randomUUID4().replace(/-/g, "").slice(0, 12)}`;
     const currentNode = dag.getCurrentNode();
     const parentCommitOid = currentNode ? currentNode.gitCommitOid : null;
@@ -1438,6 +1448,21 @@ var TimeMachineService = class {
       }
     }
     return [...sessions];
+  }
+  async enforceStorageQuota(dag) {
+    if (this.config.maxSnapshots > 0 && Object.keys(dag.tree.nodes).length >= this.config.maxSnapshots) {
+      throw new StorageQuotaError(
+        `Session '${dag.tree.sessionId}' reached maxSnapshots=${this.config.maxSnapshots}. Run /tm-prune or increase the limit.`
+      );
+    }
+    if (this.config.maxStorageBytes > 0) {
+      const bytes = await directoryBytes(this.storageDir);
+      if (bytes >= this.config.maxStorageBytes) {
+        throw new StorageQuotaError(
+          `Time Machine storage reached maxStorageBytes=${this.config.maxStorageBytes}. Run /tm-prune or increase the limit.`
+        );
+      }
+    }
   }
   async restoreWithRescue(dag, target, options, kind = "rewind") {
     const current = dag.getCurrentNode() ?? void 0;
@@ -2044,7 +2069,9 @@ var Config = Schema.object({
   enableWebUI: Schema.boolean().default(true),
   restoreMode: Schema.union(["safe", "force"]).default("safe"),
   preservePaths: Schema.array(Schema.string()).default(["node_modules"]),
-  webHost: Schema.string().default("127.0.0.1")
+  webHost: Schema.string().default("127.0.0.1"),
+  maxSnapshots: Schema.number().default(0),
+  maxStorageBytes: Schema.number().default(0)
 });
 function apply(ctx, config = {}) {
   const workDir = path7.resolve(process.cwd());
@@ -2198,6 +2225,7 @@ export {
   FallbackSnapshotEngine,
   GitPlumbingEngine,
   ReflectionAdvisor,
+  StorageQuotaError,
   TimeMachinePlugin,
   TimeMachineService,
   WorkspaceDriftError,

@@ -47,6 +47,7 @@ dsh --profile web
 - **选择性恢复:** `/tm-restore-files` 只写入指定文件/目录，并创建 rescue 和结果 checkpoint；它不会伪造会话回滚。
 - **存储治理:** `/tm-storage` 查看插件目录占用；`/tm-prune` 只删除不属于 current/branch head 且没有子节点的旧叶子节点；明确传入 `--abandoned-branches` 才会删除非当前探索分支。Git object 是共享的，删除私有 ref 不会自动执行危险的全仓库 GC。
 - **崩溃恢复:** rewind/fork/选择性恢复会写入 durable restore journal；插件下次启动时如果发现未完成操作，会先恢复 rescue checkpoint，再清理 journal。
+- **硬配额:** `maxSnapshots` 和 `maxStorageBytes` 默认关闭；启用后达到上限会安全拒绝新 checkpoint，不会静默删除历史。
 
 ## Safety model
 
@@ -69,6 +70,9 @@ dsh --profile web
     enableWebUI: true
     webHost: 127.0.0.1
     webPort: 3088
+    # 0 disables the hard guard; pruning remains explicit.
+    maxSnapshots: 0
+    maxStorageBytes: 0
 ```
 
 Web dashboard 只绑定 loopback，并拒绝非本机 Host 和跨 origin 请求。`/tm-rewind` 与 `/tm-fork` 需要宿主提供 `sessionController`，否则插件会拒绝只恢复文件的危险降级行为。

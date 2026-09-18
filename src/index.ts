@@ -21,6 +21,8 @@ export const Config: Schema<Config> = Schema.object({
   restoreMode: Schema.union(['safe', 'force']).default('safe'),
   preservePaths: Schema.array(Schema.string()).default(['node_modules']),
   webHost: Schema.string().default('127.0.0.1'),
+  maxSnapshots: Schema.number().default(0),
+  maxStorageBytes: Schema.number().default(0),
 });
 
 interface SessionEventLike {

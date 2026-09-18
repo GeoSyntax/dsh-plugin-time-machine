@@ -80,6 +80,10 @@ export interface TimeMachineConfig {
   preservePaths?: string[];
   /** Address for the standalone dashboard. Defaults to loopback only. */
   webHost?: string;
+  /** Hard per-session checkpoint limit; 0 disables the guard. */
+  maxSnapshots?: number;
+  /** Hard plugin-storage byte limit; 0 disables the guard. */
+  maxStorageBytes?: number;
 }
 
 export interface RestoreOptions {

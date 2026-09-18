@@ -15,7 +15,7 @@ supported only when it is covered by the current implementation and tests.
 | DAG branches | Yes, persistent | No user-facing DAG | Ledger history | Usually linear |
 | Failed-tool reflection | Yes | No equivalent | No equivalent | No equivalent |
 | Rescue/compensation | Yes | Snapshot-oriented | Journal-oriented | Varies |
-| Storage quotas and pruning | Explicit status + conservative prune, optional abandoned-branch prune; quotas not yet automatic | Yes | Yes | Varies |
+| Storage quotas and pruning | Explicit status + conservative prune, optional abandoned-branch prune, opt-in hard guards | Yes | Yes | Varies |
 | Durable interrupted-restore journal | Yes; startup restores rescue checkpoint | Store recovery | Yes | Varies |
 | Independent shadow store | Not yet; Git objects are reused | Yes | Yes | Usually local backups |
 
@@ -37,7 +37,7 @@ workspace-only; it restores selected paths, keeps the current conversation
 messages, and records rescue/result checkpoints instead of pretending the
 conversation was rewound.
 
-The remaining roadmap is automatic storage quotas and a fully independent
+The remaining roadmap is automatic quota-driven pruning and a fully independent
 shadow store. Restore journals are now durable and replayed on startup. The
 current prune command is deliberately conservative and explicit; it does not
 run repository-wide Git GC.

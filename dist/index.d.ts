@@ -82,6 +82,10 @@ interface TimeMachineConfig {
     preservePaths?: string[];
     /** Address for the standalone dashboard. Defaults to loopback only. */
     webHost?: string;
+    /** Hard per-session checkpoint limit; 0 disables the guard. */
+    maxSnapshots?: number;
+    /** Hard plugin-storage byte limit; 0 disables the guard. */
+    maxStorageBytes?: number;
 }
 interface RestoreOptions {
     mode?: 'safe' | 'force';
@@ -217,6 +221,10 @@ interface TimeMachineServiceOptions {
     storageDir?: string;
     config?: TimeMachineConfig;
 }
+declare class StorageQuotaError extends Error {
+    readonly code = "STORAGE_QUOTA_EXCEEDED";
+    constructor(message: string);
+}
 declare class TimeMachineService {
     readonly workDir: string;
     readonly storageDir: string;
@@ -305,6 +313,7 @@ declare class TimeMachineService {
     }): Promise<PruneResult>;
     private pruneCandidates;
     private listStoredSessions;
+    private enforceStorageQuota;
     private restoreWithRescue;
     private restoreNode;
     completeRestoreJournal(journalId?: string): Promise<void>;
@@ -505,4 +514,4 @@ declare class TimeMachinePlugin {
     constructor(ctx: Context, config?: Config);
 }
 
-export { type CheckpointNode, Config, type DAGManagerOptions, DAGStateManager, type DAGTree, type DiffResult, type FallbackOptions, FallbackSnapshotEngine, type FileChange, GitPlumbingEngine, type GitPlumbingOptions, type GitRestoreOptions, type GitSelectiveRestoreOptions, type GitSnapshot, type PruneResult, ReflectionAdvisor, type ReflectionSummary, type RestoreOptions, type RestorePreview, type RestoreResult, type SelectiveRestoreResult, type SessionMessage, type SessionState, type StorageStatus, type TimeMachineConfig, TimeMachinePlugin, TimeMachineService, type TimeMachineServiceOptions, WorkspaceDriftError, WorkspaceRestoreConflictError, apply, collectFailedTools, TimeMachinePlugin as default, name };
+export { type CheckpointNode, Config, type DAGManagerOptions, DAGStateManager, type DAGTree, type DiffResult, type FallbackOptions, FallbackSnapshotEngine, type FileChange, GitPlumbingEngine, type GitPlumbingOptions, type GitRestoreOptions, type GitSelectiveRestoreOptions, type GitSnapshot, type PruneResult, ReflectionAdvisor, type ReflectionSummary, type RestoreOptions, type RestorePreview, type RestoreResult, type SelectiveRestoreResult, type SessionMessage, type SessionState, StorageQuotaError, type StorageStatus, type TimeMachineConfig, TimeMachinePlugin, TimeMachineService, type TimeMachineServiceOptions, WorkspaceDriftError, WorkspaceRestoreConflictError, apply, collectFailedTools, TimeMachinePlugin as default, name };

@@ -139,10 +139,18 @@ function fileChangesGroup(node) {
   }
 
   const list = element('ul', 'file-list');
+  const selectors = [];
   for (const file of files) {
     const item = element('li', 'file-item');
     item.tabIndex = 0;
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.value = String(file.path);
+    checkbox.title = 'Select this path for selective restore';
+    checkbox.addEventListener('click', event => event.stopPropagation());
+    selectors.push(checkbox);
     item.append(
+      checkbox,
       element('span', '', `📄 ${String(file.path)}`),
       element('span', `badge ${file.status === 'added' ? 'badge-success' : 'badge-idle'}`, String(file.status).toUpperCase()),
     );
@@ -153,7 +161,28 @@ function fileChangesGroup(node) {
     });
     list.append(item);
   }
-  return group(`Workspace File Changes (${files.length})`, list);
+  const body = document.createElement('div');
+  body.append(list);
+  const restore = element('button', 'btn btn-secondary', '↶ Restore selected files');
+  restore.addEventListener('click', async event => {
+    event.stopPropagation();
+    const paths = selectors.filter(input => input.checked).map(input => input.value);
+    if (paths.length === 0) return alert('Select at least one file first');
+    if (!confirm(`Restore ${paths.length} selected path(s) from Turn #${node.turnIndex}?`)) return;
+    try {
+      const result = await requestJson(`${API_BASE}/api/restore-files`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: currentSessionId, checkpointId: node.id, paths }),
+      });
+      await loadDag();
+      alert(`✔ Restored ${result.result.restoredPaths.join(', ')}. Conversation unchanged.`);
+    } catch (error) {
+      alert(`Selective restore failed: ${error.message}`);
+    }
+  });
+  body.append(restore);
+  return group(`Workspace File Changes (${files.length})`, body);
 }
 
 function openForkModal(nodeId, turnIndex) {

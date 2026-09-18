@@ -81,6 +81,27 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
     });
 
     scope.commands.register({
+      name: 'tm-external-compensate',
+      description: 'Preview or explicitly execute an external-effect compensation',
+      input: { hint: '<checkpoint> <effect-id> [--execute] [--key=<idempotency-key>]' },
+      handler: async ({ agent, rawInput }: CommandInvocationLike): Promise<CommandResult> => {
+        const args = rawInput.trim().split(/\s+/).filter(Boolean);
+        const positionals = args.filter(arg => !arg.startsWith('--'));
+        if (positionals.length < 2) return { kind: 'error', text: 'Usage: /tm-external-compensate <checkpoint> <effect-id> [--execute] [--key=<idempotency-key>]' };
+        const result = await service.compensateExternalEffect(agent.session.id, positionals[0], positionals[1], {
+          execute: args.includes('--execute'),
+          idempotencyKey: optionValue(args, '--key'),
+        });
+        return {
+          kind: 'success',
+          text: result.dryRun
+            ? `Dry run: adapter '${result.adapter}' is available for effect ${positionals[1]}; no external mutation was executed. Use --execute with key ${result.idempotencyKey}.`
+            : `${result.replayed ? 'Replayed' : 'Executed'} compensation for ${positionals[1]} via '${result.adapter}' with key ${result.idempotencyKey}; status=${result.effect.status}.`,
+        };
+      },
+    });
+
+    scope.commands.register({
       name: 'tm-rewind',
       description: 'Restore workspace and fork conversation at a checkpoint',
       input: { hint: '<checkpoint> [--merge|--force] [--delete-new-ignored] [--plan=<id>]' },

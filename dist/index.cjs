@@ -1931,6 +1931,7 @@ var TimeMachineService = class {
   workspaceLock;
   journalDir;
   restorePlans = /* @__PURE__ */ new Map();
+  externalEffectAdapters = /* @__PURE__ */ new Map();
   constructor(options) {
     this.workDir = import_node_path5.default.resolve(options.workDir);
     this.storageDir = options.storageDir ? import_node_path5.default.resolve(options.storageDir) : import_node_path5.default.join(this.workDir, ".dsh", "time-machine");
@@ -2098,17 +2099,99 @@ var TimeMachineService = class {
       if (!["unresolved", "compensated", "unknown"].includes(effect.status)) {
         throw new Error("External effect status must be unresolved, compensated, or unknown.");
       }
+      if (effect.id !== void 0 && (!effect.id.trim() || /\s/.test(effect.id))) {
+        throw new Error("External effect id must be non-empty and contain no whitespace.");
+      }
       const dag = await this.getDAGManager(sessionId);
       const node = dag.getNode(checkpointId);
       if (!node) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
       const record = {
-        ...effect,
-        id: effect.id || (0, import_node_crypto5.randomUUID)(),
+        adapter: effect.adapter.trim(),
+        operation: effect.operation.trim(),
+        reversible: effect.reversible,
+        ...effect.compensation?.trim() ? { compensation: effect.compensation.trim() } : {},
+        failureSemantics: effect.failureSemantics.trim(),
+        status: effect.status,
+        id: effect.id?.trim() || (0, import_node_crypto5.randomUUID)(),
         recordedAt: Date.now()
       };
       return dag.updateNode(checkpointId, {
         externalEffects: [...node.externalEffects ?? [], record]
       });
+    });
+  }
+  /**
+   * Register an explicit compensation adapter. Adapters own authentication,
+   * remote API semantics, and idempotency; the core only coordinates the
+   * durable declaration and requires an explicit execute request.
+   */
+  registerExternalEffectAdapter(adapter) {
+    if (!adapter || !adapter.name.trim() || typeof adapter.compensate !== "function") {
+      throw new Error("External effect adapter requires a non-empty name and compensate function.");
+    }
+    if (this.externalEffectAdapters.has(adapter.name)) {
+      throw new Error(`External effect adapter '${adapter.name}' is already registered.`);
+    }
+    this.externalEffectAdapters.set(adapter.name, adapter);
+    return () => {
+      if (this.externalEffectAdapters.get(adapter.name) === adapter) this.externalEffectAdapters.delete(adapter.name);
+    };
+  }
+  listExternalEffectAdapters() {
+    return [...this.externalEffectAdapters.keys()].sort();
+  }
+  /**
+   * Perform one adapter compensation only when the caller explicitly opts in.
+   * A deterministic idempotency key is used when none is supplied, and a
+   * different key cannot be used after an attempt has been recorded.
+   */
+  async compensateExternalEffect(sessionId, checkpointId, effectId, options = {}) {
+    return this.runWorkspaceOperation(async () => {
+      const dag = await this.getDAGManager(sessionId);
+      const node = dag.getNode(checkpointId);
+      if (!node) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
+      const effect = node.externalEffects?.find((item) => item.id === effectId);
+      if (!effect) throw new Error(`External effect '${effectId}' does not exist on checkpoint '${checkpointId}'.`);
+      const adapter = this.externalEffectAdapters.get(effect.adapter);
+      if (!adapter) throw new Error(`No external effect adapter '${effect.adapter}' is registered.`);
+      const idempotencyKey = options.idempotencyKey?.trim() || `dsh-tm:${sessionId}:${checkpointId}:${effectId}`;
+      if (!idempotencyKey || idempotencyKey.length > 256 || /\s/.test(idempotencyKey)) {
+        throw new Error("External compensation idempotencyKey must be non-empty, <=256 characters, and contain no whitespace.");
+      }
+      if (options.execute !== true) {
+        return {
+          sessionId,
+          checkpointId,
+          effect: cloneJson2(effect),
+          adapter: adapter.name,
+          dryRun: true,
+          idempotencyKey,
+          replayed: false,
+          note: effect.status === "compensated" ? "Effect is already marked compensated." : "Dry run; no external mutation was requested."
+        };
+      }
+      if (!effect.reversible) throw new Error(`External effect '${effectId}' is declared irreversible.`);
+      if (effect.compensationIdempotencyKey && effect.compensationIdempotencyKey !== idempotencyKey) {
+        throw new Error(`External effect '${effectId}' already has a different compensation idempotency key.`);
+      }
+      if (effect.status === "compensated" && effect.compensationIdempotencyKey === idempotencyKey) {
+        return { sessionId, checkpointId, effect: cloneJson2(effect), adapter: adapter.name, dryRun: false, idempotencyKey, replayed: true };
+      }
+      const attemptedAt = Date.now();
+      const mark = (patch) => dag.updateNode(checkpointId, {
+        externalEffects: (node.externalEffects ?? []).map((item) => item.id === effectId ? { ...item, ...patch, compensationIdempotencyKey: idempotencyKey, compensationAttemptedAt: attemptedAt } : item)
+      });
+      await mark({ status: "unknown" });
+      try {
+        const outcome = await adapter.compensate({ sessionId, checkpointId, effect: cloneJson2({ ...effect, status: "unknown", compensationIdempotencyKey: idempotencyKey, compensationAttemptedAt: attemptedAt }), idempotencyKey });
+        if (!outcome || !["compensated", "unknown"].includes(outcome.status)) throw new Error("Adapter returned an invalid compensation status.");
+        const updated = await mark({ status: outcome.status, ...outcome.note ? { compensation: outcome.note } : {} });
+        const finalEffect = updated.externalEffects.find((item) => item.id === effectId);
+        return { sessionId, checkpointId, effect: cloneJson2(finalEffect), adapter: adapter.name, dryRun: false, idempotencyKey, replayed: false, note: outcome.note };
+      } catch (error) {
+        await mark({ status: "unknown" });
+        throw Object.assign(new Error(`External compensation '${effectId}' is unknown after adapter failure: ${error instanceof Error ? error.message : String(error)}`), { code: "EXTERNAL_COMPENSATION_UNKNOWN" });
+      }
     });
   }
   /** Explicitly migrate a legacy plaintext ignored-file quarantine to AES-GCM. */
@@ -2418,6 +2501,7 @@ var TimeMachineService = class {
       quarantineMigration: git && Boolean(this.config.quarantineEncryptionKeyEnv),
       partialSnapshots: git && this.config.allowPartialSnapshots && (this.config.maxSnapshotFileBytes > 0 || this.config.maxSnapshotBytes > 0),
       externalEffectLedger: true,
+      externalEffectAdapters: this.listExternalEffectAdapters(),
       workspaceIsolation: "shared-lock",
       workspace,
       policies: {
@@ -2784,7 +2868,7 @@ var TimeMachineWebServer = class {
           }
           await this.handleStatic(res, pathname);
         } catch (err) {
-          const status = err?.code === "BAD_REQUEST" ? 400 : err?.code === "RESTORE_PLAN_INVALID" || err?.code === "RESTORE_MERGE_CONFLICT" || err?.code === "QUARANTINE_KEY_INVALID" ? 409 : err?.code === "UNSUPPORTED_WORKSPACE_STATE" ? 422 : err?.code === "SNAPSHOT_SIZE_LIMIT" ? 413 : 500;
+          const status = err?.code === "BAD_REQUEST" ? 400 : err?.code === "RESTORE_PLAN_INVALID" || err?.code === "RESTORE_MERGE_CONFLICT" || err?.code === "QUARANTINE_KEY_INVALID" || err?.code === "EXTERNAL_COMPENSATION_UNKNOWN" ? 409 : err?.code === "UNSUPPORTED_WORKSPACE_STATE" ? 422 : err?.code === "SNAPSHOT_SIZE_LIMIT" ? 413 : 500;
           res.writeHead(status, { "Content-Type": "application/json" });
           res.end(JSON.stringify({
             error: err.message || "Internal Server Error",
@@ -2901,6 +2985,22 @@ var TimeMachineWebServer = class {
         throw Object.assign(new Error("backupKey is required and must not contain whitespace"), { code: "BAD_REQUEST" });
       }
       const result = await this.service.migrateIgnoredBackup(body.backupKey);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: true, result }));
+      return;
+    }
+    if (pathname === "/api/external-effects/compensate" && req.method === "POST") {
+      const body = await this.readJsonBody(req);
+      if (typeof body.sessionId !== "string" || typeof body.checkpointId !== "string" || typeof body.effectId !== "string") {
+        throw Object.assign(new Error("sessionId, checkpointId, and effectId are required"), { code: "BAD_REQUEST" });
+      }
+      if (body.idempotencyKey !== void 0 && typeof body.idempotencyKey !== "string") {
+        throw Object.assign(new Error("idempotencyKey must be a string"), { code: "BAD_REQUEST" });
+      }
+      const result = await this.service.compensateExternalEffect(body.sessionId, body.checkpointId, body.effectId, {
+        execute: body.execute === true,
+        idempotencyKey: body.idempotencyKey
+      });
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ success: true, result }));
       return;
@@ -3113,6 +3213,24 @@ function registerCliCommands(ctx, service) {
         return {
           kind: "success",
           text: result.migrated ? `Encrypted quarantine backup ${key}: ${result.entryCount} ${result.entryCount === 1 ? "entry" : "entries"} rewritten (${formatBytes(result.bytesRewritten)}).` : `Quarantine backup ${key} is already encrypted or empty.`
+        };
+      }
+    });
+    scope.commands.register({
+      name: "tm-external-compensate",
+      description: "Preview or explicitly execute an external-effect compensation",
+      input: { hint: "<checkpoint> <effect-id> [--execute] [--key=<idempotency-key>]" },
+      handler: async ({ agent, rawInput }) => {
+        const args = rawInput.trim().split(/\s+/).filter(Boolean);
+        const positionals = args.filter((arg) => !arg.startsWith("--"));
+        if (positionals.length < 2) return { kind: "error", text: "Usage: /tm-external-compensate <checkpoint> <effect-id> [--execute] [--key=<idempotency-key>]" };
+        const result = await service.compensateExternalEffect(agent.session.id, positionals[0], positionals[1], {
+          execute: args.includes("--execute"),
+          idempotencyKey: optionValue(args, "--key")
+        });
+        return {
+          kind: "success",
+          text: result.dryRun ? `Dry run: adapter '${result.adapter}' is available for effect ${positionals[1]}; no external mutation was executed. Use --execute with key ${result.idempotencyKey}.` : `${result.replayed ? "Replayed" : "Executed"} compensation for ${positionals[1]} via '${result.adapter}' with key ${result.idempotencyKey}; status=${result.effect.status}.`
         };
       }
     });

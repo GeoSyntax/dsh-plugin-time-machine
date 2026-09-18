@@ -634,6 +634,59 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
     expect(result.reflectionAdvisory.suggestedPromptPrefix).toContain('remote namespace');
   });
 
+  it('discovers and explicitly executes idempotent external compensation adapters', async () => {
+    const sessionId = 'external-compensation';
+    const checkpoint = await service.createTurnCheckpoint({
+      sessionId, turnIndex: 1, prompt: 'create remote resource',
+      sessionState: { sessionId, messages: [] },
+    });
+    const updated = await service.recordExternalEffect(sessionId, checkpoint.id, {
+      adapter: 'demo-adapter', operation: 'create resource', reversible: true,
+      failureSemantics: 'cleanup may be retried', status: 'unresolved',
+    });
+    const calls: string[] = [];
+    const unregister = service.registerExternalEffectAdapter({
+      name: 'demo-adapter',
+      async compensate(context) {
+        calls.push(context.idempotencyKey);
+        return { status: 'compensated', note: 'demo cleanup complete' };
+      },
+    });
+    expect(service.listExternalEffectAdapters()).toContain('demo-adapter');
+    const effectId = updated.externalEffects![0]!.id;
+    const dryRun = await service.compensateExternalEffect(sessionId, checkpoint.id, effectId);
+    expect(dryRun.dryRun).toBe(true);
+    expect(calls).toHaveLength(0);
+    const executed = await service.compensateExternalEffect(sessionId, checkpoint.id, effectId, {
+      execute: true, idempotencyKey: 'cleanup-1',
+    });
+    expect(executed.effect.status).toBe('compensated');
+    expect(calls).toEqual(['cleanup-1']);
+    const replay = await service.compensateExternalEffect(sessionId, checkpoint.id, effectId, {
+      execute: true, idempotencyKey: 'cleanup-1',
+    });
+    expect(replay.replayed).toBe(true);
+    expect(calls).toHaveLength(1);
+    await expect(service.compensateExternalEffect(sessionId, checkpoint.id, effectId, {
+      execute: true, idempotencyKey: 'different-key',
+    })).rejects.toThrow('different compensation idempotency key');
+    const failing = await service.recordExternalEffect(sessionId, checkpoint.id, {
+      adapter: 'failing-adapter', operation: 'delete remote', reversible: true,
+      failureSemantics: 'unknown after timeout', status: 'unresolved',
+    });
+    service.registerExternalEffectAdapter({
+      name: 'failing-adapter',
+      async compensate() { throw new Error('timeout'); },
+    });
+    const failingId = failing.externalEffects!.at(-1)!.id;
+    await expect(service.compensateExternalEffect(sessionId, checkpoint.id, failingId, {
+      execute: true, idempotencyKey: 'failing-1',
+    })).rejects.toMatchObject({ code: 'EXTERNAL_COMPENSATION_UNKNOWN' });
+    expect((await service.getDAGManager(sessionId)).getNode(checkpoint.id)?.externalEffects?.at(-1)?.status).toBe('unknown');
+    unregister();
+    expect(service.listExternalEffectAdapters()).not.toContain('demo-adapter');
+  });
+
   it('verifies the restored workspace digest for the fallback engine', async () => {
     const fallbackRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-fallback-service-'));
     try {

@@ -13,7 +13,7 @@ supported only when it is covered by the current implementation and tests.
 | Non-conflicting drift merge | Explicit `/tm-rewind --merge` for Git workspaces; path-level conflicts fail closed | Product-specific | Three-way / selective conflict handling | Varies |
 | Runtime capability discovery | Versioned `GET /api/capabilities` exposes Git/fallback, merge, shadow-store, quarantine encryption/migration, external-effect ledger, unsupported-state, shared-lock isolation, and active policy limits | Product-specific | Host/UI-dependent | Varies |
 | Quarantine at-rest encryption | Opt-in AES-256-GCM via environment-backed key; missing/wrong key fails closed | Product-specific | Varies | Varies |
-| External side-effect ledger | Adapter declarations persist reversibility, compensation and failure semantics; fork reflection warns, no implicit compensation | Product-specific | Varies | Usually absent |
+| External side-effect ledger | Adapter declarations persist reversibility, compensation and failure semantics; named adapters support dry-run, explicit execution and idempotency fences; fork reflection still warns | Product-specific | Varies | Usually absent |
 | Selective file restore | `tm-restore-files`, Web API | Yes | Yes | Varies |
 | Conversation/session alignment | DSH `sessionController` fork | Product-specific | Product-specific | Usually undo/redo or same window |
 | DAG branches | Yes, persistent | No user-facing DAG | Ledger history | Usually linear |
@@ -67,7 +67,9 @@ containers; the default restore is snapshot replacement (an explicit Git-only
 `--merge` mode handles non-conflicting drift, but is not a general patch
 editor); and
 database, network, process, cloud, and other external side effects are outside
-the workspace snapshot. Quota-driven compaction is opt-in via `autoPrune`;
+the workspace snapshot. Registered compensation adapters are an explicit escape
+hatch, not automatic transaction rollback: authentication, authorization,
+remote idempotency, and retry policy remain adapter-owned. Quota-driven compaction is opt-in via `autoPrune`;
 restore journals are durable and replayed on startup; pruning and history
 compaction do not run repository-wide Git GC. Manual age filtering is available
 through `/tm-prune --older-than=...` and `olderThanMs` in the Web API, but

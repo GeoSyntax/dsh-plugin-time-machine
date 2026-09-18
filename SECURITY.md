@@ -18,6 +18,7 @@
 - ignored secret 被写入 Git object database 或 Web 响应；
 - localhost dashboard 的跨域请求、DNS rebinding 或 XSS；
 - Session 与工作区错误配对，且 rescue 无法恢复。
+- 外部 compensation adapter 在未明确 `execute` 或跨 idempotency key 重复执行远程副作用；适配器认证信息泄露或 unknown 状态被错误标记为已补偿。
 
 ## Incident preservation
 

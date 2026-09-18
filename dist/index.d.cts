@@ -42,6 +42,32 @@ interface ExternalEffectRecord {
     failureSemantics: string;
     status: 'unresolved' | 'compensated' | 'unknown';
     recordedAt: number;
+    /** Last explicit compensation idempotency key, if an adapter was invoked. */
+    compensationIdempotencyKey?: string;
+    compensationAttemptedAt?: number;
+}
+interface ExternalEffectCompensationContext {
+    sessionId: string;
+    checkpointId: string;
+    effect: ExternalEffectRecord;
+    idempotencyKey: string;
+}
+interface ExternalEffectAdapter {
+    name: string;
+    compensate(context: ExternalEffectCompensationContext): Promise<{
+        status: 'compensated' | 'unknown';
+        note?: string;
+    }>;
+}
+interface ExternalEffectCompensationResult {
+    sessionId: string;
+    checkpointId: string;
+    effect: ExternalEffectRecord;
+    adapter: string;
+    dryRun: boolean;
+    idempotencyKey: string;
+    replayed: boolean;
+    note?: string;
 }
 interface CheckpointNode {
     id: string;
@@ -296,6 +322,7 @@ declare class TimeMachineService {
     private workspaceLock;
     private readonly journalDir;
     private restorePlans;
+    private externalEffectAdapters;
     constructor(options: TimeMachineServiceOptions);
     private runWorkspaceOperation;
     /**
@@ -340,6 +367,22 @@ declare class TimeMachineService {
     recordExternalEffect(sessionId: string, checkpointId: string, effect: Omit<ExternalEffectRecord, 'id' | 'recordedAt'> & {
         id?: string;
     }): Promise<CheckpointNode>;
+    /**
+     * Register an explicit compensation adapter. Adapters own authentication,
+     * remote API semantics, and idempotency; the core only coordinates the
+     * durable declaration and requires an explicit execute request.
+     */
+    registerExternalEffectAdapter(adapter: ExternalEffectAdapter): () => void;
+    listExternalEffectAdapters(): string[];
+    /**
+     * Perform one adapter compensation only when the caller explicitly opts in.
+     * A deterministic idempotency key is used when none is supplied, and a
+     * different key cannot be used after an attempt has been recorded.
+     */
+    compensateExternalEffect(sessionId: string, checkpointId: string, effectId: string, options?: {
+        execute?: boolean;
+        idempotencyKey?: string;
+    }): Promise<ExternalEffectCompensationResult>;
     /** Explicitly migrate a legacy plaintext ignored-file quarantine to AES-GCM. */
     migrateIgnoredBackup(key: string): Promise<{
         migrated: boolean;
@@ -399,6 +442,7 @@ declare class TimeMachineService {
         quarantineMigration: boolean;
         partialSnapshots: boolean;
         externalEffectLedger: true;
+        externalEffectAdapters: string[];
         workspaceIsolation: 'shared-lock';
         workspace: {
             sparseCheckout: boolean;
@@ -760,4 +804,4 @@ declare class TimeMachinePlugin {
     constructor(ctx: Context, config?: Config);
 }
 
-export { type CheckpointNode, Config, type DAGManagerOptions, DAGStateManager, type DAGTree, type DiffResult, type ExternalEffectRecord, type FallbackOptions, FallbackSnapshotEngine, type FileChange, GitPlumbingEngine, type GitPlumbingOptions, type GitRestoreOptions, type GitSelectiveRestoreOptions, type GitSnapshot, type PruneResult, QuarantineKeyError, type QuarantineMigrationResult, QuarantineQuotaError, ReflectionAdvisor, type ReflectionSummary, type RestoreOptions, RestorePlanError, type RestorePreview, type RestoreResult, type SelectiveRestoreResult, type SessionMessage, type SessionState, type ShadowGcResult, type ShadowRepackResult, SnapshotSizeError, StorageQuotaError, type StorageStatus, type TimeMachineConfig, TimeMachinePlugin, TimeMachineService, type TimeMachineServiceOptions, UnsupportedWorkspaceStateError, type WorkspaceCapabilities, WorkspaceDriftError, WorkspaceMergeConflictError, WorkspaceRestoreConflictError, apply, collectFailedTools, TimeMachinePlugin as default, name };
+export { type CheckpointNode, Config, type DAGManagerOptions, DAGStateManager, type DAGTree, type DiffResult, type ExternalEffectAdapter, type ExternalEffectCompensationContext, type ExternalEffectCompensationResult, type ExternalEffectRecord, type FallbackOptions, FallbackSnapshotEngine, type FileChange, GitPlumbingEngine, type GitPlumbingOptions, type GitRestoreOptions, type GitSelectiveRestoreOptions, type GitSnapshot, type PruneResult, QuarantineKeyError, type QuarantineMigrationResult, QuarantineQuotaError, ReflectionAdvisor, type ReflectionSummary, type RestoreOptions, RestorePlanError, type RestorePreview, type RestoreResult, type SelectiveRestoreResult, type SessionMessage, type SessionState, type ShadowGcResult, type ShadowRepackResult, SnapshotSizeError, StorageQuotaError, type StorageStatus, type TimeMachineConfig, TimeMachinePlugin, TimeMachineService, type TimeMachineServiceOptions, UnsupportedWorkspaceStateError, type WorkspaceCapabilities, WorkspaceDriftError, WorkspaceMergeConflictError, WorkspaceRestoreConflictError, apply, collectFailedTools, TimeMachinePlugin as default, name };

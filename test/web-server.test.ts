@@ -57,6 +57,7 @@ describe('TimeMachineWebServer', () => {
     expect(capabilities.quarantineEncryption).toBe(false);
     expect(capabilities.quarantineMigration).toBe(false);
     expect(capabilities.externalEffectLedger).toBe(true);
+    expect(capabilities.externalEffectAdapters).toEqual([]);
     expect(capabilities.workspaceIsolation).toBe('shared-lock');
     expect(capabilities.policies).toMatchObject({
       restoreMode: 'safe',
@@ -85,6 +86,38 @@ describe('TimeMachineWebServer', () => {
       headers: { Origin: 'https://attacker.example' },
     });
     expect(blocked.status).toBe(403);
+  });
+
+  it('exposes external compensation as a dry-run first and an explicit idempotent action', async () => {
+    const sessionId = 'web-effects';
+    const checkpoint = await service.createTurnCheckpoint({
+      sessionId, turnIndex: 1, prompt: 'remote effect',
+      sessionState: { sessionId, messages: [] },
+    });
+    const updated = await service.recordExternalEffect(sessionId, checkpoint.id, {
+      adapter: 'web-adapter', operation: 'create remote', reversible: true,
+      failureSemantics: 'retryable', status: 'unresolved',
+    });
+    let calls = 0;
+    service.registerExternalEffectAdapter({
+      name: 'web-adapter',
+      async compensate() { calls += 1; return { status: 'compensated' }; },
+    });
+    const effectId = updated.externalEffects![0]!.id;
+    const dry = await fetch(`http://localhost:${testPort}/api/external-effects/compensate`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId, checkpointId: checkpoint.id, effectId }),
+    });
+    expect(dry.status).toBe(200);
+    expect((await dry.json()).result.dryRun).toBe(true);
+    expect(calls).toBe(0);
+    const execute = await fetch(`http://localhost:${testPort}/api/external-effects/compensate`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId, checkpointId: checkpoint.id, effectId, execute: true, idempotencyKey: 'web-1' }),
+    });
+    expect(execute.status).toBe(200);
+    expect((await execute.json()).result.effect.status).toBe('compensated');
+    expect(calls).toBe(1);
   });
 
   it('should rewind and fork through the API while returning a new conversation', async () => {

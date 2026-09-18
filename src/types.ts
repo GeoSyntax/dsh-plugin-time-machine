@@ -42,6 +42,35 @@ export interface ExternalEffectRecord {
   failureSemantics: string;
   status: 'unresolved' | 'compensated' | 'unknown';
   recordedAt: number;
+  /** Last explicit compensation idempotency key, if an adapter was invoked. */
+  compensationIdempotencyKey?: string;
+  compensationAttemptedAt?: number;
+}
+
+export interface ExternalEffectCompensationContext {
+  sessionId: string;
+  checkpointId: string;
+  effect: ExternalEffectRecord;
+  idempotencyKey: string;
+}
+
+export interface ExternalEffectAdapter {
+  name: string;
+  compensate(context: ExternalEffectCompensationContext): Promise<{
+    status: 'compensated' | 'unknown';
+    note?: string;
+  }>;
+}
+
+export interface ExternalEffectCompensationResult {
+  sessionId: string;
+  checkpointId: string;
+  effect: ExternalEffectRecord;
+  adapter: string;
+  dryRun: boolean;
+  idempotencyKey: string;
+  replayed: boolean;
+  note?: string;
 }
 
 export interface CheckpointNode {

@@ -55,7 +55,7 @@ export class TimeMachineWebServer {
           // 静态资源处理
           await this.handleStatic(res, pathname);
         } catch (err: any) {
-          const status = err?.code === 'BAD_REQUEST' ? 400 : err?.code === 'RESTORE_PLAN_INVALID' || err?.code === 'RESTORE_MERGE_CONFLICT' || err?.code === 'QUARANTINE_KEY_INVALID' ? 409 : err?.code === 'UNSUPPORTED_WORKSPACE_STATE' ? 422 : err?.code === 'SNAPSHOT_SIZE_LIMIT' ? 413 : 500;
+          const status = err?.code === 'BAD_REQUEST' ? 400 : err?.code === 'RESTORE_PLAN_INVALID' || err?.code === 'RESTORE_MERGE_CONFLICT' || err?.code === 'QUARANTINE_KEY_INVALID' || err?.code === 'EXTERNAL_COMPENSATION_UNKNOWN' ? 409 : err?.code === 'UNSUPPORTED_WORKSPACE_STATE' ? 422 : err?.code === 'SNAPSHOT_SIZE_LIMIT' ? 413 : 500;
           res.writeHead(status, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
             error: err.message || 'Internal Server Error',
@@ -184,6 +184,23 @@ export class TimeMachineWebServer {
         throw Object.assign(new Error('backupKey is required and must not contain whitespace'), { code: 'BAD_REQUEST' });
       }
       const result = await this.service.migrateIgnoredBackup(body.backupKey);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, result }));
+      return;
+    }
+
+    if (pathname === '/api/external-effects/compensate' && req.method === 'POST') {
+      const body = await this.readJsonBody(req);
+      if (typeof body.sessionId !== 'string' || typeof body.checkpointId !== 'string' || typeof body.effectId !== 'string') {
+        throw Object.assign(new Error('sessionId, checkpointId, and effectId are required'), { code: 'BAD_REQUEST' });
+      }
+      if (body.idempotencyKey !== undefined && typeof body.idempotencyKey !== 'string') {
+        throw Object.assign(new Error('idempotencyKey must be a string'), { code: 'BAD_REQUEST' });
+      }
+      const result = await this.service.compensateExternalEffect(body.sessionId, body.checkpointId, body.effectId, {
+        execute: body.execute === true,
+        idempotencyKey: body.idempotencyKey,
+      });
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, result }));
       return;

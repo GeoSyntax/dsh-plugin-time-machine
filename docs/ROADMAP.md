@@ -70,20 +70,22 @@ default mode and fallback mode continue to reject oversized captures.
 
 ## P2 — scope beyond the filesystem
 
-### External side-effect ledger
+### External side-effect ledger — adapter seam implemented
 
-The first extension surface is now available through
+The first extension surface is available through
 `TimeMachineService.recordExternalEffect()`. Integrations can persist an
 adapter name, operation, reversibility declaration, compensation description,
-failure semantics, and status on a checkpoint. The core plugin deliberately
-does not execute compensation; fork reflection reports the declaration as a
-warning. Adapter discovery, authenticated compensation execution, and
-idempotency protocols remain future work.
+failure semantics, and status on a checkpoint. Named adapters can now be
+registered and discovered; compensation is dry-run by default and requires an
+explicit execute request. The core persists an idempotency key and unknown
+outcome, while authentication, remote transaction semantics, and retry policy
+remain adapter-owned.
 
 **Acceptance:** each adapter declares compensation guarantees and failure
 semantics; a missing adapter produces an explicit warning in the checkpoint and
-reflection report. The core must never claim that a filesystem snapshot undoes
-an external mutation.
+reflection report; dry-run performs no remote call; repeated execution with the
+same key is replay-safe and a different key is rejected after an attempt. The
+core must never claim that a filesystem snapshot undoes an external mutation.
 
 ## Current non-goals
 

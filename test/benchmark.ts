@@ -10,7 +10,8 @@ import { FallbackSnapshotEngine } from '../src/core/fallback-engine.js';
 const execAsync = promisify(execFile);
 
 async function runBenchmark() {
-  console.log(pc.bold(pc.cyan(`\n═══════════ DSH Time Machine vs Traditional Copy Benchmark ═══════════\n`)));
+  const jsonOutput = process.env.TM_BENCH_FORMAT?.toLowerCase() === 'json';
+  if (!jsonOutput) console.log(pc.bold(pc.cyan(`\n═══════════ DSH Time Machine vs Traditional Copy Benchmark ═══════════\n`)));
 
   const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-benchmark-'));
   const repoDir = path.join(tmpRoot, 'test-repo');
@@ -26,7 +27,7 @@ async function runBenchmark() {
 
   // Override these for scale testing, e.g. TM_BENCH_FILE_COUNT=1000.
   const FILE_COUNT = positiveInteger(process.env.TM_BENCH_FILE_COUNT, 100);
-  console.log(pc.white(`Creating mock project with ${FILE_COUNT} files...`));
+  if (!jsonOutput) console.log(pc.white(`Creating mock project with ${FILE_COUNT} files...`));
   for (let i = 0; i < FILE_COUNT; i++) {
     const code = `// Module ${i}\nexport function compute_${i}() { return ${i} * 42; }\n`;
     await fs.writeFile(path.join(repoDir, `module_${i}.ts`), code, 'utf-8');
@@ -36,7 +37,7 @@ async function runBenchmark() {
   const fallbackEngine = new FallbackSnapshotEngine({ workDir: repoDir, storageDir: backupStorageDir });
 
   const TURNS = positiveInteger(process.env.TM_BENCH_TURNS, 5);
-  console.log(pc.white(`Simulating ${TURNS} agent turns of incremental file changes...\n`));
+  if (!jsonOutput) console.log(pc.white(`Simulating ${TURNS} agent turns of incremental file changes...\n`));
 
   // 1. 测试传统物理 Copy 备份方案
   const copyTimes: number[] = [];
@@ -96,19 +97,33 @@ async function runBenchmark() {
   const copyDiskSize = await getDirSize(backupStorageDir);
   const gitObjectsSize = await getDirSize(path.join(repoDir, '.git', 'objects'));
 
-  console.log(pc.bold(`📊 BENCHMARK RESULTS (${FILE_COUNT} files, average of ${TURNS} turns):`));
-  console.log('───────────────────────────────────────────────────────────────────');
-  console.log(`⏱️  Snapshot Latency:`);
   const latencyRatio = avgGitTime / avgCopyTime;
-  console.log(`   Traditional Copy  : ${pc.red(avgCopyTime.toFixed(2) + ' ms')}`);
-  console.log(`   Git Plumbing (Ours): ${pc.green(pc.bold(avgGitTime.toFixed(2) + ' ms'))}  -> ${pc.yellow(`${latencyRatio.toFixed(1)}x copy latency`)}`);
-  console.log(pc.dim('   Note: Git plumbing trades small-workspace latency for immutable history, isolated indexes, and deduplicated storage.'));
-  console.log('');
-  console.log(`💾 Total Storage Footprint:`);
   const storageRatio = gitObjectsSize / Math.max(copyDiskSize, 1);
-  console.log(`   Traditional Copy  : ${pc.red((copyDiskSize / 1024).toFixed(1) + ' KB')}`);
-  console.log(`   Git Plumbing (Ours): ${pc.green(pc.bold((gitObjectsSize / 1024).toFixed(1) + ' KB'))}  -> ${pc.cyan(`${storageRatio.toFixed(1)}x copy storage`)}`);
-  console.log('───────────────────────────────────────────────────────────────────\n');
+  const result = {
+    fileCount: FILE_COUNT,
+    turns: TURNS,
+    traditionalCopyMs: Number(avgCopyTime.toFixed(2)),
+    gitPlumbingMs: Number(avgGitTime.toFixed(2)),
+    latencyRatio: Number(latencyRatio.toFixed(3)),
+    traditionalCopyBytes: copyDiskSize,
+    gitPlumbingBytes: gitObjectsSize,
+    storageRatio: Number(storageRatio.toFixed(3)),
+  };
+  if (jsonOutput) {
+    console.log(JSON.stringify(result));
+  } else {
+    console.log(pc.bold(`📊 BENCHMARK RESULTS (${FILE_COUNT} files, average of ${TURNS} turns):`));
+    console.log('───────────────────────────────────────────────────────────────────');
+    console.log(`⏱️  Snapshot Latency:`);
+    console.log(`   Traditional Copy  : ${pc.red(avgCopyTime.toFixed(2) + ' ms')}`);
+    console.log(`   Git Plumbing (Ours): ${pc.green(pc.bold(avgGitTime.toFixed(2) + ' ms'))}  -> ${pc.yellow(`${latencyRatio.toFixed(1)}x copy latency`)}`);
+    console.log(pc.dim('   Note: Git plumbing trades small-workspace latency for immutable history, isolated indexes, and deduplicated storage.'));
+    console.log('');
+    console.log(`💾 Total Storage Footprint:`);
+    console.log(`   Traditional Copy  : ${pc.red((copyDiskSize / 1024).toFixed(1) + ' KB')}`);
+    console.log(`   Git Plumbing (Ours): ${pc.green(pc.bold((gitObjectsSize / 1024).toFixed(1) + ' KB'))}  -> ${pc.cyan(`${storageRatio.toFixed(1)}x copy storage`)}`);
+    console.log('───────────────────────────────────────────────────────────────────\n');
+  }
 
   // 清理临时文件
   await fs.rm(tmpRoot, { recursive: true, force: true });

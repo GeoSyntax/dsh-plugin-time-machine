@@ -106,6 +106,8 @@ pnpm test:release
 pnpm benchmark
 # Scale the fixture for larger repositories:
 TM_BENCH_FILE_COUNT=1000 TM_BENCH_TURNS=5 pnpm benchmark
+# Machine-readable result for comparison tooling:
+TM_BENCH_FORMAT=json TM_BENCH_FILE_COUNT=1000 TM_BENCH_TURNS=5 pnpm benchmark
 ```
 
 如果本地有从源码构建的 DSH，可验证真实宿主加载（不会调用模型）：

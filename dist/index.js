@@ -241,11 +241,14 @@ Reason: ${errorMsg}`);
             await this.runGit(["read-tree", "--empty"], env, root);
           }
           const protectedPaths = this.protectedRepoPaths(root);
+          const excludeFile = path2.join(await this.getGitDir(), `dsh-tm-exclude-${randomUUID()}`);
+          await fs.writeFile(excludeFile, protectedPaths.flatMap((relative) => [relative, `${relative}/**`]).join("\n") + "\n");
           const addArgs = ["add", "-A", "--", "."];
-          for (const relative of protectedPaths) {
-            addArgs.push(`:(exclude)${relative}`, `:(exclude)${relative}/**`);
+          try {
+            await this.runGit(["-c", `core.excludesFile=${excludeFile}`, ...addArgs], env, root);
+          } finally {
+            await fs.rm(excludeFile, { force: true }).catch(() => void 0);
           }
-          await this.runGit(addArgs, env, root);
           const { stdout: indexedFiles } = await this.runGit(["ls-files", "-z"], env, root);
           const indexedEntries = indexedFiles.split("\0").filter(Boolean);
           const protectedEntries = indexedEntries.filter((file) => protectedPaths.some(

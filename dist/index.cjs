@@ -175,6 +175,8 @@ var init_git_plumbing = __esm({
       maxSnapshotBytes;
       quarantineKey;
       shadowReady;
+      /** Last complete managed tree and the Git status signature that produced it. */
+      workspaceTreeCache;
       constructor(options) {
         this.workDir = import_node_path.default.resolve(options.workDir);
         this.refPrefix = options.refPrefix || "refs/dsh-tm";
@@ -234,7 +236,10 @@ Reason: ${errorMsg}`);
         }
         await this.assertSupportedWorkspace();
         const enforceSnapshotLimits = this.maxSnapshotFileBytes > 0 || this.maxSnapshotBytes > 0;
-        const { treeOid, indexFile } = await this.writeWorkspaceTree(enforceSnapshotLimits);
+        const root = await this.getRepoRoot();
+        const status = await this.workspaceStatusSignature(root);
+        const cached = status.cacheable && this.workspaceTreeCache?.signature === status.signature ? this.workspaceTreeCache.treeOid : void 0;
+        const { treeOid, indexFile } = cached ? { treeOid: cached, indexFile: void 0 } : await this.writeWorkspaceTree(enforceSnapshotLimits);
         try {
           const commitMsg = params.message || `DSH Checkpoint [${params.sessionId}:${params.checkpointId}]`;
           const commitArgs = ["commit-tree", treeOid, "-m", commitMsg];
@@ -252,6 +257,10 @@ Reason: ${errorMsg}`);
           const commitOid = commitStdout.trim();
           const checkpointRef = `${this.refPrefix}/${encodeRefPart(params.sessionId)}/nodes/${encodeRefPart(params.checkpointId)}`;
           await this.runGit(["update-ref", checkpointRef, commitOid]);
+          if (!cached) {
+            const nextStatus = await this.workspaceStatusSignature(root);
+            this.workspaceTreeCache = nextStatus.cacheable ? { treeOid, signature: nextStatus.signature } : void 0;
+          }
           const changedFiles = params.parentCommitOid ? await this.computeChangedFiles(params.parentCommitOid, commitOid) : await this.listTreeFiles(treeOid);
           return {
             treeOid,
@@ -260,7 +269,7 @@ Reason: ${errorMsg}`);
             ignoredPaths: await this.listIgnoredPaths()
           };
         } finally {
-          await import_promises.default.rm(indexFile, { force: true }).catch(() => void 0);
+          if (indexFile) await import_promises.default.rm(indexFile, { force: true }).catch(() => void 0);
         }
       }
       /** Compute the current managed tree without publishing a commit or ref. */
@@ -375,6 +384,7 @@ Reason: ${errorMsg}`);
         } finally {
           await import_promises.default.rm(indexFile, { force: true }).catch(() => void 0);
         }
+        this.workspaceTreeCache = void 0;
         return { deletedIgnoredPaths, restoredTreeOid: restoreTree };
       }
       async mergeWorkspaceTree(baseTree, targetTree, currentTree) {
@@ -434,6 +444,7 @@ Reason: ${errorMsg}`);
             await import_promises.default.rm(destination, { recursive: true, force: true });
             await import_promises.default.cp(source, destination, { recursive: true, force: true, verbatimSymlinks: true });
           }
+          this.workspaceTreeCache = void 0;
           return normalized;
         } finally {
           await import_promises.default.rm(indexFile, { force: true }).catch(() => void 0);
@@ -626,6 +637,24 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
           await import_promises.default.rm(indexFile, { force: true }).catch(() => void 0);
           throw error;
         }
+      }
+      /**
+       * Cheap-enough complete workspace identity used to skip a redundant tree
+       * write only for a fully clean worktree. Porcelain-v2 includes staged,
+       * unstaged, untracked and branch-head state, but an untracked path entry does
+       * not contain its content hash; therefore any file entry disables reuse.
+       * Ignored paths are intentionally handled separately by listIgnoredPaths().
+       */
+      async workspaceStatusSignature(root) {
+        const { stdout } = await this.runGit([
+          "status",
+          "--porcelain=v2",
+          "--branch",
+          "--untracked-files=all",
+          "-z"
+        ], {}, root);
+        const entries = stdout.split("\0").filter(Boolean).filter((item) => !item.startsWith("# "));
+        return { signature: stdout, cacheable: entries.length === 0 };
       }
       async assertSnapshotSize(root, files) {
         if (this.maxSnapshotFileBytes <= 0 && this.maxSnapshotBytes <= 0) return;

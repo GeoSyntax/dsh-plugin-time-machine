@@ -139,8 +139,9 @@ TM_DSH_SOURCE=/path/to/deepseek-harness pnpm smoke:dsh:source
 
 这是可重复的合成 TypeScript 文件基准，不代表所有真实仓库。Git 方案用延迟
 换取不可变历史、分支安全和更低的增量存储；10k+ 文件的全量工作区扫描仍是
-已知 P1 瓶颈，后续增量缓存必须以 HEAD、index、ignored 集合和 protected paths
-变化为失效条件，不能牺牲快照完整性。
+已知 P1 瓶颈；当前仅对完全 clean 的 Git worktree 做保守树复用，任何 staged、
+modified 或 untracked 文件都会禁用复用。后续更广泛的增量缓存必须以 HEAD、
+index、ignored 集合和 protected paths 变化为失效条件，不能牺牲快照完整性。
 - `/tm-preview` 和 Web 预览会签发一次性、会话绑定的 restore plan；Web rewind 会把 plan 一并提交，若预览后工作区、活动 checkpoint、Git HEAD/branch/进行中操作或 plan TTL 发生变化，服务返回 `RESTORE_PLAN_INVALID`（HTTP 409）并要求重新预览。`restorePlanTtlMs: 0` 可关闭过期时间，但 plan 仍只能消费一次。
 - 多文件恢复提供 rescue/compensation 和崩溃后 journal 恢复，但文件系统本身没有跨文件 ACID 事务。
 - Git sparse checkout、submodule 和 merge/rebase/cherry-pick 进行中状态会被明确识别并拒绝创建/预览/恢复 checkpoint（`UNSUPPORTED_WORKSPACE_STATE`），避免把不完整工作区误报为可回滚快照；请先完成操作或使用普通 worktree。

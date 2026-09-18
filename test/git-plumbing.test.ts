@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -123,6 +123,24 @@ describe('GitPlumbingEngine', () => {
       file2Exists = false;
     }
     expect(file2Exists).toBe(false);
+  });
+
+  it('reuses an unchanged workspace tree for consecutive checkpoints', async () => {
+    await fs.writeFile(path.join(tmpDir, 'stable.txt'), 'stable\n', 'utf8');
+    await execAsync('git', ['add', 'stable.txt'], { cwd: tmpDir });
+    await execAsync('git', ['commit', '-m', 'stable fixture'], { cwd: tmpDir });
+    const first = await engine.createSnapshot({ sessionId: 'cache', checkpointId: 'one' });
+    const runGit = vi.spyOn(engine, 'runGit');
+
+    const second = await engine.createSnapshot({
+      sessionId: 'cache',
+      checkpointId: 'two',
+      parentCommitOid: first.commitOid,
+    });
+
+    expect(second.treeOid).toBe(first.treeOid);
+    expect(runGit.mock.calls.some(([args]) => args[0] === 'add')).toBe(false);
+    expect(second.changedFiles).toEqual([]);
   });
 
   it('merge-restores non-conflicting live edits while applying the target snapshot', async () => {

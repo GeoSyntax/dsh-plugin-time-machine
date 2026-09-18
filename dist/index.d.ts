@@ -507,6 +507,8 @@ declare class GitPlumbingEngine {
     private readonly maxSnapshotBytes;
     private readonly quarantineKey?;
     private shadowReady?;
+    /** Last complete managed tree and the Git status signature that produced it. */
+    private workspaceTreeCache?;
     constructor(options: GitPlumbingOptions);
     get usesShadowStore(): boolean;
     isGitRepo(): Promise<boolean>;
@@ -555,6 +557,14 @@ declare class GitPlumbingEngine {
     private readShadowBlob;
     private gitEnv;
     private writeWorkspaceTree;
+    /**
+     * Cheap-enough complete workspace identity used to skip a redundant tree
+     * write only for a fully clean worktree. Porcelain-v2 includes staged,
+     * unstaged, untracked and branch-head state, but an untracked path entry does
+     * not contain its content hash; therefore any file entry disables reuse.
+     * Ignored paths are intentionally handled separately by listIgnoredPaths().
+     */
+    private workspaceStatusSignature;
     private assertSnapshotSize;
     private listIgnoredPaths;
     private listTreeFiles;

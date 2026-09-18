@@ -32,10 +32,13 @@ contracts are rejected before mutating the workspace.
 
 ### Large-workspace incremental capture
 
-Measure and reduce Git process overhead for repositories with 10k+ files. A
-candidate design is a cache keyed by `(repo HEAD, index stat data, preserve
-paths)` with invalidation on control-plane changes. It must never reuse a tree
-after a file, ignored-path set, or staged index changed.
+Measure and reduce Git process overhead for repositories with 10k+ files. The
+first conservative optimization now reuses a tree only for a completely clean
+worktree; any staged, modified, or untracked path disables reuse because Git's
+porcelain path entry does not carry an untracked content hash. A broader cache
+keyed by `(repo HEAD, index stat data, preserve paths)` still needs a
+content-safe invalidation design and must never reuse a tree after a file,
+ignored-path set, or staged index changed.
 
 **Acceptance:** `TM_BENCH_FILE_COUNT` benchmark runs report latency and storage
 for 100, 1k, and 10k-file fixtures; staged-index isolation and orphan cleanup

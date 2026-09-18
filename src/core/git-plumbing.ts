@@ -165,6 +165,8 @@ export class GitPlumbingEngine {
   private readonly maxSnapshotBytes: number;
   private readonly quarantineKey?: Buffer;
   private shadowReady?: Promise<void>;
+  /** Last complete managed tree and the Git status signature that produced it. */
+  private workspaceTreeCache?: { treeOid: string; signature: string };
 
   constructor(options: GitPlumbingOptions) {
     this.workDir = path.resolve(options.workDir);
@@ -244,7 +246,14 @@ export class GitPlumbingEngine {
     await this.assertSupportedWorkspace();
 
     const enforceSnapshotLimits = this.maxSnapshotFileBytes > 0 || this.maxSnapshotBytes > 0;
-    const { treeOid, indexFile } = await this.writeWorkspaceTree(enforceSnapshotLimits);
+    const root = await this.getRepoRoot();
+    const status = await this.workspaceStatusSignature(root);
+    const cached = status.cacheable && this.workspaceTreeCache?.signature === status.signature
+      ? this.workspaceTreeCache.treeOid
+      : undefined;
+    const { treeOid, indexFile } = cached
+      ? { treeOid: cached, indexFile: undefined }
+      : await this.writeWorkspaceTree(enforceSnapshotLimits);
     try {
       const commitMsg = params.message || `DSH Checkpoint [${params.sessionId}:${params.checkpointId}]`;
       const commitArgs = ['commit-tree', treeOid, '-m', commitMsg];
@@ -264,6 +273,13 @@ export class GitPlumbingEngine {
       const checkpointRef = `${this.refPrefix}/${encodeRefPart(params.sessionId)}/nodes/${encodeRefPart(params.checkpointId)}`;
       await this.runGit(['update-ref', checkpointRef, commitOid]);
 
+      if (!cached) {
+        const nextStatus = await this.workspaceStatusSignature(root);
+        this.workspaceTreeCache = nextStatus.cacheable
+          ? { treeOid, signature: nextStatus.signature }
+          : undefined;
+      }
+
       const changedFiles = params.parentCommitOid
         ? await this.computeChangedFiles(params.parentCommitOid, commitOid)
         : await this.listTreeFiles(treeOid);
@@ -275,7 +291,7 @@ export class GitPlumbingEngine {
         ignoredPaths: await this.listIgnoredPaths(),
       };
     } finally {
-      await fs.rm(indexFile, { force: true }).catch(() => undefined);
+      if (indexFile) await fs.rm(indexFile, { force: true }).catch(() => undefined);
     }
   }
 
@@ -411,6 +427,7 @@ export class GitPlumbingEngine {
     } finally {
       await fs.rm(indexFile, { force: true }).catch(() => undefined);
     }
+    this.workspaceTreeCache = undefined;
     return { deletedIgnoredPaths, restoredTreeOid: restoreTree };
   }
 
@@ -478,6 +495,7 @@ export class GitPlumbingEngine {
         await fs.rm(destination, { recursive: true, force: true });
         await fs.cp(source, destination, { recursive: true, force: true, verbatimSymlinks: true });
       }
+      this.workspaceTreeCache = undefined;
       return normalized;
     } finally {
       await fs.rm(indexFile, { force: true }).catch(() => undefined);
@@ -682,6 +700,21 @@ export class GitPlumbingEngine {
       await fs.rm(indexFile, { force: true }).catch(() => undefined);
       throw error;
     }
+  }
+
+  /**
+   * Cheap-enough complete workspace identity used to skip a redundant tree
+   * write only for a fully clean worktree. Porcelain-v2 includes staged,
+   * unstaged, untracked and branch-head state, but an untracked path entry does
+   * not contain its content hash; therefore any file entry disables reuse.
+   * Ignored paths are intentionally handled separately by listIgnoredPaths().
+   */
+  private async workspaceStatusSignature(root: string): Promise<{ signature: string; cacheable: boolean }> {
+    const { stdout } = await this.runGit([
+      'status', '--porcelain=v2', '--branch', '--untracked-files=all', '-z',
+    ], {}, root);
+    const entries = stdout.split('\0').filter(Boolean).filter(item => !item.startsWith('# '));
+    return { signature: stdout, cacheable: entries.length === 0 };
   }
 
   private async assertSnapshotSize(root: string, files: string[]): Promise<void> {

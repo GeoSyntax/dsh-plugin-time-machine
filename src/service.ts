@@ -293,6 +293,12 @@ export class TimeMachineService {
       if (!effect.adapter.trim() || !effect.operation.trim() || !effect.failureSemantics.trim()) {
         throw new Error('External effect adapter, operation, and failureSemantics are required.');
       }
+      if (typeof effect.reversible !== 'boolean') {
+        throw new Error('External effect reversible must be a boolean.');
+      }
+      if (!['unresolved', 'compensated', 'unknown'].includes(effect.status)) {
+        throw new Error('External effect status must be unresolved, compensated, or unknown.');
+      }
       const dag = await this.getDAGManager(sessionId);
       const node = dag.getNode(checkpointId);
       if (!node) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
@@ -647,6 +653,8 @@ export class TimeMachineService {
     selectiveRestore: boolean;
     shadowStore: boolean;
     quarantineEncryption: boolean;
+    quarantineMigration: boolean;
+    externalEffectLedger: true;
     workspaceIsolation: 'shared-lock';
     workspace: { sparseCheckout: boolean; submodulePaths: string[]; inProgressOperation: string | null };
     policies: {
@@ -673,6 +681,8 @@ export class TimeMachineService {
       selectiveRestore: usable || !git,
       shadowStore: git && this.config.shadowStore,
       quarantineEncryption: Boolean(this.config.quarantineEncryptionKeyEnv && process.env[this.config.quarantineEncryptionKeyEnv]),
+      quarantineMigration: Boolean(this.config.quarantineEncryptionKeyEnv),
+      externalEffectLedger: true,
       workspaceIsolation: 'shared-lock',
       workspace,
       policies: {

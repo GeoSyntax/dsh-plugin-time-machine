@@ -391,6 +391,8 @@ declare class TimeMachineService {
         selectiveRestore: boolean;
         shadowStore: boolean;
         quarantineEncryption: boolean;
+        quarantineMigration: boolean;
+        externalEffectLedger: true;
         workspaceIsolation: 'shared-lock';
         workspace: {
             sparseCheckout: boolean;

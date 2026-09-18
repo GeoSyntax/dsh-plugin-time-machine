@@ -595,6 +595,13 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
     });
     expect(updated.externalEffects).toHaveLength(1);
     expect(updated.externalEffects?.[0]?.adapter).toBe('redis-adapter');
+    await expect(service.recordExternalEffect(sessionId, second.id, {
+      adapter: 'redis-adapter',
+      operation: 'invalid status example',
+      reversible: false,
+      failureSemantics: 'invalid input',
+      status: 'invalid' as any,
+    })).rejects.toThrow('status must be unresolved');
 
     const restarted = new TimeMachineService({ workDir: tmpDir, storageDir: path.join(tmpDir, '.dsh-tm') });
     const loaded = (await restarted.getDAGManager(sessionId)).getNode(second.id);

@@ -55,6 +55,8 @@ describe('TimeMachineWebServer', () => {
     expect(capabilities.mergeRestore).toBe(false);
     expect(capabilities.selectiveRestore).toBe(true);
     expect(capabilities.quarantineEncryption).toBe(false);
+    expect(capabilities.quarantineMigration).toBe(false);
+    expect(capabilities.externalEffectLedger).toBe(true);
     expect(capabilities.workspaceIsolation).toBe('shared-lock');
     expect(capabilities.policies).toMatchObject({
       restoreMode: 'safe',

@@ -10,6 +10,7 @@ import type {
   DAGTree,
   DiffResult,
   ReflectionSummary,
+  RestorePreview,
   RestoreOptions,
   RestoreResult,
   SessionState,
@@ -292,6 +293,49 @@ export class TimeMachineService {
       return await this.gitEngine.getDiffBetween(baseNode.gitCommitOid, targetNode.gitCommitOid);
     }
     return [];
+  }
+
+  /**
+   * Produce a read-only impact report before a rewind/fork. This deliberately
+   * does not create a rescue point, mutate the DAG, or touch workspace files.
+   */
+  async previewRestore(sessionId: string, checkpointId: string): Promise<RestorePreview> {
+    return this.operations.run(this.workDir, async () => {
+      const dag = await this.getDAGManager(sessionId);
+      const target = dag.getNode(checkpointId);
+      if (!target) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
+      const current = dag.getCurrentNode();
+      const isGit = await this.gitEngine.isGitRepo();
+      const currentState = isGit
+        ? await this.gitEngine.inspectWorkspace()
+        : { treeOid: await this.fallbackEngine.inspectWorkspace(), ignoredPaths: [] };
+      const targetIgnoredPaths = target.ignoredPaths ?? [];
+      const diffs = isGit
+        ? await this.gitEngine.getDiffBetween(currentState.treeOid, target.gitCommitOid)
+        : target.changedFiles.map(change => ({
+          file: change.path,
+          status: change.status,
+          diffText: 'Fallback snapshot: content diff is unavailable; file is included in the target snapshot.',
+        }));
+      const expectedTree = current?.settledGitTreeOid ?? current?.gitTreeOid;
+      const expectedIgnored = current?.settledIgnoredPaths ?? current?.ignoredPaths ?? [];
+      const workspaceDrifted = Boolean(current && (
+        currentState.treeOid !== expectedTree || !sameStrings(currentState.ignoredPaths, expectedIgnored)
+      ));
+      return {
+        sessionId,
+        checkpointId,
+        currentCheckpointId: current?.id ?? null,
+        currentTreeOid: currentState.treeOid,
+        targetTreeOid: target.gitTreeOid,
+        currentIgnoredPaths: currentState.ignoredPaths,
+        targetIgnoredPaths,
+        ignoredPathsToDelete: currentState.ignoredPaths.filter(item => !targetIgnoredPaths.includes(item)),
+        diffs,
+        workspaceDrifted,
+        requiresForce: workspaceDrifted,
+      };
+    });
   }
 
   /**

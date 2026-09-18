@@ -109,6 +109,24 @@ describe('TimeMachineWebServer', () => {
     expect(second.id).not.toBe(first.id);
   });
 
+  it('exposes a read-only rewind preview endpoint', async () => {
+    const file = path.join(tmpDir, 'preview.txt');
+    await fs.writeFile(file, 'v1\n', 'utf8');
+    const first = await service.createTurnCheckpoint({
+      sessionId: 'preview-web', turnIndex: 1, prompt: 'initial', sessionState: { sessionId: 'preview-web', messages: [] },
+    });
+    await fs.writeFile(file, 'v2\n', 'utf8');
+    await service.createTurnCheckpoint({
+      sessionId: 'preview-web', turnIndex: 2, prompt: 'change', sessionState: { sessionId: 'preview-web', messages: [] },
+    });
+    const response = await fetch(`http://localhost:${testPort}/api/preview?sessionId=preview-web&checkpoint=${encodeURIComponent(first.id)}`);
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.preview.checkpointId).toBe(first.id);
+    expect(body.preview.diffs.some((diff: any) => diff.file === 'preview.txt')).toBe(true);
+    expect(await fs.readFile(file, 'utf8')).toBe('v2\n');
+  });
+
   it('should compensate a physical rewind when conversation restart fails', async () => {
     const file = path.join(tmpDir, 'compensation.txt');
     await fs.writeFile(file, 'before\n', 'utf8');

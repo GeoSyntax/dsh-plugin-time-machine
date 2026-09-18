@@ -185,8 +185,19 @@ modalConfirmFork.addEventListener('click', async () => {
 });
 
 async function triggerRewind(nodeId, turnIndex) {
+  let preview;
+  try {
+    const params = new URLSearchParams({ sessionId: currentSessionId, checkpoint: nodeId });
+    preview = (await requestJson(`${API_BASE}/api/preview?${params}`)).preview;
+  } catch (error) {
+    alert(`Could not preview rewind: ${error.message}`);
+    return;
+  }
+  const files = (preview.diffs || []).slice(0, 12).map(diff => `${diff.status} ${diff.file}`).join('\n');
+  const more = (preview.diffs || []).length > 12 ? `\n…and ${(preview.diffs || []).length - 12} more` : '';
+  const warning = preview.requiresForce ? '\n\n⚠ Workspace drift detected; safe restore will refuse to overwrite it.' : '';
   const confirmed = confirm(
-    `Rewind to Turn #${turnIndex}?\n\nThe workspace will be restored and DSH will fork a new conversation at the saved event boundary. A rescue point is created first.`,
+    `Rewind to Turn #${turnIndex}?\n\nPlanned file changes:\n${files || '(none)'}${more}${warning}\n\nA rescue point is created first.`,
   );
   if (!confirmed) return;
   try {

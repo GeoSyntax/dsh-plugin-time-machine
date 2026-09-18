@@ -133,6 +133,27 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
     expect(await fs.readFile(path.join(tmpDir, 'secret.env'), 'utf8')).toBe('token=do-not-persist\n');
   });
 
+  it('previews rewind impact without mutating files or DAG state', async () => {
+    const sessionId = 'preview-session';
+    const file = path.join(tmpDir, 'preview.txt');
+    await fs.writeFile(file, 'v1\n', 'utf8');
+    const first = await service.createTurnCheckpoint({
+      sessionId, turnIndex: 1, prompt: 'initial', sessionState: { sessionId, messages: [] },
+    });
+    await fs.writeFile(file, 'v2\n', 'utf8');
+    const second = await service.createTurnCheckpoint({
+      sessionId, turnIndex: 2, prompt: 'changed', sessionState: { sessionId, messages: [] },
+    });
+    const before = await fs.readFile(file, 'utf8');
+    const preview = await service.previewRestore(sessionId, first.id);
+    expect(preview.currentCheckpointId).toBe(second.id);
+    expect(preview.checkpointId).toBe(first.id);
+    expect(preview.diffs.some(diff => diff.file === 'preview.txt')).toBe(true);
+    expect(preview.requiresForce).toBe(false);
+    expect(await fs.readFile(file, 'utf8')).toBe(before);
+    expect((await service.getDAGManager(sessionId)).tree.currentCheckpointId).toBe(second.id);
+  });
+
   it('finalizes a turn and reloads its DAG state after a service restart', async () => {
     const sessionId = 'restart-session';
     const file = path.join(tmpDir, 'restart.txt');

@@ -247,7 +247,7 @@ Reason: ${errorMsg}`);
       }
       async getDiffBetween(baseOid, targetOid) {
         try {
-          const { stdout } = await this.runGit(["diff", "--no-ext-diff", `${baseOid}^{tree}`, `${targetOid}^{tree}`]);
+          const { stdout } = await this.runGit(["diff", "--no-ext-diff", baseOid, targetOid]);
           return this.parseUnifiedDiff(stdout);
         } catch {
           return [];
@@ -1148,6 +1148,42 @@ var TimeMachineService = class {
     return [];
   }
   /**
+   * Produce a read-only impact report before a rewind/fork. This deliberately
+   * does not create a rescue point, mutate the DAG, or touch workspace files.
+   */
+  async previewRestore(sessionId, checkpointId) {
+    return this.operations.run(this.workDir, async () => {
+      const dag = await this.getDAGManager(sessionId);
+      const target = dag.getNode(checkpointId);
+      if (!target) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
+      const current = dag.getCurrentNode();
+      const isGit = await this.gitEngine.isGitRepo();
+      const currentState = isGit ? await this.gitEngine.inspectWorkspace() : { treeOid: await this.fallbackEngine.inspectWorkspace(), ignoredPaths: [] };
+      const targetIgnoredPaths = target.ignoredPaths ?? [];
+      const diffs = isGit ? await this.gitEngine.getDiffBetween(currentState.treeOid, target.gitCommitOid) : target.changedFiles.map((change) => ({
+        file: change.path,
+        status: change.status,
+        diffText: "Fallback snapshot: content diff is unavailable; file is included in the target snapshot."
+      }));
+      const expectedTree = current?.settledGitTreeOid ?? current?.gitTreeOid;
+      const expectedIgnored = current?.settledIgnoredPaths ?? current?.ignoredPaths ?? [];
+      const workspaceDrifted = Boolean(current && (currentState.treeOid !== expectedTree || !sameStrings(currentState.ignoredPaths, expectedIgnored)));
+      return {
+        sessionId,
+        checkpointId,
+        currentCheckpointId: current?.id ?? null,
+        currentTreeOid: currentState.treeOid,
+        targetTreeOid: target.gitTreeOid,
+        currentIgnoredPaths: currentState.ignoredPaths,
+        targetIgnoredPaths,
+        ignoredPathsToDelete: currentState.ignoredPaths.filter((item) => !targetIgnoredPaths.includes(item)),
+        diffs,
+        workspaceDrifted,
+        requiresForce: workspaceDrifted
+      };
+    });
+  }
+  /**
    * 打印终端彩色 ASCII 拓扑树
    */
   async renderTree(sessionId) {
@@ -1326,6 +1362,15 @@ var TimeMachineWebServer = class {
       const diffs = await this.service.getDiff(sessionId, baseId, targetId);
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ diffs }));
+      return;
+    }
+    if (pathname === "/api/preview" && req.method === "GET") {
+      const sessionId = query.get("sessionId") || "default";
+      const checkpointId = query.get("checkpoint") || "";
+      if (!checkpointId) throw Object.assign(new Error("Missing checkpoint query parameter"), { code: "BAD_REQUEST" });
+      const preview = await this.service.previewRestore(sessionId, checkpointId);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ preview }));
       return;
     }
     if (pathname === "/api/rewind" && req.method === "POST") {
@@ -1512,6 +1557,20 @@ function registerCliCommands(ctx, service) {
           await compensate(service, sessionId, result.rescueCheckpointId);
           throw error;
         }
+      }
+    });
+    scope.commands.register({
+      name: "tm-preview",
+      description: "Preview workspace changes before a rewind or fork",
+      input: { hint: "<checkpoint>" },
+      handler: async ({ agent, rawInput }) => {
+        const checkpointId = rawInput.trim().split(/\s+/).filter(Boolean)[0];
+        if (!checkpointId) return { kind: "error", text: "Usage: /tm-preview <checkpoint>" };
+        const preview = await service.previewRestore(agent.session.id, checkpointId);
+        const drift = preview.requiresForce ? "workspace drift detected; --force may be required" : "workspace matches active checkpoint";
+        const files = preview.diffs.length ? preview.diffs.map((item) => `${item.status} ${item.file}`).join(", ") : "no managed file changes";
+        const ignored = preview.ignoredPathsToDelete.length ? ` Ignored paths to delete: ${preview.ignoredPathsToDelete.join(", ")}.` : "";
+        return { kind: "success", text: `Preview ${checkpointId}: ${drift}. Changes: ${files}.${ignored}` };
       }
     });
     scope.commands.register({

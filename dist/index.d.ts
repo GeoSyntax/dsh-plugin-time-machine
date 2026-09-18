@@ -103,6 +103,20 @@ interface DiffResult {
     status: 'added' | 'modified' | 'deleted';
     diffText: string;
 }
+/** Read-only impact report for a prospective rewind/fork. */
+interface RestorePreview {
+    sessionId: string;
+    checkpointId: string;
+    currentCheckpointId: string | null;
+    currentTreeOid: string;
+    targetTreeOid: string;
+    currentIgnoredPaths: string[];
+    targetIgnoredPaths: string[];
+    ignoredPathsToDelete: string[];
+    diffs: DiffResult[];
+    workspaceDrifted: boolean;
+    requiresForce: boolean;
+}
 interface ReflectionSummary {
     hasPastFailures: boolean;
     failedNodeCount: number;
@@ -242,6 +256,11 @@ declare class TimeMachineService {
      * 获取指定快照与当前（或另一快照）的代码差异
      */
     getDiff(sessionId: string, baseId: string, targetId: string): Promise<DiffResult[]>;
+    /**
+     * Produce a read-only impact report before a rewind/fork. This deliberately
+     * does not create a rescue point, mutate the DAG, or touch workspace files.
+     */
+    previewRestore(sessionId: string, checkpointId: string): Promise<RestorePreview>;
     /**
      * 打印终端彩色 ASCII 拓扑树
      */
@@ -430,4 +449,4 @@ declare class TimeMachinePlugin {
     constructor(ctx: Context, config?: Config);
 }
 
-export { type CheckpointNode, Config, type DAGManagerOptions, DAGStateManager, type DAGTree, type DiffResult, type FallbackOptions, FallbackSnapshotEngine, type FileChange, GitPlumbingEngine, type GitPlumbingOptions, type GitRestoreOptions, type GitSnapshot, ReflectionAdvisor, type ReflectionSummary, type RestoreOptions, type RestoreResult, type SessionMessage, type SessionState, type TimeMachineConfig, TimeMachinePlugin, TimeMachineService, type TimeMachineServiceOptions, WorkspaceDriftError, WorkspaceRestoreConflictError, apply, collectFailedTools, TimeMachinePlugin as default, name };
+export { type CheckpointNode, Config, type DAGManagerOptions, DAGStateManager, type DAGTree, type DiffResult, type FallbackOptions, FallbackSnapshotEngine, type FileChange, GitPlumbingEngine, type GitPlumbingOptions, type GitRestoreOptions, type GitSnapshot, ReflectionAdvisor, type ReflectionSummary, type RestoreOptions, type RestorePreview, type RestoreResult, type SessionMessage, type SessionState, type TimeMachineConfig, TimeMachinePlugin, TimeMachineService, type TimeMachineServiceOptions, WorkspaceDriftError, WorkspaceRestoreConflictError, apply, collectFailedTools, TimeMachinePlugin as default, name };

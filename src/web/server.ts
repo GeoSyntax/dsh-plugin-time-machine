@@ -110,6 +110,16 @@ export class TimeMachineWebServer {
       return;
     }
 
+    if (pathname === '/api/preview' && req.method === 'GET') {
+      const sessionId = query.get('sessionId') || 'default';
+      const checkpointId = query.get('checkpoint') || '';
+      if (!checkpointId) throw Object.assign(new Error('Missing checkpoint query parameter'), { code: 'BAD_REQUEST' });
+      const preview = await this.service.previewRestore(sessionId, checkpointId);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ preview }));
+      return;
+    }
+
     if (pathname === '/api/rewind' && req.method === 'POST') {
       const body = await this.readJsonBody(req);
       const { sessionId, checkpointId } = body;

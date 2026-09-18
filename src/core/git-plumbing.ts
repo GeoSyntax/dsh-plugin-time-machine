@@ -235,7 +235,10 @@ export class GitPlumbingEngine {
 
   async getDiffBetween(baseOid: string, targetOid: string): Promise<DiffResult[]> {
     try {
-      const { stdout } = await this.runGit(['diff', '--no-ext-diff', `${baseOid}^{tree}`, `${targetOid}^{tree}`]);
+      // Git accepts both commit-ish and tree-ish objects here. Keeping the
+      // caller's object type matters for previews, where the live workspace is
+      // represented by an unpublished tree object.
+      const { stdout } = await this.runGit(['diff', '--no-ext-diff', baseOid, targetOid]);
       return this.parseUnifiedDiff(stdout);
     } catch {
       return [];

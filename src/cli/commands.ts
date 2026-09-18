@@ -57,6 +57,21 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
     });
 
     scope.commands.register({
+      name: 'tm-preview',
+      description: 'Preview workspace changes before a rewind or fork',
+      input: { hint: '<checkpoint>' },
+      handler: async ({ agent, rawInput }: CommandInvocationLike): Promise<CommandResult> => {
+        const checkpointId = rawInput.trim().split(/\s+/).filter(Boolean)[0];
+        if (!checkpointId) return { kind: 'error', text: 'Usage: /tm-preview <checkpoint>' };
+        const preview = await service.previewRestore(agent.session.id, checkpointId);
+        const drift = preview.requiresForce ? 'workspace drift detected; --force may be required' : 'workspace matches active checkpoint';
+        const files = preview.diffs.length ? preview.diffs.map(item => `${item.status} ${item.file}`).join(', ') : 'no managed file changes';
+        const ignored = preview.ignoredPathsToDelete.length ? ` Ignored paths to delete: ${preview.ignoredPathsToDelete.join(', ')}.` : '';
+        return { kind: 'success', text: `Preview ${checkpointId}: ${drift}. Changes: ${files}.${ignored}` };
+      },
+    });
+
+    scope.commands.register({
       name: 'tm-fork',
       description: 'Create a named exploration branch from a checkpoint',
       input: { hint: '<checkpoint> <branch> [--force]' },

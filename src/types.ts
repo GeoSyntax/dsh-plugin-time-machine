@@ -105,6 +105,21 @@ export interface DiffResult {
   diffText: string;
 }
 
+/** Read-only impact report for a prospective rewind/fork. */
+export interface RestorePreview {
+  sessionId: string;
+  checkpointId: string;
+  currentCheckpointId: string | null;
+  currentTreeOid: string;
+  targetTreeOid: string;
+  currentIgnoredPaths: string[];
+  targetIgnoredPaths: string[];
+  ignoredPathsToDelete: string[];
+  diffs: DiffResult[];
+  workspaceDrifted: boolean;
+  requiresForce: boolean;
+}
+
 export interface ReflectionSummary {
   hasPastFailures: boolean;
   failedNodeCount: number;

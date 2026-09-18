@@ -2,11 +2,14 @@ import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import type { FileChange } from '../types.js';
+import { SnapshotSizeError } from './git-plumbing.js';
 
 export interface FallbackOptions {
   workDir: string;
   storageDir: string;
   preservePaths?: string[];
+  maxSnapshotFileBytes?: number;
+  maxSnapshotBytes?: number;
 }
 
 interface SnapshotEntry {
@@ -27,11 +30,15 @@ export class FallbackSnapshotEngine {
   public readonly workDir: string;
   public readonly storageDir: string;
   private readonly preservePaths: string[];
+  private readonly maxSnapshotFileBytes: number;
+  private readonly maxSnapshotBytes: number;
 
   constructor(options: FallbackOptions) {
     this.workDir = path.resolve(options.workDir);
     this.storageDir = path.resolve(options.storageDir);
     this.preservePaths = [this.storageDir, ...(options.preservePaths ?? []).map(item => path.resolve(this.workDir, item))];
+    this.maxSnapshotFileBytes = Math.max(0, Math.floor(options.maxSnapshotFileBytes ?? 0));
+    this.maxSnapshotBytes = Math.max(0, Math.floor(options.maxSnapshotBytes ?? 0));
   }
 
   private getCheckpointDir(sessionId: string, checkpointId: string): string {
@@ -50,7 +57,9 @@ export class FallbackSnapshotEngine {
     await fs.mkdir(filesDir, { recursive: true });
 
     try {
-      const entries = await this.captureTree(this.workDir, filesDir);
+      const plannedEntries = await this.scanTree(this.workDir);
+      await this.assertSnapshotSize(plannedEntries);
+      const entries = await this.captureTree(this.workDir, filesDir, plannedEntries);
       const treeOid = await hashSnapshot(filesDir, entries);
       const manifest: SnapshotManifest = { version: 1, entries, treeOid };
       await fs.writeFile(path.join(temporary, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
@@ -161,8 +170,8 @@ export class FallbackSnapshotEngine {
     return before;
   }
 
-  private async captureTree(sourceRoot: string, destinationRoot: string): Promise<SnapshotEntry[]> {
-    const entries = await this.scanTree(sourceRoot);
+  private async captureTree(sourceRoot: string, destinationRoot: string, plannedEntries?: SnapshotEntry[]): Promise<SnapshotEntry[]> {
+    const entries = plannedEntries ?? await this.scanTree(sourceRoot);
     for (const entry of entries) {
       const source = path.join(sourceRoot, ...entry.path.split('/'));
       const destination = path.join(destinationRoot, ...entry.path.split('/'));
@@ -174,6 +183,22 @@ export class FallbackSnapshotEngine {
       }
     }
     return entries;
+  }
+
+  private async assertSnapshotSize(entries: SnapshotEntry[]): Promise<void> {
+    if (this.maxSnapshotFileBytes <= 0 && this.maxSnapshotBytes <= 0) return;
+    let totalBytes = 0;
+    for (const entry of entries) {
+      if (entry.type !== 'file') continue;
+      const stat = await fs.stat(path.join(this.workDir, ...entry.path.split('/')));
+      if (this.maxSnapshotFileBytes > 0 && stat.size > this.maxSnapshotFileBytes) {
+        throw new SnapshotSizeError({ file: entry.path, fileBytes: stat.size, limitBytes: this.maxSnapshotFileBytes });
+      }
+      totalBytes += stat.size;
+      if (this.maxSnapshotBytes > 0 && totalBytes > this.maxSnapshotBytes) {
+        throw new SnapshotSizeError({ totalBytes, limitBytes: this.maxSnapshotBytes });
+      }
+    }
   }
 
   private async scanTree(root: string): Promise<SnapshotEntry[]> {

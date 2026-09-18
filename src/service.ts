@@ -110,6 +110,8 @@ export class TimeMachineService {
       workspaceLockTimeoutMs: Math.max(0, Math.floor(options.config?.workspaceLockTimeoutMs ?? 30000)),
       maxQuarantineBytes: Math.max(0, Math.floor(options.config?.maxQuarantineBytes ?? 0)),
       restorePlanTtlMs: Math.max(0, Math.floor(options.config?.restorePlanTtlMs ?? 900000)),
+      maxSnapshotFileBytes: Math.max(0, Math.floor(options.config?.maxSnapshotFileBytes ?? 0)),
+      maxSnapshotBytes: Math.max(0, Math.floor(options.config?.maxSnapshotBytes ?? 0)),
     };
 
     this.gitEngine = new GitPlumbingEngine({
@@ -119,12 +121,16 @@ export class TimeMachineService {
       quarantineDir: path.join(this.storageDir, 'ignored-quarantine'),
       shadowObjectDir: this.config.shadowStore ? path.join(this.storageDir, 'git-shadow', 'objects') : undefined,
       maxQuarantineBytes: this.config.maxQuarantineBytes,
+      maxSnapshotFileBytes: this.config.maxSnapshotFileBytes,
+      maxSnapshotBytes: this.config.maxSnapshotBytes,
     });
 
     this.fallbackEngine = new FallbackSnapshotEngine({
       workDir: this.workDir,
       storageDir: path.join(this.storageDir, 'fallback_backups'),
       preservePaths: [this.storageDir, ...this.config.preservePaths],
+      maxSnapshotFileBytes: this.config.maxSnapshotFileBytes,
+      maxSnapshotBytes: this.config.maxSnapshotBytes,
     });
     this.workspaceLock = new WorkspaceFileLock(path.join(this.storageDir, '.workspace.lock'), {
       timeoutMs: this.config.workspaceLockTimeoutMs,

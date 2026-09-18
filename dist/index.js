@@ -22,6 +22,7 @@ var git_plumbing_exports = {};
 __export(git_plumbing_exports, {
   GitPlumbingEngine: () => GitPlumbingEngine,
   QuarantineQuotaError: () => QuarantineQuotaError,
+  SnapshotSizeError: () => SnapshotSizeError,
   UnsupportedWorkspaceStateError: () => UnsupportedWorkspaceStateError,
   WorkspaceDriftError: () => WorkspaceDriftError,
   WorkspaceRestoreConflictError: () => WorkspaceRestoreConflictError
@@ -60,7 +61,7 @@ function symmetricDifference(left, right) {
 function longestFirst(left, right) {
   return right.split("/").length - left.split("/").length || right.localeCompare(left);
 }
-var execFileAsync, WorkspaceDriftError, UnsupportedWorkspaceStateError, WorkspaceRestoreConflictError, QuarantineQuotaError, GitPlumbingEngine;
+var execFileAsync, WorkspaceDriftError, UnsupportedWorkspaceStateError, WorkspaceRestoreConflictError, QuarantineQuotaError, SnapshotSizeError, GitPlumbingEngine;
 var init_git_plumbing = __esm({
   "src/core/git-plumbing.ts"() {
     "use strict";
@@ -109,6 +110,16 @@ var init_git_plumbing = __esm({
       requiredBytes;
       code = "QUARANTINE_QUOTA_EXCEEDED";
     };
+    SnapshotSizeError = class extends Error {
+      constructor(details) {
+        const message = details.file ? `Snapshot file '${details.file}' is ${details.fileBytes} bytes; limit is ${details.limitBytes} bytes.` : `Snapshot is ${details.totalBytes} bytes; limit is ${details.limitBytes} bytes.`;
+        super(message);
+        this.details = details;
+        this.name = "SnapshotSizeError";
+      }
+      details;
+      code = "SNAPSHOT_SIZE_LIMIT";
+    };
     GitPlumbingEngine = class {
       workDir;
       refPrefix;
@@ -119,6 +130,8 @@ var init_git_plumbing = __esm({
       gitDirCached = null;
       shadowObjectDir;
       maxQuarantineBytes;
+      maxSnapshotFileBytes;
+      maxSnapshotBytes;
       shadowReady;
       constructor(options) {
         this.workDir = path2.resolve(options.workDir);
@@ -127,6 +140,8 @@ var init_git_plumbing = __esm({
         this.quarantineDir = options.quarantineDir ? path2.resolve(options.quarantineDir) : void 0;
         this.shadowObjectDir = options.shadowObjectDir ? path2.resolve(options.shadowObjectDir) : void 0;
         this.maxQuarantineBytes = Math.max(0, Math.floor(options.maxQuarantineBytes ?? 0));
+        this.maxSnapshotFileBytes = Math.max(0, Math.floor(options.maxSnapshotFileBytes ?? 0));
+        this.maxSnapshotBytes = Math.max(0, Math.floor(options.maxSnapshotBytes ?? 0));
       }
       get usesShadowStore() {
         return Boolean(this.shadowObjectDir);
@@ -175,7 +190,7 @@ Reason: ${errorMsg}`);
           throw new Error(`Working directory '${this.workDir}' is not a valid Git repository.`);
         }
         await this.assertSupportedWorkspace();
-        const { treeOid, indexFile } = await this.writeWorkspaceTree();
+        const { treeOid, indexFile } = await this.writeWorkspaceTree(true);
         try {
           const commitMsg = params.message || `DSH Checkpoint [${params.sessionId}:${params.checkpointId}]`;
           const commitArgs = ["commit-tree", treeOid, "-m", commitMsg];
@@ -442,7 +457,7 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
         }
         return env;
       }
-      async writeWorkspaceTree() {
+      async writeWorkspaceTree(enforceSnapshotLimits = false) {
         const root = await this.getRepoRoot();
         const indexFile = path2.join(await this.getGitDir(), `dsh-tm-index-${randomUUID()}`);
         const env = { GIT_INDEX_FILE: indexFile };
@@ -465,6 +480,7 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
           const candidateFiles = candidates.split("\0").filter(Boolean).map(normalizeGitPath).filter((file) => !protectedPaths.some(
             (relative) => file === relative || file.startsWith(`${relative}/`)
           ));
+          if (enforceSnapshotLimits) await this.assertSnapshotSize(root, candidateFiles);
           for (let offset = 0; offset < candidateFiles.length; offset += 128) {
             await this.runGit(["add", "-A", "--", ...candidateFiles.slice(offset, offset + 128)], env, root);
           }
@@ -485,6 +501,21 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
         } catch (error) {
           await fs.rm(indexFile, { force: true }).catch(() => void 0);
           throw error;
+        }
+      }
+      async assertSnapshotSize(root, files) {
+        if (this.maxSnapshotFileBytes <= 0 && this.maxSnapshotBytes <= 0) return;
+        let totalBytes = 0;
+        for (const relative of files) {
+          const stat = await fs.lstat(path2.join(root, ...relative.split("/"))).catch(() => void 0);
+          if (!stat?.isFile()) continue;
+          if (this.maxSnapshotFileBytes > 0 && stat.size > this.maxSnapshotFileBytes) {
+            throw new SnapshotSizeError({ file: relative, fileBytes: stat.size, limitBytes: this.maxSnapshotFileBytes });
+          }
+          totalBytes += stat.size;
+          if (this.maxSnapshotBytes > 0 && totalBytes > this.maxSnapshotBytes) {
+            throw new SnapshotSizeError({ totalBytes, limitBytes: this.maxSnapshotBytes });
+          }
         }
       }
       async listIgnoredPaths() {
@@ -732,6 +763,7 @@ import { randomUUID as randomUUID5 } from "crypto";
 
 // src/core/fallback-engine.ts
 init_esm_shims();
+init_git_plumbing();
 import { createHash, randomUUID as randomUUID2 } from "crypto";
 import path3 from "path";
 import fs2 from "fs/promises";
@@ -739,10 +771,14 @@ var FallbackSnapshotEngine = class {
   workDir;
   storageDir;
   preservePaths;
+  maxSnapshotFileBytes;
+  maxSnapshotBytes;
   constructor(options) {
     this.workDir = path3.resolve(options.workDir);
     this.storageDir = path3.resolve(options.storageDir);
     this.preservePaths = [this.storageDir, ...(options.preservePaths ?? []).map((item) => path3.resolve(this.workDir, item))];
+    this.maxSnapshotFileBytes = Math.max(0, Math.floor(options.maxSnapshotFileBytes ?? 0));
+    this.maxSnapshotBytes = Math.max(0, Math.floor(options.maxSnapshotBytes ?? 0));
   }
   getCheckpointDir(sessionId, checkpointId) {
     const sessionKey = Buffer.from(sessionId, "utf8").toString("base64url") || "_";
@@ -755,7 +791,9 @@ var FallbackSnapshotEngine = class {
     const filesDir = path3.join(temporary, "files");
     await fs2.mkdir(filesDir, { recursive: true });
     try {
-      const entries = await this.captureTree(this.workDir, filesDir);
+      const plannedEntries = await this.scanTree(this.workDir);
+      await this.assertSnapshotSize(plannedEntries);
+      const entries = await this.captureTree(this.workDir, filesDir, plannedEntries);
       const treeOid = await hashSnapshot(filesDir, entries);
       const manifest = { version: 1, entries, treeOid };
       await fs2.writeFile(path3.join(temporary, "manifest.json"), `${JSON.stringify(manifest, null, 2)}
@@ -854,8 +892,8 @@ var FallbackSnapshotEngine = class {
     await fs2.rm(target, { recursive: true, force: true });
     return before;
   }
-  async captureTree(sourceRoot, destinationRoot) {
-    const entries = await this.scanTree(sourceRoot);
+  async captureTree(sourceRoot, destinationRoot, plannedEntries) {
+    const entries = plannedEntries ?? await this.scanTree(sourceRoot);
     for (const entry of entries) {
       const source = path3.join(sourceRoot, ...entry.path.split("/"));
       const destination = path3.join(destinationRoot, ...entry.path.split("/"));
@@ -867,6 +905,21 @@ var FallbackSnapshotEngine = class {
       }
     }
     return entries;
+  }
+  async assertSnapshotSize(entries) {
+    if (this.maxSnapshotFileBytes <= 0 && this.maxSnapshotBytes <= 0) return;
+    let totalBytes = 0;
+    for (const entry of entries) {
+      if (entry.type !== "file") continue;
+      const stat = await fs2.stat(path3.join(this.workDir, ...entry.path.split("/")));
+      if (this.maxSnapshotFileBytes > 0 && stat.size > this.maxSnapshotFileBytes) {
+        throw new SnapshotSizeError({ file: entry.path, fileBytes: stat.size, limitBytes: this.maxSnapshotFileBytes });
+      }
+      totalBytes += stat.size;
+      if (this.maxSnapshotBytes > 0 && totalBytes > this.maxSnapshotBytes) {
+        throw new SnapshotSizeError({ totalBytes, limitBytes: this.maxSnapshotBytes });
+      }
+    }
   }
   async scanTree(root) {
     const entries = [];
@@ -1485,7 +1538,9 @@ var TimeMachineService = class {
       autoPrune: options.config?.autoPrune ?? false,
       workspaceLockTimeoutMs: Math.max(0, Math.floor(options.config?.workspaceLockTimeoutMs ?? 3e4)),
       maxQuarantineBytes: Math.max(0, Math.floor(options.config?.maxQuarantineBytes ?? 0)),
-      restorePlanTtlMs: Math.max(0, Math.floor(options.config?.restorePlanTtlMs ?? 9e5))
+      restorePlanTtlMs: Math.max(0, Math.floor(options.config?.restorePlanTtlMs ?? 9e5)),
+      maxSnapshotFileBytes: Math.max(0, Math.floor(options.config?.maxSnapshotFileBytes ?? 0)),
+      maxSnapshotBytes: Math.max(0, Math.floor(options.config?.maxSnapshotBytes ?? 0))
     };
     this.gitEngine = new GitPlumbingEngine({
       workDir: this.workDir,
@@ -1493,12 +1548,16 @@ var TimeMachineService = class {
       preservePaths: [this.storageDir, ...this.config.preservePaths],
       quarantineDir: path6.join(this.storageDir, "ignored-quarantine"),
       shadowObjectDir: this.config.shadowStore ? path6.join(this.storageDir, "git-shadow", "objects") : void 0,
-      maxQuarantineBytes: this.config.maxQuarantineBytes
+      maxQuarantineBytes: this.config.maxQuarantineBytes,
+      maxSnapshotFileBytes: this.config.maxSnapshotFileBytes,
+      maxSnapshotBytes: this.config.maxSnapshotBytes
     });
     this.fallbackEngine = new FallbackSnapshotEngine({
       workDir: this.workDir,
       storageDir: path6.join(this.storageDir, "fallback_backups"),
-      preservePaths: [this.storageDir, ...this.config.preservePaths]
+      preservePaths: [this.storageDir, ...this.config.preservePaths],
+      maxSnapshotFileBytes: this.config.maxSnapshotFileBytes,
+      maxSnapshotBytes: this.config.maxSnapshotBytes
     });
     this.workspaceLock = new WorkspaceFileLock(path6.join(this.storageDir, ".workspace.lock"), {
       timeoutMs: this.config.workspaceLockTimeoutMs
@@ -2211,7 +2270,7 @@ var TimeMachineWebServer = class {
           }
           await this.handleStatic(res, pathname);
         } catch (err) {
-          const status = err?.code === "BAD_REQUEST" ? 400 : err?.code === "RESTORE_PLAN_INVALID" ? 409 : err?.code === "UNSUPPORTED_WORKSPACE_STATE" ? 422 : 500;
+          const status = err?.code === "BAD_REQUEST" ? 400 : err?.code === "RESTORE_PLAN_INVALID" ? 409 : err?.code === "UNSUPPORTED_WORKSPACE_STATE" ? 422 : err?.code === "SNAPSHOT_SIZE_LIMIT" ? 413 : 500;
           res.writeHead(status, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ error: err.message || "Internal Server Error" }));
         }
@@ -2637,7 +2696,9 @@ var Config = Schema.object({
   autoPrune: Schema.boolean().default(false),
   workspaceLockTimeoutMs: Schema.number().default(3e4),
   maxQuarantineBytes: Schema.number().default(0),
-  restorePlanTtlMs: Schema.number().default(9e5)
+  restorePlanTtlMs: Schema.number().default(9e5),
+  maxSnapshotFileBytes: Schema.number().default(0),
+  maxSnapshotBytes: Schema.number().default(0)
 });
 function apply(ctx, config = {}) {
   const workDir = path8.resolve(process.cwd());
@@ -2793,6 +2854,7 @@ export {
   QuarantineQuotaError,
   ReflectionAdvisor,
   RestorePlanError,
+  SnapshotSizeError,
   StorageQuotaError,
   TimeMachinePlugin,
   TimeMachineService,

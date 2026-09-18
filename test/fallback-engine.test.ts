@@ -32,4 +32,12 @@ describe('FallbackSnapshotEngine', () => {
     await expect(fs.access(path.join(root, 'orphan.txt'))).rejects.toThrow();
     expect((await fs.readdir(storage)).length).toBeGreaterThan(0);
   });
+
+  it('rejects an oversized file before copying a fallback snapshot', async () => {
+    engine = new FallbackSnapshotEngine({ workDir: root, storageDir: storage, preservePaths: [storage], maxSnapshotFileBytes: 4 });
+    await fs.writeFile(path.join(root, 'large.txt'), '12345', 'utf8');
+    await expect(engine.createSnapshot({ sessionId: 'limits', checkpointId: 'one' }))
+      .rejects.toMatchObject({ code: 'SNAPSHOT_SIZE_LIMIT' });
+    await expect(fs.access(path.join(storage, 'limits'))).rejects.toThrow();
+  });
 });

@@ -96,6 +96,10 @@ interface TimeMachineConfig {
     maxQuarantineBytes?: number;
     /** Lifetime of a preview restore plan. Set to 0 to disable plan expiry. */
     restorePlanTtlMs?: number;
+    /** Maximum size of one captured regular file; 0 disables the guard. */
+    maxSnapshotFileBytes?: number;
+    /** Maximum aggregate regular-file bytes in one checkpoint; 0 disables the guard. */
+    maxSnapshotBytes?: number;
 }
 interface RestoreOptions {
     mode?: 'safe' | 'force';
@@ -370,6 +374,10 @@ interface GitPlumbingOptions {
     shadowObjectDir?: string;
     /** Hard limit for ignored-file quarantine bytes; 0 disables the guard. */
     maxQuarantineBytes?: number;
+    /** Maximum size of one captured regular file; 0 disables the guard. */
+    maxSnapshotFileBytes?: number;
+    /** Maximum aggregate regular-file bytes in one checkpoint; 0 disables the guard. */
+    maxSnapshotBytes?: number;
 }
 interface GitSnapshot {
     treeOid: string;
@@ -427,6 +435,21 @@ declare class QuarantineQuotaError extends Error {
     readonly code = "QUARANTINE_QUOTA_EXCEEDED";
     constructor(limitBytes: number, requiredBytes: number);
 }
+declare class SnapshotSizeError extends Error {
+    readonly details: {
+        file?: string;
+        fileBytes?: number;
+        totalBytes?: number;
+        limitBytes: number;
+    };
+    readonly code = "SNAPSHOT_SIZE_LIMIT";
+    constructor(details: {
+        file?: string;
+        fileBytes?: number;
+        totalBytes?: number;
+        limitBytes: number;
+    });
+}
 declare class GitPlumbingEngine {
     readonly workDir: string;
     readonly refPrefix: string;
@@ -437,6 +460,8 @@ declare class GitPlumbingEngine {
     private gitDirCached;
     private readonly shadowObjectDir?;
     private readonly maxQuarantineBytes;
+    private readonly maxSnapshotFileBytes;
+    private readonly maxSnapshotBytes;
     private shadowReady?;
     constructor(options: GitPlumbingOptions);
     get usesShadowStore(): boolean;
@@ -482,6 +507,7 @@ declare class GitPlumbingEngine {
     private readShadowBlob;
     private gitEnv;
     private writeWorkspaceTree;
+    private assertSnapshotSize;
     private listIgnoredPaths;
     private listTreeFiles;
     private listTreeFileNames;
@@ -507,12 +533,16 @@ interface FallbackOptions {
     workDir: string;
     storageDir: string;
     preservePaths?: string[];
+    maxSnapshotFileBytes?: number;
+    maxSnapshotBytes?: number;
 }
 /** Exact-copy fallback for ordinary directories, including deletions and symlinks. */
 declare class FallbackSnapshotEngine {
     readonly workDir: string;
     readonly storageDir: string;
     private readonly preservePaths;
+    private readonly maxSnapshotFileBytes;
+    private readonly maxSnapshotBytes;
     constructor(options: FallbackOptions);
     private getCheckpointDir;
     createSnapshot(params: {
@@ -531,6 +561,7 @@ declare class FallbackSnapshotEngine {
     }): Promise<string[]>;
     removeSnapshot(sessionId: string, checkpointId: string): Promise<number>;
     private captureTree;
+    private assertSnapshotSize;
     private scanTree;
     private isPreserved;
     private resolveSafe;
@@ -610,4 +641,4 @@ declare class TimeMachinePlugin {
     constructor(ctx: Context, config?: Config);
 }
 
-export { type CheckpointNode, Config, type DAGManagerOptions, DAGStateManager, type DAGTree, type DiffResult, type FallbackOptions, FallbackSnapshotEngine, type FileChange, GitPlumbingEngine, type GitPlumbingOptions, type GitRestoreOptions, type GitSelectiveRestoreOptions, type GitSnapshot, type PruneResult, QuarantineQuotaError, ReflectionAdvisor, type ReflectionSummary, type RestoreOptions, RestorePlanError, type RestorePreview, type RestoreResult, type SelectiveRestoreResult, type SessionMessage, type SessionState, type ShadowGcResult, type ShadowRepackResult, StorageQuotaError, type StorageStatus, type TimeMachineConfig, TimeMachinePlugin, TimeMachineService, type TimeMachineServiceOptions, UnsupportedWorkspaceStateError, type WorkspaceCapabilities, WorkspaceDriftError, WorkspaceRestoreConflictError, apply, collectFailedTools, TimeMachinePlugin as default, name };
+export { type CheckpointNode, Config, type DAGManagerOptions, DAGStateManager, type DAGTree, type DiffResult, type FallbackOptions, FallbackSnapshotEngine, type FileChange, GitPlumbingEngine, type GitPlumbingOptions, type GitRestoreOptions, type GitSelectiveRestoreOptions, type GitSnapshot, type PruneResult, QuarantineQuotaError, ReflectionAdvisor, type ReflectionSummary, type RestoreOptions, RestorePlanError, type RestorePreview, type RestoreResult, type SelectiveRestoreResult, type SessionMessage, type SessionState, type ShadowGcResult, type ShadowRepackResult, SnapshotSizeError, StorageQuotaError, type StorageStatus, type TimeMachineConfig, TimeMachinePlugin, TimeMachineService, type TimeMachineServiceOptions, UnsupportedWorkspaceStateError, type WorkspaceCapabilities, WorkspaceDriftError, WorkspaceRestoreConflictError, apply, collectFailedTools, TimeMachinePlugin as default, name };

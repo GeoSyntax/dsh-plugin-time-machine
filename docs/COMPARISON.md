@@ -15,7 +15,7 @@ supported only when it is covered by the current implementation and tests.
 | DAG branches | Yes, persistent | No user-facing DAG | Ledger history | Usually linear |
 | Failed-tool reflection | Yes | No equivalent | No equivalent | No equivalent |
 | Rescue/compensation | Yes | Snapshot-oriented | Journal-oriented | Varies |
-| Storage quotas and pruning | Explicit status, conservative prune, explicit history compaction, optional abandoned-branch prune, opt-in hard guards | Yes | Yes | Varies |
+| Storage quotas and pruning | Explicit status, conservative prune, explicit history compaction, optional abandoned-branch prune, opt-in hard guards | Yes | Yes; per-file/aggregate capture budgets and retention | Varies |
 | Durable interrupted-restore journal | Yes; startup restores rescue checkpoint | Store recovery | Yes | Varies |
 | Independent shadow store | Opt-in `shadowStore: true`; loose GC plus explicit private-pack repack | Yes | Yes | Usually local backups |
 | Cross-process workspace lock | Yes; bounded wait with stale-owner recovery | Product-specific | Change Ledger documents active-session blocking and Git-operation fences | Usually unavailable |
@@ -42,8 +42,8 @@ The comparison is deliberately not a claim that Time Machine is ahead of every
 peer. Time Machine now has expiring, single-use, session-bound restore plans
 with Git HEAD/branch/in-progress-operation fences for reviewed Web/CLI restores.
 The current Change Ledger implementation still goes further with
-unsupported-file and per-file size
-reporting; path-identity caches for large workspaces; and a host-native,
+unsupported-file partial capture/reporting; path-identity caches for large
+workspaces; and a host-native,
 message-anchored rewind action. We should adopt those ideas where they fit
 without copying their storage format.
 

@@ -58,6 +58,14 @@ describe('GitPlumbingEngine', () => {
       .rejects.toMatchObject({ code: 'UNSUPPORTED_WORKSPACE_STATE' });
   });
 
+  it('rejects a snapshot before staging an oversized file', async () => {
+    const limited = new GitPlumbingEngine({ workDir: tmpDir, maxSnapshotFileBytes: 4 });
+    await fs.writeFile(path.join(tmpDir, 'large.txt'), '12345', 'utf8');
+    await expect(limited.createSnapshot({ sessionId: 'limits', checkpointId: 'one' }))
+      .rejects.toMatchObject({ code: 'SNAPSHOT_SIZE_LIMIT' });
+    expect((await execAsync('git', ['status', '--short'], { cwd: tmpDir })).stdout).toContain('large.txt');
+  });
+
   it('should create snapshot without polluting git log', async () => {
     // 写入第一个文件
     const file1 = path.join(tmpDir, 'hello.txt');

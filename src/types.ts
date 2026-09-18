@@ -94,6 +94,10 @@ export interface TimeMachineConfig {
   maxQuarantineBytes?: number;
   /** Lifetime of a preview restore plan. Set to 0 to disable plan expiry. */
   restorePlanTtlMs?: number;
+  /** Maximum size of one captured regular file; 0 disables the guard. */
+  maxSnapshotFileBytes?: number;
+  /** Maximum aggregate regular-file bytes in one checkpoint; 0 disables the guard. */
+  maxSnapshotBytes?: number;
 }
 
 export interface RestoreOptions {

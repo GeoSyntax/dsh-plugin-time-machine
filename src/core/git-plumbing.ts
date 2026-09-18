@@ -17,6 +17,10 @@ export interface GitPlumbingOptions {
   shadowObjectDir?: string;
   /** Hard limit for ignored-file quarantine bytes; 0 disables the guard. */
   maxQuarantineBytes?: number;
+  /** Maximum size of one captured regular file; 0 disables the guard. */
+  maxSnapshotFileBytes?: number;
+  /** Maximum aggregate regular-file bytes in one checkpoint; 0 disables the guard. */
+  maxSnapshotBytes?: number;
 }
 
 export interface GitSnapshot {
@@ -101,6 +105,18 @@ export class QuarantineQuotaError extends Error {
   }
 }
 
+export class SnapshotSizeError extends Error {
+  readonly code = 'SNAPSHOT_SIZE_LIMIT';
+
+  constructor(public readonly details: { file?: string; fileBytes?: number; totalBytes?: number; limitBytes: number }) {
+    const message = details.file
+      ? `Snapshot file '${details.file}' is ${details.fileBytes} bytes; limit is ${details.limitBytes} bytes.`
+      : `Snapshot is ${details.totalBytes} bytes; limit is ${details.limitBytes} bytes.`;
+    super(message);
+    this.name = 'SnapshotSizeError';
+  }
+}
+
 export class GitPlumbingEngine {
   public readonly workDir: string;
   public readonly refPrefix: string;
@@ -111,6 +127,8 @@ export class GitPlumbingEngine {
   private gitDirCached: string | null = null;
   private readonly shadowObjectDir?: string;
   private readonly maxQuarantineBytes: number;
+  private readonly maxSnapshotFileBytes: number;
+  private readonly maxSnapshotBytes: number;
   private shadowReady?: Promise<void>;
 
   constructor(options: GitPlumbingOptions) {
@@ -120,6 +138,8 @@ export class GitPlumbingEngine {
     this.quarantineDir = options.quarantineDir ? path.resolve(options.quarantineDir) : undefined;
     this.shadowObjectDir = options.shadowObjectDir ? path.resolve(options.shadowObjectDir) : undefined;
     this.maxQuarantineBytes = Math.max(0, Math.floor(options.maxQuarantineBytes ?? 0));
+    this.maxSnapshotFileBytes = Math.max(0, Math.floor(options.maxSnapshotFileBytes ?? 0));
+    this.maxSnapshotBytes = Math.max(0, Math.floor(options.maxSnapshotBytes ?? 0));
   }
 
   get usesShadowStore(): boolean {
@@ -185,7 +205,7 @@ export class GitPlumbingEngine {
     }
     await this.assertSupportedWorkspace();
 
-    const { treeOid, indexFile } = await this.writeWorkspaceTree();
+    const { treeOid, indexFile } = await this.writeWorkspaceTree(true);
     try {
       const commitMsg = params.message || `DSH Checkpoint [${params.sessionId}:${params.checkpointId}]`;
       const commitArgs = ['commit-tree', treeOid, '-m', commitMsg];
@@ -494,7 +514,7 @@ export class GitPlumbingEngine {
     return env;
   }
 
-  private async writeWorkspaceTree(): Promise<{ treeOid: string; indexFile: string }> {
+  private async writeWorkspaceTree(enforceSnapshotLimits = false): Promise<{ treeOid: string; indexFile: string }> {
     const root = await this.getRepoRoot();
     const indexFile = path.join(await this.getGitDir(), `dsh-tm-index-${randomUUID()}`);
     const env = { GIT_INDEX_FILE: indexFile };
@@ -511,6 +531,7 @@ export class GitPlumbingEngine {
       const candidateFiles = candidates.split('\0').filter(Boolean).map(normalizeGitPath).filter(file => !protectedPaths.some(
         relative => file === relative || file.startsWith(`${relative}/`),
       ));
+      if (enforceSnapshotLimits) await this.assertSnapshotSize(root, candidateFiles);
       for (let offset = 0; offset < candidateFiles.length; offset += 128) {
         await this.runGit(['add', '-A', '--', ...candidateFiles.slice(offset, offset + 128)], env, root);
       }
@@ -531,6 +552,22 @@ export class GitPlumbingEngine {
     } catch (error) {
       await fs.rm(indexFile, { force: true }).catch(() => undefined);
       throw error;
+    }
+  }
+
+  private async assertSnapshotSize(root: string, files: string[]): Promise<void> {
+    if (this.maxSnapshotFileBytes <= 0 && this.maxSnapshotBytes <= 0) return;
+    let totalBytes = 0;
+    for (const relative of files) {
+      const stat = await fs.lstat(path.join(root, ...relative.split('/'))).catch(() => undefined);
+      if (!stat?.isFile()) continue;
+      if (this.maxSnapshotFileBytes > 0 && stat.size > this.maxSnapshotFileBytes) {
+        throw new SnapshotSizeError({ file: relative, fileBytes: stat.size, limitBytes: this.maxSnapshotFileBytes });
+      }
+      totalBytes += stat.size;
+      if (this.maxSnapshotBytes > 0 && totalBytes > this.maxSnapshotBytes) {
+        throw new SnapshotSizeError({ totalBytes, limitBytes: this.maxSnapshotBytes });
+      }
     }
   }
 

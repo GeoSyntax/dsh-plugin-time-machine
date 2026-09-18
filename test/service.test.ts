@@ -165,6 +165,54 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
     expect((await service.getDAGManager(sessionId)).tree.currentCheckpointId).toBe(second.id);
   });
 
+  it('binds a preview plan to the reviewed workspace and consumes it once', async () => {
+    const sessionId = 'preview-plan-session';
+    const file = path.join(tmpDir, 'plan.txt');
+    await fs.writeFile(file, 'v1\n', 'utf8');
+    const first = await service.createTurnCheckpoint({ sessionId, turnIndex: 1, prompt: 'initial', sessionState: { sessionId, messages: [] } });
+    await fs.writeFile(file, 'v2\n', 'utf8');
+    await service.createTurnCheckpoint({ sessionId, turnIndex: 2, prompt: 'changed', sessionState: { sessionId, messages: [] } });
+
+    const preview = await service.previewRestore(sessionId, first.id);
+    expect(preview.restorePlanId).toMatch(/^plan_/);
+    await service.rewindToCheckpoint(sessionId, first.id, { restorePlanId: preview.restorePlanId });
+    expect(await fs.readFile(file, 'utf8')).toBe('v1\n');
+    await expect(service.rewindToCheckpoint(sessionId, first.id, { restorePlanId: preview.restorePlanId }))
+      .rejects.toMatchObject({ code: 'RESTORE_PLAN_INVALID' });
+  });
+
+  it('rejects a preview plan after workspace drift', async () => {
+    const sessionId = 'stale-preview-plan';
+    const file = path.join(tmpDir, 'stale-plan.txt');
+    await fs.writeFile(file, 'v1\n', 'utf8');
+    const first = await service.createTurnCheckpoint({ sessionId, turnIndex: 1, prompt: 'initial', sessionState: { sessionId, messages: [] } });
+    await fs.writeFile(file, 'v2\n', 'utf8');
+    await service.createTurnCheckpoint({ sessionId, turnIndex: 2, prompt: 'changed', sessionState: { sessionId, messages: [] } });
+    const preview = await service.previewRestore(sessionId, first.id);
+    await fs.writeFile(file, 'changed after preview\n', 'utf8');
+    await expect(service.rewindToCheckpoint(sessionId, first.id, { restorePlanId: preview.restorePlanId }))
+      .rejects.toMatchObject({ code: 'RESTORE_PLAN_INVALID' });
+    expect(await fs.readFile(file, 'utf8')).toBe('changed after preview\n');
+  });
+
+  it('expires preview plans according to restorePlanTtlMs', async () => {
+    const expiring = new TimeMachineService({
+      workDir: tmpDir,
+      storageDir: path.join(tmpDir, '.expiring-plans'),
+      config: { restorePlanTtlMs: 1 },
+    });
+    const sessionId = 'expiring-preview-plan';
+    const file = path.join(tmpDir, 'expiring-plan.txt');
+    await fs.writeFile(file, 'v1\n', 'utf8');
+    const first = await expiring.createTurnCheckpoint({ sessionId, turnIndex: 1, prompt: 'initial', sessionState: { sessionId, messages: [] } });
+    await fs.writeFile(file, 'v2\n', 'utf8');
+    await expiring.createTurnCheckpoint({ sessionId, turnIndex: 2, prompt: 'changed', sessionState: { sessionId, messages: [] } });
+    const preview = await expiring.previewRestore(sessionId, first.id);
+    await new Promise(resolve => setTimeout(resolve, 10));
+    await expect(expiring.rewindToCheckpoint(sessionId, first.id, { restorePlanId: preview.restorePlanId }))
+      .rejects.toMatchObject({ code: 'RESTORE_PLAN_INVALID' });
+  });
+
   it('rejects ignored deletion when the quarantine hard limit would be exceeded', async () => {
     const limited = new TimeMachineService({
       workDir: tmpDir,

@@ -79,10 +79,15 @@ describe('TimeMachineWebServer', () => {
     });
     await server.start();
 
+    const preview = await fetch(`http://localhost:${testPort}/api/preview?sessionId=web-session&checkpoint=${encodeURIComponent(first.id)}`);
+    expect(preview.status).toBe(200);
+    const previewBody = await preview.json();
+    expect(previewBody.preview.restorePlanId).toMatch(/^plan_/);
+
     const rewind = await fetch(`http://localhost:${testPort}/api/rewind`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ sessionId: 'web-session', checkpointId: first.id }),
+      body: JSON.stringify({ sessionId: 'web-session', checkpointId: first.id, restorePlanId: previewBody.preview.restorePlanId }),
     });
     expect(rewind.status).toBe(200);
     expect((await rewind.json()).conversation.sessionId).toBe(`forked-${first.id}`);

@@ -27,6 +27,7 @@ export const Config: Schema<Config> = Schema.object({
   autoPrune: Schema.boolean().default(false),
   workspaceLockTimeoutMs: Schema.number().default(30000),
   maxQuarantineBytes: Schema.number().default(0),
+  restorePlanTtlMs: Schema.number().default(900000),
 });
 
 interface SessionEventLike {

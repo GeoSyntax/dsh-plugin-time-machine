@@ -78,6 +78,7 @@
 - `service`：双轨 checkpoint、safe/force、rescue、ignored quarantine、进程内/跨进程操作锁、shadow 回收。
 - `service`：checkpoint prune 后仅清理无 DAG 引用的 quarantine，仍被 rescue 节点引用的备份必须保留。
 - `git-plumbing`：quarantine 达到 `maxQuarantineBytes` 时拒绝删除并保留原文件。
+- `service`：preview plan 必须绑定 session/checkpoint、在工作区漂移或重复消费时 fail closed，并覆盖 TTL 配置。
 - `web-server`：status/dag/diff/rewind/fork、非法 JSON、非 loopback、Origin 校验。
 
 ### L2：状态机与性质测试

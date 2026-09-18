@@ -37,6 +37,26 @@ export class StorageQuotaError extends Error {
   }
 }
 
+export class RestorePlanError extends Error {
+  readonly code = 'RESTORE_PLAN_INVALID';
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'RestorePlanError';
+  }
+}
+
+interface RestorePlan {
+  id: string;
+  sessionId: string;
+  checkpointId: string;
+  currentCheckpointId: string | null;
+  currentTreeOid: string;
+  currentIgnoredPaths: string[];
+  createdAt: number;
+  expiresAt: number | null;
+}
+
 interface RestoreJournal {
   version: 1;
   id: string;
@@ -61,6 +81,7 @@ export class TimeMachineService {
   private operations = new KeyedOperationLock();
   private workspaceLock: WorkspaceFileLock;
   private readonly journalDir: string;
+  private restorePlans = new Map<string, RestorePlan>();
 
   constructor(options: TimeMachineServiceOptions) {
     this.workDir = path.resolve(options.workDir);
@@ -85,6 +106,7 @@ export class TimeMachineService {
       autoPrune: options.config?.autoPrune ?? false,
       workspaceLockTimeoutMs: Math.max(0, Math.floor(options.config?.workspaceLockTimeoutMs ?? 30000)),
       maxQuarantineBytes: Math.max(0, Math.floor(options.config?.maxQuarantineBytes ?? 0)),
+      restorePlanTtlMs: Math.max(0, Math.floor(options.config?.restorePlanTtlMs ?? 900000)),
     };
 
     this.gitEngine = new GitPlumbingEngine({
@@ -249,6 +271,7 @@ export class TimeMachineService {
       const dag = await this.getDAGManager(sessionId);
       const target = dag.getNode(checkpointId);
       if (!target) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
+      await this.consumeRestorePlan(sessionId, checkpointId, options.restorePlanId, dag);
       const restored = await this.restoreWithRescue(dag, target, options);
       try {
         await dag.rewindTo(checkpointId);
@@ -279,12 +302,13 @@ export class TimeMachineService {
     sessionId: string,
     checkpointId: string,
     paths: string[],
-    options: Pick<RestoreOptions, 'mode'> = {},
+    options: Pick<RestoreOptions, 'mode' | 'restorePlanId'> = {},
   ): Promise<SelectiveRestoreResult> {
     return this.runWorkspaceOperation(async () => {
       const dag = await this.getDAGManager(sessionId);
       const target = dag.getNode(checkpointId);
       if (!target) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
+      await this.consumeRestorePlan(sessionId, checkpointId, options.restorePlanId, dag);
       const current = dag.getCurrentNode();
       let rescue: CheckpointNode | undefined;
       let journalId: string | undefined;
@@ -449,6 +473,20 @@ export class TimeMachineService {
       const workspaceDrifted = Boolean(current && (
         currentState.treeOid !== expectedTree || !sameStrings(currentState.ignoredPaths, expectedIgnored)
       ));
+      this.expireRestorePlans();
+      const planId = `plan_${randomUUID().replace(/-/g, '')}`;
+      const createdAt = Date.now();
+      const expiresAt = this.config.restorePlanTtlMs > 0 ? createdAt + this.config.restorePlanTtlMs : null;
+      this.restorePlans.set(planId, {
+        id: planId,
+        sessionId,
+        checkpointId,
+        currentCheckpointId: current?.id ?? null,
+        currentTreeOid: currentState.treeOid,
+        currentIgnoredPaths: [...currentState.ignoredPaths],
+        createdAt,
+        expiresAt,
+      });
       return {
         sessionId,
         checkpointId,
@@ -462,8 +500,47 @@ export class TimeMachineService {
         conflictingPaths,
         workspaceDrifted,
         requiresForce: workspaceDrifted,
+        restorePlanId: planId,
+        restorePlanExpiresAt: expiresAt,
       };
     });
+  }
+
+  private expireRestorePlans(now = Date.now()): void {
+    for (const [id, plan] of this.restorePlans) {
+      if (plan.expiresAt !== null && plan.expiresAt <= now) this.restorePlans.delete(id);
+    }
+  }
+
+  /** Consume a preview token and fail closed if the reviewed workspace changed. */
+  private async consumeRestorePlan(
+    sessionId: string,
+    checkpointId: string,
+    planId: string | undefined,
+    dag: DAGStateManager,
+  ): Promise<void> {
+    if (!planId) return;
+    this.expireRestorePlans();
+    const plan = this.restorePlans.get(planId);
+    this.restorePlans.delete(planId);
+    if (!plan) throw new RestorePlanError('Restore preview plan is missing or expired; run preview again.');
+    if (plan.sessionId !== sessionId || plan.checkpointId !== checkpointId) {
+      throw new RestorePlanError('Restore preview plan belongs to a different session or checkpoint.');
+    }
+    const current = dag.getCurrentNode();
+    if ((current?.id ?? null) !== plan.currentCheckpointId) {
+      throw new RestorePlanError('The active checkpoint changed after preview; run preview again.');
+    }
+    const actual = await this.inspectWorkspaceSignature();
+    if (actual.treeOid !== plan.currentTreeOid || !sameStrings(actual.ignoredPaths, plan.currentIgnoredPaths)) {
+      throw new RestorePlanError('Workspace changed after preview; run preview again before restoring.');
+    }
+  }
+
+  private async inspectWorkspaceSignature(): Promise<{ treeOid: string; ignoredPaths: string[] }> {
+    return await this.gitEngine.isGitRepo()
+      ? await this.gitEngine.inspectWorkspace()
+      : { treeOid: await this.fallbackEngine.inspectWorkspace(), ignoredPaths: [] };
   }
 
   /**

@@ -62,7 +62,7 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
     scope.commands.register({
       name: 'tm-rewind',
       description: 'Restore workspace and fork conversation at a checkpoint',
-      input: { hint: '<checkpoint> [--force] [--delete-new-ignored]' },
+      input: { hint: '<checkpoint> [--force] [--delete-new-ignored] [--plan=<id>]' },
       handler: async ({ agent, rawInput }: CommandInvocationLike): Promise<CommandResult> => {
         const args = rawInput.trim().split(/\s+/).filter(Boolean);
         const checkpointId = args.find(arg => !arg.startsWith('--'));
@@ -74,6 +74,7 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
         const result = await service.rewindToCheckpoint(sessionId, checkpointId, {
           mode: args.includes('--force') ? 'force' : undefined,
           deleteNewIgnoredPaths: args.includes('--delete-new-ignored'),
+          restorePlanId: optionValue(args, '--plan'),
         });
         try {
           const created = await restartConversation(controller, sessionId, result.targetNode, service.workDir);
@@ -102,20 +103,22 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
         const files = preview.diffs.length ? preview.diffs.map(item => `${item.status} ${item.file}`).join(', ') : 'no managed file changes';
         const ignored = preview.ignoredPathsToDelete.length ? ` Ignored paths to delete: ${preview.ignoredPathsToDelete.join(', ')}.` : '';
         const conflicts = preview.conflictingPaths.length ? ` Conflicting paths: ${preview.conflictingPaths.join(', ')}.` : '';
-        return { kind: 'success', text: `Preview ${checkpointId}: ${drift}. Changes: ${files}.${ignored}${conflicts}` };
+        const plan = ` Restore plan: ${preview.restorePlanId}${preview.restorePlanExpiresAt ? ` (expires ${new Date(preview.restorePlanExpiresAt).toISOString()})` : ' (no expiry)'}.`;
+        return { kind: 'success', text: `Preview ${checkpointId}: ${drift}. Changes: ${files}.${ignored}${conflicts}${plan}` };
       },
     });
 
     scope.commands.register({
       name: 'tm-restore-files',
       description: 'Restore selected workspace paths from a checkpoint without changing conversation',
-      input: { hint: '<checkpoint> <path...> [--force]' },
+      input: { hint: '<checkpoint> <path...> [--force] [--plan=<id>]' },
       handler: async ({ agent, rawInput }: CommandInvocationLike): Promise<CommandResult> => {
         const args = rawInput.trim().split(/\s+/).filter(Boolean);
         const positionals = args.filter(arg => !arg.startsWith('--'));
         if (positionals.length < 2) return { kind: 'error', text: 'Usage: /tm-restore-files <checkpoint> <path...> [--force]' };
         const result = await service.restoreSelectedPaths(agent.session.id, positionals[0], positionals.slice(1), {
           mode: args.includes('--force') ? 'force' : undefined,
+          restorePlanId: optionValue(args, '--plan'),
         });
         return { kind: 'success', text: `Restored ${result.restoredPaths.join(', ')} from ${positionals[0]}. Conversation unchanged. Result checkpoint: ${result.resultCheckpointId ?? 'none'}.` };
       },
@@ -154,6 +157,12 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
       },
     });
   });
+}
+
+function optionValue(args: string[], name: string): string | undefined {
+  const prefix = `${name}=`;
+  const inline = args.find(arg => arg.startsWith(prefix));
+  return inline ? inline.slice(prefix.length) || undefined : undefined;
 }
 
 function formatBytes(bytes: number): string {

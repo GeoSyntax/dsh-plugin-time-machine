@@ -9,7 +9,7 @@ supported only when it is covered by the current implementation and tests.
 | Full workspace snapshot | Git plumbing + non-Git fallback | Yes | Yes | Partial / lightweight |
 | Remove ordinary orphan files | Yes | Yes | Yes | Depends on tracked set |
 | Ignored-file safety | Preserve by default; quarantine on explicit delete | Configurable | Conflict-aware | Usually left untouched |
-| Preview before restore | `tm-preview`, Web API, Web confirmation, conflict paths | Yes | Yes | Limited |
+| Preview before restore | `tm-preview`, Web API, Web confirmation, conflict paths, single-use session-bound plan | Yes | Yes; expiring plan and stale-plan fences | Limited |
 | Selective file restore | `tm-restore-files`, Web API | Yes | Yes | Varies |
 | Conversation/session alignment | DSH `sessionController` fork | Product-specific | Product-specific | Usually undo/redo or same window |
 | DAG branches | Yes, persistent | No user-facing DAG | Ledger history | Usually linear |

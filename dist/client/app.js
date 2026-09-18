@@ -237,7 +237,7 @@ async function triggerRewind(nodeId, turnIndex) {
     const result = await requestJson(`${API_BASE}/api/rewind`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId: currentSessionId, checkpointId: nodeId }),
+      body: JSON.stringify({ sessionId: currentSessionId, checkpointId: nodeId, restorePlanId: preview.restorePlanId }),
     });
     adoptConversation(result);
     await loadDag();

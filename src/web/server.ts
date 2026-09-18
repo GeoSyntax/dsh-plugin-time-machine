@@ -55,7 +55,7 @@ export class TimeMachineWebServer {
           // 静态资源处理
           await this.handleStatic(res, pathname);
         } catch (err: any) {
-          const status = err?.code === 'BAD_REQUEST' ? 400 : 500;
+          const status = err?.code === 'BAD_REQUEST' ? 400 : err?.code === 'RESTORE_PLAN_INVALID' ? 409 : 500;
           res.writeHead(status, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: err.message || 'Internal Server Error' }));
         }
@@ -136,6 +136,7 @@ export class TimeMachineWebServer {
       const result = await this.service.rewindToCheckpoint(sourceSessionId, checkpointId, {
         mode: body.force === true ? 'force' : undefined,
         deleteNewIgnoredPaths: body.deleteNewIgnoredPaths === true,
+        restorePlanId: typeof body.restorePlanId === 'string' ? body.restorePlanId : undefined,
       });
       let conversation: { sessionId: string };
       try {
@@ -158,6 +159,7 @@ export class TimeMachineWebServer {
       if (!body.checkpointId || paths.length === 0) throw Object.assign(new Error('checkpointId and non-empty paths are required'), { code: 'BAD_REQUEST' });
       const result = await this.service.restoreSelectedPaths(sessionId, body.checkpointId, paths, {
         mode: body.force === true ? 'force' : undefined,
+        restorePlanId: typeof body.restorePlanId === 'string' ? body.restorePlanId : undefined,
       });
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, result }));

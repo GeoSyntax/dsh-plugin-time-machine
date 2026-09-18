@@ -1388,6 +1388,13 @@ var StorageQuotaError = class extends Error {
     this.name = "StorageQuotaError";
   }
 };
+var RestorePlanError = class extends Error {
+  code = "RESTORE_PLAN_INVALID";
+  constructor(message) {
+    super(message);
+    this.name = "RestorePlanError";
+  }
+};
 var TimeMachineService = class {
   workDir;
   storageDir;
@@ -1400,6 +1407,7 @@ var TimeMachineService = class {
   operations = new KeyedOperationLock();
   workspaceLock;
   journalDir;
+  restorePlans = /* @__PURE__ */ new Map();
   constructor(options) {
     this.workDir = path6.resolve(options.workDir);
     this.storageDir = options.storageDir ? path6.resolve(options.storageDir) : path6.join(this.workDir, ".dsh", "time-machine");
@@ -1419,7 +1427,8 @@ var TimeMachineService = class {
       shadowStore: options.config?.shadowStore ?? false,
       autoPrune: options.config?.autoPrune ?? false,
       workspaceLockTimeoutMs: Math.max(0, Math.floor(options.config?.workspaceLockTimeoutMs ?? 3e4)),
-      maxQuarantineBytes: Math.max(0, Math.floor(options.config?.maxQuarantineBytes ?? 0))
+      maxQuarantineBytes: Math.max(0, Math.floor(options.config?.maxQuarantineBytes ?? 0)),
+      restorePlanTtlMs: Math.max(0, Math.floor(options.config?.restorePlanTtlMs ?? 9e5))
     };
     this.gitEngine = new GitPlumbingEngine({
       workDir: this.workDir,
@@ -1543,6 +1552,7 @@ var TimeMachineService = class {
       const dag = await this.getDAGManager(sessionId);
       const target = dag.getNode(checkpointId);
       if (!target) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
+      await this.consumeRestorePlan(sessionId, checkpointId, options.restorePlanId, dag);
       const restored = await this.restoreWithRescue(dag, target, options);
       try {
         await dag.rewindTo(checkpointId);
@@ -1573,6 +1583,7 @@ var TimeMachineService = class {
       const dag = await this.getDAGManager(sessionId);
       const target = dag.getNode(checkpointId);
       if (!target) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
+      await this.consumeRestorePlan(sessionId, checkpointId, options.restorePlanId, dag);
       const current = dag.getCurrentNode();
       let rescue;
       let journalId;
@@ -1716,6 +1727,20 @@ var TimeMachineService = class {
         ...symmetricDifference2(expectedIgnored, currentState.ignoredPaths).map((item) => `(ignored) ${item}`)
       ])].sort();
       const workspaceDrifted = Boolean(current && (currentState.treeOid !== expectedTree || !sameStrings(currentState.ignoredPaths, expectedIgnored)));
+      this.expireRestorePlans();
+      const planId = `plan_${randomUUID5().replace(/-/g, "")}`;
+      const createdAt = Date.now();
+      const expiresAt = this.config.restorePlanTtlMs > 0 ? createdAt + this.config.restorePlanTtlMs : null;
+      this.restorePlans.set(planId, {
+        id: planId,
+        sessionId,
+        checkpointId,
+        currentCheckpointId: current?.id ?? null,
+        currentTreeOid: currentState.treeOid,
+        currentIgnoredPaths: [...currentState.ignoredPaths],
+        createdAt,
+        expiresAt
+      });
       return {
         sessionId,
         checkpointId,
@@ -1728,9 +1753,38 @@ var TimeMachineService = class {
         diffs,
         conflictingPaths,
         workspaceDrifted,
-        requiresForce: workspaceDrifted
+        requiresForce: workspaceDrifted,
+        restorePlanId: planId,
+        restorePlanExpiresAt: expiresAt
       };
     });
+  }
+  expireRestorePlans(now = Date.now()) {
+    for (const [id, plan] of this.restorePlans) {
+      if (plan.expiresAt !== null && plan.expiresAt <= now) this.restorePlans.delete(id);
+    }
+  }
+  /** Consume a preview token and fail closed if the reviewed workspace changed. */
+  async consumeRestorePlan(sessionId, checkpointId, planId, dag) {
+    if (!planId) return;
+    this.expireRestorePlans();
+    const plan = this.restorePlans.get(planId);
+    this.restorePlans.delete(planId);
+    if (!plan) throw new RestorePlanError("Restore preview plan is missing or expired; run preview again.");
+    if (plan.sessionId !== sessionId || plan.checkpointId !== checkpointId) {
+      throw new RestorePlanError("Restore preview plan belongs to a different session or checkpoint.");
+    }
+    const current = dag.getCurrentNode();
+    if ((current?.id ?? null) !== plan.currentCheckpointId) {
+      throw new RestorePlanError("The active checkpoint changed after preview; run preview again.");
+    }
+    const actual = await this.inspectWorkspaceSignature();
+    if (actual.treeOid !== plan.currentTreeOid || !sameStrings(actual.ignoredPaths, plan.currentIgnoredPaths)) {
+      throw new RestorePlanError("Workspace changed after preview; run preview again before restoring.");
+    }
+  }
+  async inspectWorkspaceSignature() {
+    return await this.gitEngine.isGitRepo() ? await this.gitEngine.inspectWorkspace() : { treeOid: await this.fallbackEngine.inspectWorkspace(), ignoredPaths: [] };
   }
   /**
    * 打印终端彩色 ASCII 拓扑树
@@ -2086,7 +2140,7 @@ var TimeMachineWebServer = class {
           }
           await this.handleStatic(res, pathname);
         } catch (err) {
-          const status = err?.code === "BAD_REQUEST" ? 400 : 500;
+          const status = err?.code === "BAD_REQUEST" ? 400 : err?.code === "RESTORE_PLAN_INVALID" ? 409 : 500;
           res.writeHead(status, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ error: err.message || "Internal Server Error" }));
         }
@@ -2157,7 +2211,8 @@ var TimeMachineWebServer = class {
       const sourceSessionId = sessionId || "default";
       const result = await this.service.rewindToCheckpoint(sourceSessionId, checkpointId, {
         mode: body.force === true ? "force" : void 0,
-        deleteNewIgnoredPaths: body.deleteNewIgnoredPaths === true
+        deleteNewIgnoredPaths: body.deleteNewIgnoredPaths === true,
+        restorePlanId: typeof body.restorePlanId === "string" ? body.restorePlanId : void 0
       });
       let conversation;
       try {
@@ -2178,7 +2233,8 @@ var TimeMachineWebServer = class {
       const paths = Array.isArray(body.paths) ? body.paths.filter((item) => typeof item === "string") : [];
       if (!body.checkpointId || paths.length === 0) throw Object.assign(new Error("checkpointId and non-empty paths are required"), { code: "BAD_REQUEST" });
       const result = await this.service.restoreSelectedPaths(sessionId, body.checkpointId, paths, {
-        mode: body.force === true ? "force" : void 0
+        mode: body.force === true ? "force" : void 0,
+        restorePlanId: typeof body.restorePlanId === "string" ? body.restorePlanId : void 0
       });
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ success: true, result }));
@@ -2375,7 +2431,7 @@ function registerCliCommands(ctx, service) {
     scope.commands.register({
       name: "tm-rewind",
       description: "Restore workspace and fork conversation at a checkpoint",
-      input: { hint: "<checkpoint> [--force] [--delete-new-ignored]" },
+      input: { hint: "<checkpoint> [--force] [--delete-new-ignored] [--plan=<id>]" },
       handler: async ({ agent, rawInput }) => {
         const args = rawInput.trim().split(/\s+/).filter(Boolean);
         const checkpointId = args.find((arg) => !arg.startsWith("--"));
@@ -2385,7 +2441,8 @@ function registerCliCommands(ctx, service) {
         const sessionId = agent.session.id;
         const result = await service.rewindToCheckpoint(sessionId, checkpointId, {
           mode: args.includes("--force") ? "force" : void 0,
-          deleteNewIgnoredPaths: args.includes("--delete-new-ignored")
+          deleteNewIgnoredPaths: args.includes("--delete-new-ignored"),
+          restorePlanId: optionValue(args, "--plan")
         });
         try {
           const created = await restartConversation(controller, sessionId, result.targetNode, service.workDir);
@@ -2413,19 +2470,21 @@ function registerCliCommands(ctx, service) {
         const files = preview.diffs.length ? preview.diffs.map((item) => `${item.status} ${item.file}`).join(", ") : "no managed file changes";
         const ignored = preview.ignoredPathsToDelete.length ? ` Ignored paths to delete: ${preview.ignoredPathsToDelete.join(", ")}.` : "";
         const conflicts = preview.conflictingPaths.length ? ` Conflicting paths: ${preview.conflictingPaths.join(", ")}.` : "";
-        return { kind: "success", text: `Preview ${checkpointId}: ${drift}. Changes: ${files}.${ignored}${conflicts}` };
+        const plan = ` Restore plan: ${preview.restorePlanId}${preview.restorePlanExpiresAt ? ` (expires ${new Date(preview.restorePlanExpiresAt).toISOString()})` : " (no expiry)"}.`;
+        return { kind: "success", text: `Preview ${checkpointId}: ${drift}. Changes: ${files}.${ignored}${conflicts}${plan}` };
       }
     });
     scope.commands.register({
       name: "tm-restore-files",
       description: "Restore selected workspace paths from a checkpoint without changing conversation",
-      input: { hint: "<checkpoint> <path...> [--force]" },
+      input: { hint: "<checkpoint> <path...> [--force] [--plan=<id>]" },
       handler: async ({ agent, rawInput }) => {
         const args = rawInput.trim().split(/\s+/).filter(Boolean);
         const positionals = args.filter((arg) => !arg.startsWith("--"));
         if (positionals.length < 2) return { kind: "error", text: "Usage: /tm-restore-files <checkpoint> <path...> [--force]" };
         const result = await service.restoreSelectedPaths(agent.session.id, positionals[0], positionals.slice(1), {
-          mode: args.includes("--force") ? "force" : void 0
+          mode: args.includes("--force") ? "force" : void 0,
+          restorePlanId: optionValue(args, "--plan")
         });
         return { kind: "success", text: `Restored ${result.restoredPaths.join(", ")} from ${positionals[0]}. Conversation unchanged. Result checkpoint: ${result.resultCheckpointId ?? "none"}.` };
       }
@@ -2462,6 +2521,11 @@ ${result.reflectionAdvisory.suggestedPromptPrefix}` : "";
       }
     });
   });
+}
+function optionValue(args, name2) {
+  const prefix = `${name2}=`;
+  const inline = args.find((arg) => arg.startsWith(prefix));
+  return inline ? inline.slice(prefix.length) || void 0 : void 0;
 }
 function formatBytes(bytes) {
   if (bytes < 1024) return `${bytes} B`;
@@ -2501,7 +2565,8 @@ var Config = Schema.object({
   shadowStore: Schema.boolean().default(false),
   autoPrune: Schema.boolean().default(false),
   workspaceLockTimeoutMs: Schema.number().default(3e4),
-  maxQuarantineBytes: Schema.number().default(0)
+  maxQuarantineBytes: Schema.number().default(0),
+  restorePlanTtlMs: Schema.number().default(9e5)
 });
 function apply(ctx, config = {}) {
   const workDir = path8.resolve(process.cwd());
@@ -2656,6 +2721,7 @@ export {
   GitPlumbingEngine,
   QuarantineQuotaError,
   ReflectionAdvisor,
+  RestorePlanError,
   StorageQuotaError,
   TimeMachinePlugin,
   TimeMachineService,

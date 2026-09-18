@@ -92,6 +92,8 @@ export interface TimeMachineConfig {
   workspaceLockTimeoutMs?: number;
   /** Hard limit for ignored-file quarantine bytes; 0 disables the guard. */
   maxQuarantineBytes?: number;
+  /** Lifetime of a preview restore plan. Set to 0 to disable plan expiry. */
+  restorePlanTtlMs?: number;
 }
 
 export interface RestoreOptions {
@@ -102,6 +104,8 @@ export interface RestoreOptions {
   createRescuePoint?: boolean;
   /** Internal key used to quarantine ignored paths before deletion. */
   ignoredBackupKey?: string;
+  /** Session-bound token returned by previewRestore; consumed by the next restore. */
+  restorePlanId?: string;
 }
 
 export interface RestoreResult {
@@ -133,6 +137,9 @@ export interface RestorePreview {
   conflictingPaths: string[];
   workspaceDrifted: boolean;
   requiresForce: boolean;
+  /** Short-lived session-bound plan used to bind a reviewed preview to mutation. */
+  restorePlanId: string;
+  restorePlanExpiresAt: number | null;
 }
 
 export interface SelectiveRestoreResult {

@@ -94,6 +94,8 @@ interface TimeMachineConfig {
     workspaceLockTimeoutMs?: number;
     /** Hard limit for ignored-file quarantine bytes; 0 disables the guard. */
     maxQuarantineBytes?: number;
+    /** Lifetime of a preview restore plan. Set to 0 to disable plan expiry. */
+    restorePlanTtlMs?: number;
 }
 interface RestoreOptions {
     mode?: 'safe' | 'force';
@@ -103,6 +105,8 @@ interface RestoreOptions {
     createRescuePoint?: boolean;
     /** Internal key used to quarantine ignored paths before deletion. */
     ignoredBackupKey?: string;
+    /** Session-bound token returned by previewRestore; consumed by the next restore. */
+    restorePlanId?: string;
 }
 interface RestoreResult {
     targetNode: CheckpointNode;
@@ -131,6 +135,9 @@ interface RestorePreview {
     conflictingPaths: string[];
     workspaceDrifted: boolean;
     requiresForce: boolean;
+    /** Short-lived session-bound plan used to bind a reviewed preview to mutation. */
+    restorePlanId: string;
+    restorePlanExpiresAt: number | null;
 }
 interface SelectiveRestoreResult {
     checkpointId: string;
@@ -240,6 +247,10 @@ declare class StorageQuotaError extends Error {
     readonly code = "STORAGE_QUOTA_EXCEEDED";
     constructor(message: string);
 }
+declare class RestorePlanError extends Error {
+    readonly code = "RESTORE_PLAN_INVALID";
+    constructor(message: string);
+}
 declare class TimeMachineService {
     readonly workDir: string;
     readonly storageDir: string;
@@ -252,6 +263,7 @@ declare class TimeMachineService {
     private operations;
     private workspaceLock;
     private readonly journalDir;
+    private restorePlans;
     constructor(options: TimeMachineServiceOptions);
     private runWorkspaceOperation;
     /**
@@ -293,7 +305,7 @@ declare class TimeMachineService {
      */
     rewindToCheckpoint(sessionId: string, checkpointId: string, options?: RestoreOptions): Promise<RestoreResult>;
     /** Restore selected workspace paths without changing the DSH conversation. */
-    restoreSelectedPaths(sessionId: string, checkpointId: string, paths: string[], options?: Pick<RestoreOptions, 'mode'>): Promise<SelectiveRestoreResult>;
+    restoreSelectedPaths(sessionId: string, checkpointId: string, paths: string[], options?: Pick<RestoreOptions, 'mode' | 'restorePlanId'>): Promise<SelectiveRestoreResult>;
     /**
      * 核心：从历史任意快照点 Fork 开辟新的平行探索分支
      */
@@ -319,6 +331,10 @@ declare class TimeMachineService {
      * does not create a rescue point, mutate the DAG, or touch workspace files.
      */
     previewRestore(sessionId: string, checkpointId: string): Promise<RestorePreview>;
+    private expireRestorePlans;
+    /** Consume a preview token and fail closed if the reviewed workspace changed. */
+    private consumeRestorePlan;
+    private inspectWorkspaceSignature;
     /**
      * 打印终端彩色 ASCII 拓扑树
      */
@@ -574,4 +590,4 @@ declare class TimeMachinePlugin {
     constructor(ctx: Context, config?: Config);
 }
 
-export { type CheckpointNode, Config, type DAGManagerOptions, DAGStateManager, type DAGTree, type DiffResult, type FallbackOptions, FallbackSnapshotEngine, type FileChange, GitPlumbingEngine, type GitPlumbingOptions, type GitRestoreOptions, type GitSelectiveRestoreOptions, type GitSnapshot, type PruneResult, QuarantineQuotaError, ReflectionAdvisor, type ReflectionSummary, type RestoreOptions, type RestorePreview, type RestoreResult, type SelectiveRestoreResult, type SessionMessage, type SessionState, type ShadowGcResult, type ShadowRepackResult, StorageQuotaError, type StorageStatus, type TimeMachineConfig, TimeMachinePlugin, TimeMachineService, type TimeMachineServiceOptions, WorkspaceDriftError, WorkspaceRestoreConflictError, apply, collectFailedTools, TimeMachinePlugin as default, name };
+export { type CheckpointNode, Config, type DAGManagerOptions, DAGStateManager, type DAGTree, type DiffResult, type FallbackOptions, FallbackSnapshotEngine, type FileChange, GitPlumbingEngine, type GitPlumbingOptions, type GitRestoreOptions, type GitSelectiveRestoreOptions, type GitSnapshot, type PruneResult, QuarantineQuotaError, ReflectionAdvisor, type ReflectionSummary, type RestoreOptions, RestorePlanError, type RestorePreview, type RestoreResult, type SelectiveRestoreResult, type SessionMessage, type SessionState, type ShadowGcResult, type ShadowRepackResult, StorageQuotaError, type StorageStatus, type TimeMachineConfig, TimeMachinePlugin, TimeMachineService, type TimeMachineServiceOptions, WorkspaceDriftError, WorkspaceRestoreConflictError, apply, collectFailedTools, TimeMachinePlugin as default, name };

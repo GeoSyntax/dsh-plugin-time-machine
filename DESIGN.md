@@ -66,6 +66,7 @@ The shadow store is opt-in. Loose unreachable objects are reclaimed after plugin
 ### Accepted risks
 
 - Quarantine is local plaintext storage; its directory needs the same OS permissions as the workspace. Orphaned backups are removed when their DAG references are pruned. Optional `maxQuarantineBytes` rejects a deletion that would exceed the hard limit; encryption and age-based policies are not implemented yet.
+- A read-only preview issues a one-shot, session/checkpoint-bound restore plan. Web clients must submit that plan to mutate; the service rechecks its TTL, active checkpoint, and workspace signature under the workspace lock, then consumes the token before restore. Direct service/CLI restores remain available without a plan for automation, while reviewed Web restores fail closed on stale plans.
 - A process or machine crash during the small interval between workspace restore and DAG cursor publication is recovered from the durable restore journal on next startup; filesystem restore itself remains compensating rather than ACID.
 - One plugin instance currently owns one configured workspace. Sessions with a different `cwd` are skipped rather than routed incorrectly.
 - Packed shadow objects are not repacked automatically; users must opt in to `--repack-shadow`, and shared-object mode still does not run repository-wide GC.

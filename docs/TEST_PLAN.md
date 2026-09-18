@@ -25,6 +25,7 @@
 - Git 与非 Git fallback 的核心语义一致。
 - Windows、Linux、Node 22、Node 24 的构建和核心行为一致。
 - 长会话、重复 checkpoint、并发操作和异常中断不会损坏 DAG 元数据。
+- 多进程实例共享同一 storageDir 时，跨进程锁串行化工作区变更；超时和死锁 owner 可诊断恢复。
 
 ### P2 观察项
 
@@ -64,6 +65,7 @@
 | B-10 | 真实 DSH Web 宿主 session + checkpoint + fork + rewind | `TM_GEMINI_API_KEY=... pnpm smoke:dsh:web` |
 | B-11 | 真实 DSH 模型端点失败仍持久化 failed checkpoint 和错误证据 | `TM_DSH_SOURCE=... pnpm smoke:dsh:failure` |
 | B-12 | 真实 DSH 工具失败事件提取为 `failedTools` | `TM_DSH_LIVE_TOOL_FAILURE=1 TM_GEMINI_API_KEY=... pnpm smoke:dsh:source` |
+| B-13 | 本地发布门禁包含跨进程锁回归和 shadow loose-object 回收 | `pnpm test:release` |
 
 ### L1：纯逻辑单元测试
 
@@ -73,7 +75,7 @@
 - `fallback-engine`：未初始化 Git 时的快照、恢复、备份和路径安全。
 - `dag-manager`：root、parent、fork、游标、分支拓扑、持久化重载。
 - `reflection-advisor`：失败 stderr 提取、重复失败提示、无失败时不注入内容。
-- `service`：双轨 checkpoint、safe/force、rescue、ignored quarantine、操作锁。
+- `service`：双轨 checkpoint、safe/force、rescue、ignored quarantine、进程内/跨进程操作锁、shadow 回收。
 - `web-server`：status/dag/diff/rewind/fork、非法 JSON、非 loopback、Origin 校验。
 
 ### L2：状态机与性质测试

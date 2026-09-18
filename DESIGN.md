@@ -33,12 +33,12 @@ This is compensating transaction semantics, not a filesystem-wide ACID transacti
 ## Git decisions
 
 - Both capture and restore use a temporary `GIT_INDEX_FILE`; the user's real index is not modified.
-- Snapshots use `write-tree` + `commit-tree` + a private `refs/dsh-tm/*` ref. Normal branches and `git log` are untouched, but objects still live in the user's object database.
+- Snapshots use `write-tree` + `commit-tree` + a private `refs/dsh-tm/*` ref. Normal branches and `git log` are untouched. With `shadowStore: true`, plugin-created objects live in `storageDir/git-shadow/objects`; the main object database is read-only alternate storage.
 - Plugin storage and configured preserved paths are removed from the temporary index.
 - `git clean` is not used. The temporary current-state index gives `read-tree --reset -u` the information needed to remove managed paths absent from the target.
 - Ignored contents are excluded from Git objects. Explicit ignored-path deletion copies content to a plugin quarantine first; rescue restoration copies it back.
 
-The planned storage evolution is a shared shadow Git store similar to Hermes, with store size limits and pruning. That change requires a format migration and is intentionally not hidden inside 0.2.0.
+The shadow store is opt-in. Loose unreachable objects are reclaimed after plugin refs are deleted; packed objects are conservatively skipped until a future safe repack path exists. No repository-wide Git GC is invoked.
 
 ## Threat model
 
@@ -61,14 +61,15 @@ The planned storage evolution is a shared shadow Git store similar to Hermes, wi
 | Cross-origin localhost attack / DNS rebinding | Server binds loopback, validates `Host` and `Origin`, disables permissive CORS and uses a restrictive CSP. |
 | DOM XSS from checkpoint metadata | Dashboard builds nodes with `textContent`; no dynamic `innerHTML` or inline event handlers. |
 | Workspace/session split-brain | Mutating UI/commands require `sessionController`; session-fork failure triggers rescue compensation. |
-| Concurrent restore/create races | Keyed FIFO mutex serializes state-changing operations. |
+| Concurrent restore/create races | Keyed FIFO mutex plus a cross-process workspace lock serializes state-changing operations. |
 
 ### Accepted risks
 
 - Quarantine is local plaintext storage; its directory needs the same OS permissions as the workspace. Encryption and retention limits are not implemented yet.
-- A process or machine crash during the small interval between workspace restore and DAG cursor publication requires manual selection of the recorded rescue point. A durable restore journal is planned.
+- A process or machine crash during the small interval between workspace restore and DAG cursor publication is recovered from the durable restore journal on next startup; filesystem restore itself remains compensating rather than ACID.
 - One plugin instance currently owns one configured workspace. Sessions with a different `cwd` are skipped rather than routed incorrectly.
-- The Git object database and private refs can grow until explicit cleanup; automatic retention/GC is not implemented.
+- Packed shadow objects are not repacked automatically; shared-object mode still depends on explicit pruning and does not run repository-wide GC.
+- The lock prevents concurrent mutation but does not provide separate worktrees for multiple Agents.
 
 ## Change history
 
@@ -81,3 +82,12 @@ The planned storage evolution is a shared shadow Git store similar to Hermes, wi
 **Impact:** command names are now `/tm-*`; restore defaults to safe mode; workspace-only Web mutations are refused; the declared API target is DSH `>=0.1.5-rc.2 <0.2.0` pending a real-host CI matrix.
 
 **Evidence:** current DSH Session/architecture documentation, Hermes checkpoint documentation, and `@anionex/dsh-turn-rewind` safety semantics.
+
+### 2026-09-19 — storage and concurrency hardening
+
+**Changes:** added opt-in shadow object storage and loose-object cleanup, quota-aware
+history compaction, durable restore-journal replay, and a cross-process workspace lock
+with timeout and dead-owner recovery.
+
+**Remaining boundary:** packed-object repacking and true multi-Agent worktree isolation
+remain future work; the lock prevents races but does not create independent workspaces.

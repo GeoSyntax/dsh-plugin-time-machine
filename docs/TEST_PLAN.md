@@ -282,19 +282,21 @@ artifacts/<run-id>/
 - 同一真实 Web session 中，失败工具证据会在从失败 checkpoint 分叉时进入 `reflectionAdvisory`。
 - 真实 DSH 不可达模型端点会产生并持久化 `failed` checkpoint，且保留错误证据。
 - 真实 DSH 强制执行退出码非零的 shell 命令后，checkpoint 持久化了 `failedTools` 证据。
+- 真实 DSH Web smoke 在 Windows 上通过有效本地网关完成真实 turn、fork、rewind，并触发真实缺失 session 的 `SessionController` fork 拒绝；rescue 补偿恢复了 fork 调用前工作区。
 - Web UI 在 fork/rewind 后采用服务端返回的新 conversation sessionId，后续 DAG 查询不再使用旧会话。
 - CLI 命令注册层已自动化覆盖 `/tm-tree`、`/tm-fork`、`/tm-rewind`，包括 sessionController 返回的新会话身份和工作区恢复。
 - `turn/end` 生命周期会从 DSH 持久事件中提取失败工具、输入和错误原因，并传入 checkpoint 反思顾问；已用接近真实 DSH 消息结构的单元测试覆盖。
 - 真实 checkpoint DAG 和 Dashboard status/dag 通过。
 - Web API rewind/fork、Host/JSON 安全、Session fork 失败补偿和重启 DAG 持久化已有自动化覆盖。
 
-仍需补齐的 P0/P1 证据：
+仍需补齐的 P1/P2 证据：
 
-1. 真实 DSH SessionController fork 失败后的补偿 smoke 需要在有效模型网关凭据下执行并保存输出；插件自身 Web/API hook contract 已有自动化故障注入覆盖。
+1. 原生 TUI 不在当前 manifest 兼容范围内；如未来声明支持，需要单独增加 TUI 宿主矩阵。
+2. 长会话、并发操作、进程中断和大仓库性能基线仍应作为后续版本的专项验收，不作为当前 Web profile 的 P0 发布阻断项。
 
 注：原生 TUI 不属于当前 manifest 的兼容范围；真实 Web smoke 已覆盖插件 REST API 的 fork/rewind 与宿主 SessionController，CLI 命令层则由注册契约测试覆盖。
 
-在上述宿主故障注入完成并保存证据前，项目只能标记为 **integration-tested / not yet release-qualified**，不能宣称“完整证明生产可用”。
+P0 门禁与当前声明的 Web profile 集成证据已经全部通过；当前版本可标记为 **release-qualified for the declared Web profile**。上述 TUI、长会话/并发、进程中断和性能项目仍属于后续 P1/P2 验收，不应扩大当前兼容承诺。
 
 ## 10. 推荐执行顺序
 

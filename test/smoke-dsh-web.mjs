@@ -2,6 +2,7 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 
 const sourceDir = process.env.TM_DSH_SOURCE;
 if (!sourceDir) throw new Error('Set TM_DSH_SOURCE to the local deepseek-harness source directory.');
@@ -145,7 +146,7 @@ try {
     requestId: `tm-prompt-${Date.now()}`,
     sessionId,
     mode: 'queue',
-    content: [{ type: 'text', text: 'Create web-smoke.txt with exactly WEB-SMOKE-OK and then finish.' }],
+    content: [{ type: 'text', text: 'Create web-smoke.txt with exactly the text WEB-SMOKE-OK, then confirm briefly.' }],
   });
 
   const started = Date.now();
@@ -233,7 +234,7 @@ try {
   // makes the host fork reject after the plugin has already restored files.
   // The Web server must then restore its rescue checkpoint and report both
   // the host error and the compensated workspace state.
-  const { TimeMachineService } = await import(path.join(repository, 'dist', 'index.js'));
+  const { TimeMachineService } = await import(pathToFileURL(path.join(repository, 'dist', 'index.js')).href);
   const failedSessionId = 'web-smoke-missing-host-session';
   const failureFile = path.join(workspace, 'host-fork-failure.txt');
   await writeFile(failureFile, 'before-host-fork\n', 'utf8');

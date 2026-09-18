@@ -63,6 +63,24 @@ interface CommandRuntimeLike {
   register(definition: unknown): () => void;
 }
 
+interface FsObservedTargetLike {
+  readonly displayPath: string;
+}
+
+interface FsObservedLike {
+  readonly kind: 'present' | 'absent';
+}
+
+interface ToolEventExecutionLike {
+  readonly callId: string;
+  readonly name: string;
+  readonly agent?: { readonly session?: SessionLike };
+}
+
+interface ToolEventResultLike {
+  readonly isError?: boolean;
+}
+
 declare module '@deepseek-ai/cordis' {
   interface Context {
     timeMachine: TimeMachineService;
@@ -78,6 +96,8 @@ declare module '@deepseek-ai/cordis' {
       next: () => Promise<unknown>,
     ): Promise<unknown>;
     'session/event'(session: SessionLike, event: SessionEventLike): void;
+    'fs/observed'(target: FsObservedTargetLike, observation: FsObservedLike, actor: unknown): void;
+    'tools/result'(execution: ToolEventExecutionLike, result: ToolEventResultLike): undefined;
   }
 }
 
@@ -110,7 +130,38 @@ export function apply(ctx: Context, config: Config = {}): void {
   }
 
   const checkpoints = new Map<string, string>();
+  const observedWrites = new Map<string, { sessionId: string; turn: number; paths: Set<string> }>();
   ctx.inject(['agents', 'sessions'], (scope: Context) => {
+    if (service.config.enableAgentWriteLedger) {
+      scope.on('fs/observed', (target, _observation, actor) => {
+        const execution = actor as ToolEventExecutionLike | undefined;
+        const session = execution?.agent?.session;
+        const sessionId = session?.id;
+        const turn = session ? currentSessionTurn(session) : undefined;
+        if (!sessionId || !Number.isSafeInteger(turn) || !execution?.callId || !target?.displayPath) return;
+        if (!isNativeWriteTool(execution.name)) return;
+        const key = `${sessionId}\0${execution.callId}`;
+        const existing = observedWrites.get(key) ?? { sessionId, turn: turn as number, paths: new Set<string>() };
+        existing.paths.add(target.displayPath);
+        observedWrites.set(key, existing);
+      });
+
+      scope.on('tools/result', (execution, result) => {
+        const key = `${execution.agent?.session?.id ?? ''}\0${execution.callId}`;
+        const observed = observedWrites.get(key);
+        observedWrites.delete(key);
+        if (!observed || result?.isError === true) return;
+        const checkpointId = checkpoints.get(checkpointKey(observed.sessionId, observed.turn));
+        if (!checkpointId) return;
+        for (const displayPath of observed.paths) {
+          const relative = workspaceRelativePath(workDir, displayPath);
+          if (!relative) continue;
+          void service.recordAgentWrite(observed.sessionId, checkpointId, { path: relative, operation: 'modify' })
+            .catch((error: unknown) => scope.logger.warn(`[time-machine] could not record Agent write ${relative}: ${errorMessage(error)}`));
+        }
+      });
+    }
+
     scope.on('agent/pre-step', async ({ agent, turn, step }, next) => {
       if (!service.config.autoSnapshot || step !== 1) return next();
       const session = agent.session;
@@ -173,6 +224,27 @@ export function apply(ctx: Context, config: Config = {}): void {
   });
 
   ctx.logger.info(pc.green(`[${name}] active; restore mode=${service.config.restoreMode}`));
+}
+
+function isNativeWriteTool(name: string): boolean {
+  return name === 'write' || name === 'edit' || name === 'str_replace_editor';
+}
+
+function workspaceRelativePath(workDir: string, displayPath: string): string | undefined {
+  const absolute = path.resolve(workDir, displayPath);
+  const root = path.resolve(workDir);
+  const relative = path.relative(root, absolute).replace(/\\/g, '/');
+  if (!relative || relative === '..' || relative.startsWith('../') || path.isAbsolute(relative)) return undefined;
+  return relative;
+}
+
+function currentSessionTurn(session: SessionLike): number | undefined {
+  const events = getEvents(session);
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const turn = events[index].data.turn;
+    if (Number.isSafeInteger(turn)) return turn as number;
+  }
+  return undefined;
 }
 
 /** Extract model-visible tool failures from DSH's durable event pair. */

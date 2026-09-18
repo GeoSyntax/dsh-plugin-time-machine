@@ -815,6 +815,22 @@ interface SessionControllerLike {
 interface CommandRuntimeLike {
     register(definition: unknown): () => void;
 }
+interface FsObservedTargetLike {
+    readonly displayPath: string;
+}
+interface FsObservedLike {
+    readonly kind: 'present' | 'absent';
+}
+interface ToolEventExecutionLike {
+    readonly callId: string;
+    readonly name: string;
+    readonly agent?: {
+        readonly session?: SessionLike;
+    };
+}
+interface ToolEventResultLike {
+    readonly isError?: boolean;
+}
 declare module '@deepseek-ai/cordis' {
     interface Context {
         timeMachine: TimeMachineService;
@@ -831,6 +847,8 @@ declare module '@deepseek-ai/cordis' {
             readonly signal: AbortSignal;
         }, next: () => Promise<unknown>): Promise<unknown>;
         'session/event'(session: SessionLike, event: SessionEventLike): void;
+        'fs/observed'(target: FsObservedTargetLike, observation: FsObservedLike, actor: unknown): void;
+        'tools/result'(execution: ToolEventExecutionLike, result: ToolEventResultLike): undefined;
     }
 }
 declare function apply(ctx: Context, config?: Config): void;

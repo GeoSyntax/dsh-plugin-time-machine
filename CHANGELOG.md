@@ -20,6 +20,9 @@
 - Explicit Agent-write ledger integration: `recordAgentWrite()` records SHA-256
   evidence and `--preserve-hand-edits` preserves only verified post-write edits;
   missing evidence remains fail-closed.
+- When enabled, native DSH `fs/observed` and `tools/result` events automatically
+  record successful `write`, `edit`, and `str_replace_editor` operations; shell
+  and arbitrary code writes still require explicit integration evidence.
 - CLI, Web API, Dashboard, DSH source smoke tests, cross-platform CI, and
   machine-readable benchmark output.
 

@@ -70,11 +70,12 @@ claim this client surface until the separate Web package exists.
 
 Hermes records hashes for successful agent writes and preserves later user edits
 during ordinary rollback. Time Machine now provides the same evidence-based seam
-without guessing authorship: integrations enable `enableAgentWriteLedger`, call
-`recordAgentWrite()` after a successful write, and users opt into
-`--preserve-hand-edits`. A path is preserved only when its current SHA-256 no
-longer matches the recorded Agent hash; missing or corrupt evidence remains
-fail-closed.
+without guessing authorship: integrations enable `enableAgentWriteLedger`; the
+native DSH `fs/observed` + `tools/result` pair automatically covers first-party
+`write`, `edit`, and `str_replace_editor`, while other integrations can call
+`recordAgentWrite()`. Users opt into `--preserve-hand-edits`. A path is preserved
+only when its current SHA-256 no longer matches the recorded Agent hash; missing
+or corrupt evidence remains fail-closed.
 
 **Acceptance:** an opt-in mode restores Agent-owned paths while preserving
 verified post-checkpoint hand-edits, and explicit safe/merge/force modes remain

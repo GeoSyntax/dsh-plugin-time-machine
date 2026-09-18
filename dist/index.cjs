@@ -3522,7 +3522,35 @@ function apply(ctx, config = {}) {
     }, "time-machine.web");
   }
   const checkpoints = /* @__PURE__ */ new Map();
+  const observedWrites = /* @__PURE__ */ new Map();
   ctx.inject(["agents", "sessions"], (scope) => {
+    if (service.config.enableAgentWriteLedger) {
+      scope.on("fs/observed", (target, _observation, actor) => {
+        const execution = actor;
+        const session = execution?.agent?.session;
+        const sessionId = session?.id;
+        const turn = session ? currentSessionTurn(session) : void 0;
+        if (!sessionId || !Number.isSafeInteger(turn) || !execution?.callId || !target?.displayPath) return;
+        if (!isNativeWriteTool(execution.name)) return;
+        const key = `${sessionId}\0${execution.callId}`;
+        const existing = observedWrites.get(key) ?? { sessionId, turn, paths: /* @__PURE__ */ new Set() };
+        existing.paths.add(target.displayPath);
+        observedWrites.set(key, existing);
+      });
+      scope.on("tools/result", (execution, result) => {
+        const key = `${execution.agent?.session?.id ?? ""}\0${execution.callId}`;
+        const observed = observedWrites.get(key);
+        observedWrites.delete(key);
+        if (!observed || result?.isError === true) return;
+        const checkpointId = checkpoints.get(checkpointKey(observed.sessionId, observed.turn));
+        if (!checkpointId) return;
+        for (const displayPath of observed.paths) {
+          const relative = workspaceRelativePath(workDir, displayPath);
+          if (!relative) continue;
+          void service.recordAgentWrite(observed.sessionId, checkpointId, { path: relative, operation: "modify" }).catch((error) => scope.logger.warn(`[time-machine] could not record Agent write ${relative}: ${errorMessage(error)}`));
+        }
+      });
+    }
     scope.on("agent/pre-step", async ({ agent, turn, step }, next) => {
       if (!service.config.autoSnapshot || step !== 1) return next();
       const session = agent.session;
@@ -3581,6 +3609,24 @@ function apply(ctx, config = {}) {
     });
   });
   ctx.logger.info(import_picocolors2.default.green(`[${name}] active; restore mode=${service.config.restoreMode}`));
+}
+function isNativeWriteTool(name2) {
+  return name2 === "write" || name2 === "edit" || name2 === "str_replace_editor";
+}
+function workspaceRelativePath(workDir, displayPath) {
+  const absolute = import_node_path7.default.resolve(workDir, displayPath);
+  const root = import_node_path7.default.resolve(workDir);
+  const relative = import_node_path7.default.relative(root, absolute).replace(/\\/g, "/");
+  if (!relative || relative === ".." || relative.startsWith("../") || import_node_path7.default.isAbsolute(relative)) return void 0;
+  return relative;
+}
+function currentSessionTurn(session) {
+  const events = getEvents(session);
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const turn = events[index].data.turn;
+    if (Number.isSafeInteger(turn)) return turn;
+  }
+  return void 0;
 }
 function collectFailedTools(events, turn) {
   const calls = /* @__PURE__ */ new Map();

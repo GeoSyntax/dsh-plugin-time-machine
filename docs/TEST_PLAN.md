@@ -222,6 +222,8 @@ node <dsh-source>/apps/cli/lib/bin.js --profile tm-live --dump-config
 
 验收：失败节点有错误摘要，rescue checkpoint 可恢复，工作区不进入未知状态。
 
+`test/smoke-dsh-web.mjs` 还包含一条真实宿主拒绝路径：为不存在于 DSH 的 session 持久化插件 checkpoint，调用 Web fork 触发真实 `SessionController` 的 `session/not-found`，再验证 rescue 补偿恢复调用前工作区。该路径仍需要有效模型网关密钥，因为同一 smoke 先建立真实会话。
+
 ## 6. Web API 验收矩阵
 
 | Endpoint | 正常用例 | 异常用例 |
@@ -288,7 +290,7 @@ artifacts/<run-id>/
 
 仍需补齐的 P0/P1 证据：
 
-1. 真实 DSH SessionController fork 失败后的补偿注入验收；插件自身 Web/API hook contract 已有自动化故障注入覆盖。
+1. 真实 DSH SessionController fork 失败后的补偿 smoke 需要在有效模型网关凭据下执行并保存输出；插件自身 Web/API hook contract 已有自动化故障注入覆盖。
 
 注：原生 TUI 不属于当前 manifest 的兼容范围；真实 Web smoke 已覆盖插件 REST API 的 fork/rewind 与宿主 SessionController，CLI 命令层则由注册契约测试覆盖。
 

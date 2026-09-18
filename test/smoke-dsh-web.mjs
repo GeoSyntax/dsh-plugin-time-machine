@@ -171,7 +171,15 @@ try {
     throw new Error(`Real-host turn did not finalize. Logs:\n${logs}`);
   }
   const file = path.join(workspace, 'web-smoke.txt');
-  if ((await readFile(file, 'utf8')).trim() !== 'WEB-SMOKE-OK') throw new Error('Real web host did not create expected file.');
+  let fileContent;
+  try {
+    fileContent = await readFile(file, 'utf8');
+  } catch (error) {
+    throw new Error(`Real web host finalized without creating web-smoke.txt (checkpoint=${checkpoint.status}, error=${checkpoint.errorMessage ?? 'none'}). Logs:\n${logs}`, { cause: error });
+  }
+  if (fileContent.trim() !== 'WEB-SMOKE-OK') {
+    throw new Error(`Real web host created unexpected web-smoke.txt content: ${JSON.stringify(fileContent)}`);
+  }
 
   await rpc('session/prompt', {
     requestId: `tm-failure-prompt-${Date.now()}`,
@@ -219,6 +227,46 @@ try {
   if (!rewind.ok || typeof rewindBody.conversation?.sessionId !== 'string') {
     throw new Error(`Real-host rewind failed: ${rewind.status} ${JSON.stringify(rewindBody)}`);
   }
+
+  // Exercise the real DSH SessionController failure path without modifying the
+  // host: a persisted plugin checkpoint whose session does not exist in DSH
+  // makes the host fork reject after the plugin has already restored files.
+  // The Web server must then restore its rescue checkpoint and report both
+  // the host error and the compensated workspace state.
+  const { TimeMachineService } = await import(path.join(repository, 'dist', 'index.js'));
+  const failedSessionId = 'web-smoke-missing-host-session';
+  const failureFile = path.join(workspace, 'host-fork-failure.txt');
+  await writeFile(failureFile, 'before-host-fork\n', 'utf8');
+  const syntheticService = new TimeMachineService({
+    workDir: workspace,
+    storageDir: path.join(workspace, '.dsh', 'time-machine'),
+  });
+  const failureBase = await syntheticService.createTurnCheckpoint({
+    sessionId: failedSessionId,
+    turnIndex: 1,
+    prompt: 'synthetic host-fork failure boundary',
+    sessionState: { sessionId: failedSessionId, messages: [], boundarySeq: 0 },
+  });
+  await writeFile(failureFile, 'during-host-fork\n', 'utf8');
+  await syntheticService.createTurnCheckpoint({
+    sessionId: failedSessionId,
+    turnIndex: 2,
+    prompt: 'synthetic host-fork failure active state',
+    sessionState: { sessionId: failedSessionId, messages: [], boundarySeq: 1 },
+  });
+
+  const failedFork = await fetch(`http://127.0.0.1:${pluginPort}/api/fork`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ sessionId: failedSessionId, checkpointId: failureBase.id, branchName: 'host-fork-failure' }),
+  });
+  const failedForkBody = await failedFork.json();
+  if (failedFork.ok || !String(failedForkBody.error ?? '').toLowerCase().includes('session')) {
+    throw new Error(`Real SessionController failure was not surfaced: ${failedFork.status} ${JSON.stringify(failedForkBody)}`);
+  }
+  if ((await readFile(failureFile, 'utf8')) !== 'during-host-fork\n') {
+    throw new Error('Host fork failure compensation did not restore the pre-call workspace.');
+  }
+  console.log('Real DSH SessionController fork failure compensation passed.');
   console.log('Real DSH web host session, finalized checkpoint, fork, and rewind passed.');
 } finally {
   if (child && !child.killed) child.kill();

@@ -7,6 +7,8 @@ import { TimeMachineWebServer } from './web/server.js';
 import { registerCliCommands } from './cli/commands.js';
 import type { SessionMessage, TimeMachineConfig } from './types.js';
 
+export { TimeMachineService } from './service.js';
+
 export const name = 'dsh-plugin-time-machine';
 export interface Config extends TimeMachineConfig {}
 export const Config: Schema<Config> = Schema.object({

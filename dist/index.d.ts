@@ -363,6 +363,16 @@ declare class TimeMachineService {
             submodulePaths: string[];
             inProgressOperation: string | null;
         };
+        policies: {
+            restoreMode: 'safe' | 'merge' | 'force';
+            maxSnapshots: number;
+            maxStorageBytes: number;
+            retentionMaxAgeMs: number;
+            maxSnapshotFileBytes: number;
+            maxSnapshotBytes: number;
+            maxQuarantineBytes: number;
+            workspaceLockTimeoutMs: number;
+        };
     }>;
     prune(sessionId: string, options?: {
         keepLatest?: number;

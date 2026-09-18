@@ -1581,6 +1581,7 @@ var TimeMachineService = class {
       maxStorageBytes: Math.max(0, Math.floor(options.config?.maxStorageBytes ?? 0)),
       shadowStore: options.config?.shadowStore ?? false,
       autoPrune: options.config?.autoPrune ?? false,
+      retentionMaxAgeMs: Math.max(0, Math.floor(options.config?.retentionMaxAgeMs ?? 0)),
       workspaceLockTimeoutMs: Math.max(0, Math.floor(options.config?.workspaceLockTimeoutMs ?? 3e4)),
       maxQuarantineBytes: Math.max(0, Math.floor(options.config?.maxQuarantineBytes ?? 0)),
       restorePlanTtlMs: Math.max(0, Math.floor(options.config?.restorePlanTtlMs ?? 9e5)),
@@ -1641,6 +1642,7 @@ var TimeMachineService = class {
     const internalSafetyCheckpoint = params.tags?.includes("rescue") || params.tags?.includes("selective-restore");
     if (!internalSafetyCheckpoint) {
       if (this.config.autoPrune) await this.autoPruneForQuota(dag);
+      if (this.config.retentionMaxAgeMs > 0) await this.autoPruneForAge(dag);
       await this.enforceStorageQuota(dag);
     }
     const checkpointId = `chk_t${params.turnIndex}_${(0, import_node_crypto5.randomUUID)().replace(/-/g, "").slice(0, 12)}`;
@@ -2031,6 +2033,17 @@ var TimeMachineService = class {
     if (this.config.maxStorageBytes > 0 && await directoryBytes2(this.storageDir) >= this.config.maxStorageBytes) {
       candidates = candidates.length ? candidates : nodes.filter((node) => !protectedIds.has(node.id));
     }
+    if (candidates.length === 0) return;
+    const removed = await dag.compactNodes(candidates.map((node) => node.id));
+    await this.reclaimNodes(dag.tree.sessionId, removed);
+  }
+  async autoPruneForAge(dag) {
+    const cutoff = Date.now() - this.config.retentionMaxAgeMs;
+    const protectedIds = /* @__PURE__ */ new Set([
+      ...dag.tree.currentCheckpointId ? [dag.tree.currentCheckpointId] : [],
+      ...Object.values(dag.tree.branches).map((branch) => branch.headId).filter(Boolean)
+    ]);
+    const candidates = Object.values(dag.tree.nodes).filter((node) => node.timestamp < cutoff && !protectedIds.has(node.id));
     if (candidates.length === 0) return;
     const removed = await dag.compactNodes(candidates.map((node) => node.id));
     await this.reclaimNodes(dag.tree.sessionId, removed);
@@ -2764,6 +2777,7 @@ var Config = import_schemastery.default.object({
   maxStorageBytes: import_schemastery.default.number().default(0),
   shadowStore: import_schemastery.default.boolean().default(false),
   autoPrune: import_schemastery.default.boolean().default(false),
+  retentionMaxAgeMs: import_schemastery.default.number().default(0),
   workspaceLockTimeoutMs: import_schemastery.default.number().default(3e4),
   maxQuarantineBytes: import_schemastery.default.number().default(0),
   restorePlanTtlMs: import_schemastery.default.number().default(9e5),

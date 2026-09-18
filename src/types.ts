@@ -88,6 +88,8 @@ export interface TimeMachineConfig {
   shadowStore?: boolean;
   /** Allow quota-triggered compaction before ordinary checkpoints; disabled by default. */
   autoPrune?: boolean;
+  /** Automatically compact checkpoints older than this age before ordinary checkpoints; 0 disables it. */
+  retentionMaxAgeMs?: number;
   /** Maximum time to wait for another process to finish a workspace operation. */
   workspaceLockTimeoutMs?: number;
   /** Hard limit for ignored-file quarantine bytes; 0 disables the guard. */

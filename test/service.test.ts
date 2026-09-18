@@ -415,6 +415,35 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
     expect(dag.getNode(third.id)?.parentId).toBe(second.id);
   });
 
+  it('automatically compacts checkpoints older than the configured retention age', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-retention-age-'));
+    await execAsync('git', ['init'], { cwd: root });
+    await execAsync('git', ['config', 'user.name', 'TestBot'], { cwd: root });
+    await execAsync('git', ['config', 'user.email', 'bot@test.com'], { cwd: root });
+    const auto = new TimeMachineService({
+      workDir: root,
+      storageDir: path.join(root, '.dsh-tm'),
+      config: { retentionMaxAgeMs: 1 },
+    });
+    try {
+      const sessionId = 'retention-age';
+      const file = path.join(root, 'retention.txt');
+      await fs.writeFile(file, 'one\n', 'utf8');
+      const first = await auto.createTurnCheckpoint({ sessionId, turnIndex: 1, prompt: 'one', sessionState: { sessionId, messages: [] } });
+      await fs.writeFile(file, 'two\n', 'utf8');
+      const second = await auto.createTurnCheckpoint({ sessionId, turnIndex: 2, prompt: 'two', sessionState: { sessionId, messages: [] } });
+      await new Promise(resolve => setTimeout(resolve, 5));
+      await fs.writeFile(file, 'three\n', 'utf8');
+      const third = await auto.createTurnCheckpoint({ sessionId, turnIndex: 3, prompt: 'three', sessionState: { sessionId, messages: [] } });
+      const dag = await auto.getDAGManager(sessionId);
+      expect(dag.getNode(first.id)).toBeNull();
+      expect(dag.getNode(second.id)).toBeTruthy();
+      expect(dag.getNode(third.id)).toBeTruthy();
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('finalizes a turn and reloads its DAG state after a service restart', async () => {
     const sessionId = 'restart-session';
     const file = path.join(tmpDir, 'restart.txt');

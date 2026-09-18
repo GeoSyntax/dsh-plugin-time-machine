@@ -25,6 +25,7 @@ export const Config: Schema<Config> = Schema.object({
   maxStorageBytes: Schema.number().default(0),
   shadowStore: Schema.boolean().default(false),
   autoPrune: Schema.boolean().default(false),
+  retentionMaxAgeMs: Schema.number().default(0),
   workspaceLockTimeoutMs: Schema.number().default(30000),
   maxQuarantineBytes: Schema.number().default(0),
   restorePlanTtlMs: Schema.number().default(900000),

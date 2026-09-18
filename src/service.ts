@@ -107,6 +107,7 @@ export class TimeMachineService {
       maxStorageBytes: Math.max(0, Math.floor(options.config?.maxStorageBytes ?? 0)),
       shadowStore: options.config?.shadowStore ?? false,
       autoPrune: options.config?.autoPrune ?? false,
+      retentionMaxAgeMs: Math.max(0, Math.floor(options.config?.retentionMaxAgeMs ?? 0)),
       workspaceLockTimeoutMs: Math.max(0, Math.floor(options.config?.workspaceLockTimeoutMs ?? 30000)),
       maxQuarantineBytes: Math.max(0, Math.floor(options.config?.maxQuarantineBytes ?? 0)),
       restorePlanTtlMs: Math.max(0, Math.floor(options.config?.restorePlanTtlMs ?? 900000)),
@@ -193,6 +194,7 @@ export class TimeMachineService {
     const internalSafetyCheckpoint = params.tags?.includes('rescue') || params.tags?.includes('selective-restore');
     if (!internalSafetyCheckpoint) {
       if (this.config.autoPrune) await this.autoPruneForQuota(dag);
+      if (this.config.retentionMaxAgeMs > 0) await this.autoPruneForAge(dag);
       await this.enforceStorageQuota(dag);
     }
     const checkpointId = `chk_t${params.turnIndex}_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
@@ -652,6 +654,19 @@ export class TimeMachineService {
     if (this.config.maxStorageBytes > 0 && await directoryBytes(this.storageDir) >= this.config.maxStorageBytes) {
       candidates = candidates.length ? candidates : nodes.filter(node => !protectedIds.has(node.id));
     }
+    if (candidates.length === 0) return;
+    const removed = await dag.compactNodes(candidates.map(node => node.id));
+    await this.reclaimNodes(dag.tree.sessionId, removed);
+  }
+
+  private async autoPruneForAge(dag: DAGStateManager): Promise<void> {
+    const cutoff = Date.now() - this.config.retentionMaxAgeMs;
+    const protectedIds = new Set([
+      ...(dag.tree.currentCheckpointId ? [dag.tree.currentCheckpointId] : []),
+      ...Object.values(dag.tree.branches).map(branch => branch.headId).filter(Boolean),
+    ]);
+    const candidates = Object.values(dag.tree.nodes)
+      .filter(node => node.timestamp < cutoff && !protectedIds.has(node.id));
     if (candidates.length === 0) return;
     const removed = await dag.compactNodes(candidates.map(node => node.id));
     await this.reclaimNodes(dag.tree.sessionId, removed);

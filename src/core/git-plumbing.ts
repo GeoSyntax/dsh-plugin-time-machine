@@ -253,6 +253,8 @@ export class GitPlumbingEngine {
         await this.runGit(['read-tree', '--empty'], env, root);
       }
       const protectedPaths = this.protectedRepoPaths(root);
+      const excludeFile = path.join(await this.getGitDir(), `dsh-tm-exclude-${randomUUID()}`);
+      await fs.writeFile(excludeFile, protectedPaths.flatMap(relative => [relative, `${relative}/**`]).join('\n') + '\n');
       const addArgs = ['add', '-A', '--', '.'];
       for (const relative of protectedPaths) {
         // Exclude untracked storage before it can enter the temporary index.
@@ -260,7 +262,11 @@ export class GitPlumbingEngine {
         // with `git rm --cached` after `git add -A`.
         addArgs.push(`:(top,exclude)${relative}`, `:(top,exclude)${relative}/**`);
       }
-      await this.runGit(addArgs, env, root);
+      try {
+        await this.runGit(['-c', `core.excludesFile=${excludeFile}`, ...addArgs], env, root);
+      } finally {
+        await fs.rm(excludeFile, { force: true }).catch(() => undefined);
+      }
       const { stdout: indexedFiles } = await this.runGit(['ls-files', '-z'], env, root);
       const indexedEntries = indexedFiles.split('\0').filter(Boolean);
       const protectedEntries = indexedEntries.filter(file => protectedPaths.some(

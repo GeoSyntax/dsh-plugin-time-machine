@@ -72,8 +72,10 @@ the workspace snapshot. Quota-driven compaction is opt-in via `autoPrune`;
 restore journals are durable and replayed on startup; pruning and history
 compaction do not run repository-wide Git GC. Manual age filtering is available
 through `/tm-prune --older-than=...` and `olderThanMs` in the Web API, but
-automatic time-based expiration and shadow-object encryption are not implemented
-yet. Ignored-file quarantine can be encrypted with `quarantineEncryptionKeyEnv`.
+automatic time-based expiration is available as the opt-in
+`retentionMaxAgeMs` policy; it protects current and branch-head checkpoints.
+Shadow-object encryption is not implemented yet. Ignored-file quarantine can be
+encrypted with `quarantineEncryptionKeyEnv`.
 
 Further reading:
 

@@ -21,6 +21,7 @@ var init_esm_shims = __esm({
 var git_plumbing_exports = {};
 __export(git_plumbing_exports, {
   GitPlumbingEngine: () => GitPlumbingEngine,
+  QuarantineQuotaError: () => QuarantineQuotaError,
   WorkspaceDriftError: () => WorkspaceDriftError,
   WorkspaceRestoreConflictError: () => WorkspaceRestoreConflictError
 });
@@ -36,6 +37,8 @@ async function sumFileSizes(files) {
   return total;
 }
 async function directoryBytes(root) {
+  const rootStat = await fs.stat(root).catch(() => void 0);
+  if (rootStat?.isFile()) return rootStat.size;
   let total = 0;
   for (const entry of await fs.readdir(root, { withFileTypes: true }).catch(() => [])) {
     const absolute = path2.join(root, entry.name);
@@ -56,7 +59,7 @@ function symmetricDifference(left, right) {
 function longestFirst(left, right) {
   return right.split("/").length - left.split("/").length || right.localeCompare(left);
 }
-var execFileAsync, WorkspaceDriftError, WorkspaceRestoreConflictError, GitPlumbingEngine;
+var execFileAsync, WorkspaceDriftError, WorkspaceRestoreConflictError, QuarantineQuotaError, GitPlumbingEngine;
 var init_git_plumbing = __esm({
   "src/core/git-plumbing.ts"() {
     "use strict";
@@ -80,6 +83,17 @@ var init_git_plumbing = __esm({
       paths;
       code = "RESTORE_CONFLICT";
     };
+    QuarantineQuotaError = class extends Error {
+      constructor(limitBytes, requiredBytes) {
+        super(`Ignored-file quarantine limit exceeded: ${requiredBytes} > ${limitBytes} bytes.`);
+        this.limitBytes = limitBytes;
+        this.requiredBytes = requiredBytes;
+        this.name = "QuarantineQuotaError";
+      }
+      limitBytes;
+      requiredBytes;
+      code = "QUARANTINE_QUOTA_EXCEEDED";
+    };
     GitPlumbingEngine = class {
       workDir;
       refPrefix;
@@ -89,6 +103,7 @@ var init_git_plumbing = __esm({
       repoRootCached = null;
       gitDirCached = null;
       shadowObjectDir;
+      maxQuarantineBytes;
       shadowReady;
       constructor(options) {
         this.workDir = path2.resolve(options.workDir);
@@ -96,6 +111,7 @@ var init_git_plumbing = __esm({
         this.preservePaths = (options.preservePaths ?? []).map((item) => path2.resolve(this.workDir, item));
         this.quarantineDir = options.quarantineDir ? path2.resolve(options.quarantineDir) : void 0;
         this.shadowObjectDir = options.shadowObjectDir ? path2.resolve(options.shadowObjectDir) : void 0;
+        this.maxQuarantineBytes = Math.max(0, Math.floor(options.maxQuarantineBytes ?? 0));
       }
       get usesShadowStore() {
         return Boolean(this.shadowObjectDir);
@@ -491,6 +507,13 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
       async backupIgnoredPath(key, relative, absolute) {
         if (!this.quarantineDir) throw new Error("Ignored-path deletion requires a quarantineDir.");
         const destination = path2.join(this.quarantineDir, encodeRefPart(key), ...relative.split("/"));
+        if (this.maxQuarantineBytes > 0) {
+          const currentBytes = await directoryBytes(this.quarantineDir);
+          const incomingBytes = await directoryBytes(absolute);
+          const existingBytes = await directoryBytes(path2.dirname(destination));
+          const requiredBytes = currentBytes - existingBytes + incomingBytes;
+          if (requiredBytes > this.maxQuarantineBytes) throw new QuarantineQuotaError(this.maxQuarantineBytes, requiredBytes);
+        }
         await fs.mkdir(path2.dirname(destination), { recursive: true });
         await fs.cp(absolute, destination, { recursive: true, force: true, verbatimSymlinks: true });
       }
@@ -1394,14 +1417,16 @@ var TimeMachineService = class {
       maxStorageBytes: Math.max(0, Math.floor(options.config?.maxStorageBytes ?? 0)),
       shadowStore: options.config?.shadowStore ?? false,
       autoPrune: options.config?.autoPrune ?? false,
-      workspaceLockTimeoutMs: Math.max(0, Math.floor(options.config?.workspaceLockTimeoutMs ?? 3e4))
+      workspaceLockTimeoutMs: Math.max(0, Math.floor(options.config?.workspaceLockTimeoutMs ?? 3e4)),
+      maxQuarantineBytes: Math.max(0, Math.floor(options.config?.maxQuarantineBytes ?? 0))
     };
     this.gitEngine = new GitPlumbingEngine({
       workDir: this.workDir,
       refPrefix: this.config.refPrefix,
       preservePaths: [this.storageDir, ...this.config.preservePaths],
       quarantineDir: path6.join(this.storageDir, "ignored-quarantine"),
-      shadowObjectDir: this.config.shadowStore ? path6.join(this.storageDir, "git-shadow", "objects") : void 0
+      shadowObjectDir: this.config.shadowStore ? path6.join(this.storageDir, "git-shadow", "objects") : void 0,
+      maxQuarantineBytes: this.config.maxQuarantineBytes
     });
     this.fallbackEngine = new FallbackSnapshotEngine({
       workDir: this.workDir,
@@ -2473,7 +2498,8 @@ var Config = Schema.object({
   maxStorageBytes: Schema.number().default(0),
   shadowStore: Schema.boolean().default(false),
   autoPrune: Schema.boolean().default(false),
-  workspaceLockTimeoutMs: Schema.number().default(3e4)
+  workspaceLockTimeoutMs: Schema.number().default(3e4),
+  maxQuarantineBytes: Schema.number().default(0)
 });
 function apply(ctx, config = {}) {
   const workDir = path8.resolve(process.cwd());
@@ -2626,6 +2652,7 @@ export {
   DAGStateManager,
   FallbackSnapshotEngine,
   GitPlumbingEngine,
+  QuarantineQuotaError,
   ReflectionAdvisor,
   StorageQuotaError,
   TimeMachinePlugin,

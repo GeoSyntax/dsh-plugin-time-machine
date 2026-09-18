@@ -77,6 +77,7 @@
 - `reflection-advisor`：失败 stderr 提取、重复失败提示、无失败时不注入内容。
 - `service`：双轨 checkpoint、safe/force、rescue、ignored quarantine、进程内/跨进程操作锁、shadow 回收。
 - `service`：checkpoint prune 后仅清理无 DAG 引用的 quarantine，仍被 rescue 节点引用的备份必须保留。
+- `git-plumbing`：quarantine 达到 `maxQuarantineBytes` 时拒绝删除并保留原文件。
 - `web-server`：status/dag/diff/rewind/fork、非法 JSON、非 loopback、Origin 校验。
 
 ### L2：状态机与性质测试

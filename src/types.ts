@@ -90,6 +90,8 @@ export interface TimeMachineConfig {
   autoPrune?: boolean;
   /** Maximum time to wait for another process to finish a workspace operation. */
   workspaceLockTimeoutMs?: number;
+  /** Hard limit for ignored-file quarantine bytes; 0 disables the guard. */
+  maxQuarantineBytes?: number;
 }
 
 export interface RestoreOptions {

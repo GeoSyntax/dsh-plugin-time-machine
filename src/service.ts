@@ -84,6 +84,7 @@ export class TimeMachineService {
       shadowStore: options.config?.shadowStore ?? false,
       autoPrune: options.config?.autoPrune ?? false,
       workspaceLockTimeoutMs: Math.max(0, Math.floor(options.config?.workspaceLockTimeoutMs ?? 30000)),
+      maxQuarantineBytes: Math.max(0, Math.floor(options.config?.maxQuarantineBytes ?? 0)),
     };
 
     this.gitEngine = new GitPlumbingEngine({
@@ -92,6 +93,7 @@ export class TimeMachineService {
       preservePaths: [this.storageDir, ...this.config.preservePaths],
       quarantineDir: path.join(this.storageDir, 'ignored-quarantine'),
       shadowObjectDir: this.config.shadowStore ? path.join(this.storageDir, 'git-shadow', 'objects') : undefined,
+      maxQuarantineBytes: this.config.maxQuarantineBytes,
     });
 
     this.fallbackEngine = new FallbackSnapshotEngine({

@@ -165,6 +165,24 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
     expect((await service.getDAGManager(sessionId)).tree.currentCheckpointId).toBe(second.id);
   });
 
+  it('rejects ignored deletion when the quarantine hard limit would be exceeded', async () => {
+    const limited = new TimeMachineService({
+      workDir: tmpDir,
+      storageDir: path.join(tmpDir, '.quarantine-limit'),
+      config: { maxQuarantineBytes: 4 },
+    });
+    const sessionId = 'quarantine-limit';
+    await fs.writeFile(path.join(tmpDir, '.gitignore'), 'limited.secret\n', 'utf8');
+    await fs.writeFile(path.join(tmpDir, 'limited.txt'), 'v1\n', 'utf8');
+    const first = await limited.createTurnCheckpoint({ sessionId, turnIndex: 1, prompt: 'initial', sessionState: { sessionId, messages: [] } });
+    await fs.writeFile(path.join(tmpDir, 'limited.txt'), 'v2\n', 'utf8');
+    await fs.writeFile(path.join(tmpDir, 'limited.secret'), 'secret payload\n', 'utf8');
+    await limited.createTurnCheckpoint({ sessionId, turnIndex: 2, prompt: 'secret', sessionState: { sessionId, messages: [] } });
+    await expect(limited.rewindToCheckpoint(sessionId, first.id, { deleteNewIgnoredPaths: true }))
+      .rejects.toMatchObject({ code: 'QUARANTINE_QUOTA_EXCEEDED' });
+    expect(await fs.readFile(path.join(tmpDir, 'limited.secret'), 'utf8')).toBe('secret payload\n');
+  });
+
   it('restores selected paths while preserving other workspace files and conversation state', async () => {
     const sessionId = 'selective-session';
     const left = path.join(tmpDir, 'left.txt');

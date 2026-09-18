@@ -26,6 +26,7 @@ export const Config: Schema<Config> = Schema.object({
   shadowStore: Schema.boolean().default(false),
   autoPrune: Schema.boolean().default(false),
   workspaceLockTimeoutMs: Schema.number().default(30000),
+  maxQuarantineBytes: Schema.number().default(0),
 });
 
 interface SessionEventLike {

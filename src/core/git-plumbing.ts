@@ -15,6 +15,8 @@ export interface GitPlumbingOptions {
   quarantineDir?: string;
   /** Optional object directory for plugin-created objects. */
   shadowObjectDir?: string;
+  /** Hard limit for ignored-file quarantine bytes; 0 disables the guard. */
+  maxQuarantineBytes?: number;
 }
 
 export interface GitSnapshot {
@@ -70,6 +72,15 @@ export class WorkspaceRestoreConflictError extends Error {
   }
 }
 
+export class QuarantineQuotaError extends Error {
+  readonly code = 'QUARANTINE_QUOTA_EXCEEDED';
+
+  constructor(public readonly limitBytes: number, public readonly requiredBytes: number) {
+    super(`Ignored-file quarantine limit exceeded: ${requiredBytes} > ${limitBytes} bytes.`);
+    this.name = 'QuarantineQuotaError';
+  }
+}
+
 export class GitPlumbingEngine {
   public readonly workDir: string;
   public readonly refPrefix: string;
@@ -79,6 +90,7 @@ export class GitPlumbingEngine {
   private repoRootCached: string | null = null;
   private gitDirCached: string | null = null;
   private readonly shadowObjectDir?: string;
+  private readonly maxQuarantineBytes: number;
   private shadowReady?: Promise<void>;
 
   constructor(options: GitPlumbingOptions) {
@@ -87,6 +99,7 @@ export class GitPlumbingEngine {
     this.preservePaths = (options.preservePaths ?? []).map(item => path.resolve(this.workDir, item));
     this.quarantineDir = options.quarantineDir ? path.resolve(options.quarantineDir) : undefined;
     this.shadowObjectDir = options.shadowObjectDir ? path.resolve(options.shadowObjectDir) : undefined;
+    this.maxQuarantineBytes = Math.max(0, Math.floor(options.maxQuarantineBytes ?? 0));
   }
 
   get usesShadowStore(): boolean {
@@ -526,6 +539,13 @@ export class GitPlumbingEngine {
   private async backupIgnoredPath(key: string, relative: string, absolute: string): Promise<void> {
     if (!this.quarantineDir) throw new Error('Ignored-path deletion requires a quarantineDir.');
     const destination = path.join(this.quarantineDir, encodeRefPart(key), ...relative.split('/'));
+    if (this.maxQuarantineBytes > 0) {
+      const currentBytes = await directoryBytes(this.quarantineDir);
+      const incomingBytes = await directoryBytes(absolute);
+      const existingBytes = await directoryBytes(path.dirname(destination));
+      const requiredBytes = currentBytes - existingBytes + incomingBytes;
+      if (requiredBytes > this.maxQuarantineBytes) throw new QuarantineQuotaError(this.maxQuarantineBytes, requiredBytes);
+    }
     await fs.mkdir(path.dirname(destination), { recursive: true });
     await fs.cp(absolute, destination, { recursive: true, force: true, verbatimSymlinks: true });
   }
@@ -683,6 +703,8 @@ async function sumFileSizes(files: string[]): Promise<number> {
 }
 
 async function directoryBytes(root: string): Promise<number> {
+  const rootStat = await fs.stat(root).catch(() => undefined);
+  if (rootStat?.isFile()) return rootStat.size;
   let total = 0;
   for (const entry of await fs.readdir(root, { withFileTypes: true }).catch(() => [] as import('node:fs').Dirent[])) {
     const absolute = path.join(root, entry.name);

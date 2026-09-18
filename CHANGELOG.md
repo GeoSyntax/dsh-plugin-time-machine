@@ -10,6 +10,7 @@
 - 可选 shadow object store、loose-object 回收、配额治理、历史压缩和 durable restore journal。
 - 显式 `--repack-shadow` 私有 pack 重建，避免 shadow packed objects 长期残留。
 - prune 时清理已不再被 DAG 引用的 ignored quarantine，避免 rescue 备份孤儿残留。
+- 可选 `maxQuarantineBytes` 硬上限，超过时以 `QUARANTINE_QUOTA_EXCEEDED` 拒绝 ignored 备份操作。
 - 跨进程工作区锁，避免多个 DSH 实例并发覆盖同一工作区。
 
 ## [0.2.0] - 2026-09-18

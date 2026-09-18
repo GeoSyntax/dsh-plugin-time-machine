@@ -171,7 +171,11 @@ export class TimeMachineWebServer {
       if (keepLatest !== undefined && (!Number.isInteger(keepLatest) || keepLatest < 0)) {
         throw Object.assign(new Error('keepLatest must be a non-negative integer'), { code: 'BAD_REQUEST' });
       }
-      const result = await this.service.prune(sessionId, { keepLatest, abandonedBranches: body.abandonedBranches === true });
+      const result = await this.service.prune(sessionId, {
+        keepLatest,
+        abandonedBranches: body.abandonedBranches === true,
+        compactHistory: body.compactHistory === true,
+      });
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, result }));
       return;

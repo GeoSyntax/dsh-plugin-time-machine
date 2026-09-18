@@ -80,6 +80,7 @@ export class TimeMachineService {
       maxSnapshots: Math.max(0, Math.floor(options.config?.maxSnapshots ?? 0)),
       maxStorageBytes: Math.max(0, Math.floor(options.config?.maxStorageBytes ?? 0)),
       shadowStore: options.config?.shadowStore ?? false,
+      autoPrune: options.config?.autoPrune ?? false,
     };
 
     this.gitEngine = new GitPlumbingEngine({
@@ -147,7 +148,10 @@ export class TimeMachineService {
   }): Promise<CheckpointNode> {
     const dag = await this.getDAGManager(params.sessionId);
     const internalSafetyCheckpoint = params.tags?.includes('rescue') || params.tags?.includes('selective-restore');
-    if (!internalSafetyCheckpoint) await this.enforceStorageQuota(dag);
+    if (!internalSafetyCheckpoint) {
+      if (this.config.autoPrune) await this.autoPruneForQuota(dag);
+      await this.enforceStorageQuota(dag);
+    }
     const checkpointId = `chk_t${params.turnIndex}_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
 
     const currentNode = dag.getCurrentNode();
@@ -467,7 +471,7 @@ export class TimeMachineService {
     };
   }
 
-  async prune(sessionId: string, options: { keepLatest?: number; abandonedBranches?: boolean } = {}): Promise<PruneResult> {
+  async prune(sessionId: string, options: { keepLatest?: number; abandonedBranches?: boolean; compactHistory?: boolean } = {}): Promise<PruneResult> {
     return this.operations.run(this.workDir, async () => {
       const dag = await this.getDAGManager(sessionId);
       const keepLatest = Math.max(0, Math.floor(options.keepLatest ?? 20));
@@ -478,22 +482,50 @@ export class TimeMachineService {
         const abandonedBranches = Object.keys(dag.tree.branches).filter(branch => branch !== dag.tree.currentBranch);
         for (const branch of abandonedBranches) removed.push(...await dag.removeBranch(branch));
       }
-      const candidates = this.pruneCandidates(dag).filter(node => !keep.has(node.id));
-      removed.push(...await dag.removeLeafNodes(candidates.map(node => node.id)));
-      let reclaimedBytes = 0;
-      let gitRefsRemoved = 0;
-      for (const node of removed) {
-        if (node.gitCommitOid.startsWith('fallback_')) reclaimedBytes += await this.fallbackEngine.removeSnapshot(sessionId, node.id);
-        else if (await this.gitEngine.isGitRepo() && await this.gitEngine.deleteCheckpointRef(sessionId, node.id)) gitRefsRemoved += 1;
+      const candidates = Object.values(dag.tree.nodes).filter(node => !keep.has(node.id));
+      if (options.compactHistory) {
+        removed.push(...await dag.compactNodes(candidates.map(node => node.id)));
+      } else {
+        removed.push(...await dag.removeLeafNodes(candidates.map(node => node.id)));
       }
+      const reclaimed = await this.reclaimNodes(sessionId, removed);
       return {
         sessionId,
         removedCheckpointIds: removed.map(node => node.id),
-        reclaimedBytes,
-        gitRefsRemoved,
-        note: gitRefsRemoved > 0 ? 'Git objects are shared; run repository maintenance only if you understand its impact.' : 'Fallback snapshot bytes were removed from plugin storage.',
+        reclaimedBytes: reclaimed.reclaimedBytes,
+        gitRefsRemoved: reclaimed.gitRefsRemoved,
+        note: reclaimed.gitRefsRemoved > 0 ? 'Git objects are shared; run repository maintenance only if you understand its impact.' : 'Fallback snapshot bytes were removed from plugin storage.',
       };
     });
+  }
+
+  private async autoPruneForQuota(dag: DAGStateManager): Promise<void> {
+    const nodes = Object.values(dag.tree.nodes).sort((left, right) => left.timestamp - right.timestamp);
+    const protectedIds = new Set([
+      ...(dag.tree.currentCheckpointId ? [dag.tree.currentCheckpointId] : []),
+      ...Object.values(dag.tree.branches).map(branch => branch.headId).filter(Boolean),
+    ]);
+    let candidates = nodes.filter(node => !protectedIds.has(node.id));
+    if (this.config.maxSnapshots > 0) {
+      const removeCount = Math.max(0, nodes.length - this.config.maxSnapshots + 1);
+      candidates = candidates.slice(0, removeCount);
+    }
+    if (this.config.maxStorageBytes > 0 && await directoryBytes(this.storageDir) >= this.config.maxStorageBytes) {
+      candidates = candidates.length ? candidates : nodes.filter(node => !protectedIds.has(node.id));
+    }
+    if (candidates.length === 0) return;
+    const removed = await dag.compactNodes(candidates.map(node => node.id));
+    await this.reclaimNodes(dag.tree.sessionId, removed);
+  }
+
+  private async reclaimNodes(sessionId: string, nodes: CheckpointNode[]): Promise<{ reclaimedBytes: number; gitRefsRemoved: number }> {
+    let reclaimedBytes = 0;
+    let gitRefsRemoved = 0;
+    for (const node of nodes) {
+      if (node.gitCommitOid.startsWith('fallback_')) reclaimedBytes += await this.fallbackEngine.removeSnapshot(sessionId, node.id);
+      else if (await this.gitEngine.isGitRepo() && await this.gitEngine.deleteCheckpointRef(sessionId, node.id)) gitRefsRemoved += 1;
+    }
+    return { reclaimedBytes, gitRefsRemoved };
   }
 
   private pruneCandidates(dag: DAGStateManager): CheckpointNode[] {

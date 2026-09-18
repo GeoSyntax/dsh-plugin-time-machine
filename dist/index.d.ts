@@ -88,6 +88,8 @@ interface TimeMachineConfig {
     maxStorageBytes?: number;
     /** Store plugin-created Git objects outside the user's normal object directory. */
     shadowStore?: boolean;
+    /** Allow quota-triggered compaction before ordinary checkpoints; disabled by default. */
+    autoPrune?: boolean;
 }
 interface RestoreOptions {
     mode?: 'safe' | 'force';
@@ -186,6 +188,8 @@ declare class DAGStateManager {
     updateNode(checkpointId: string, patch: Partial<Pick<CheckpointNode, 'status' | 'errorMessage' | 'failedTools' | 'summary' | 'settledGitTreeOid' | 'settledIgnoredPaths' | 'ignoredBackupKey'>>): Promise<CheckpointNode>;
     /** Remove only leaf checkpoints that are not current or a branch head. */
     removeLeafNodes(checkpointIds: string[]): Promise<CheckpointNode[]>;
+    /** Remove historical nodes while reparenting surviving children to the nearest ancestor. */
+    compactNodes(checkpointIds: string[]): Promise<CheckpointNode[]>;
     /** Explicitly remove a non-current exploration branch and its private nodes. */
     removeBranch(branchName: string): Promise<CheckpointNode[]>;
     /**
@@ -312,7 +316,10 @@ declare class TimeMachineService {
     prune(sessionId: string, options?: {
         keepLatest?: number;
         abandonedBranches?: boolean;
+        compactHistory?: boolean;
     }): Promise<PruneResult>;
+    private autoPruneForQuota;
+    private reclaimNodes;
     private pruneCandidates;
     private listStoredSessions;
     private enforceStorageQuota;

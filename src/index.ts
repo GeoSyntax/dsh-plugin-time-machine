@@ -24,6 +24,7 @@ export const Config: Schema<Config> = Schema.object({
   maxSnapshots: Schema.number().default(0),
   maxStorageBytes: Schema.number().default(0),
   shadowStore: Schema.boolean().default(false),
+  autoPrune: Schema.boolean().default(false),
 });
 
 interface SessionEventLike {

@@ -86,6 +86,8 @@ export interface TimeMachineConfig {
   maxStorageBytes?: number;
   /** Store plugin-created Git objects outside the user's normal object directory. */
   shadowStore?: boolean;
+  /** Allow quota-triggered compaction before ordinary checkpoints; disabled by default. */
+  autoPrune?: boolean;
 }
 
 export interface RestoreOptions {

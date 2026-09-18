@@ -40,13 +40,17 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
     scope.commands.register({
       name: 'tm-prune',
       description: 'Prune old non-head Time Machine checkpoints',
-      input: { hint: '[keep-latest] [--abandoned-branches]' },
+      input: { hint: '[keep-latest] [--abandoned-branches] [--compact-history]' },
       handler: async ({ agent, rawInput }: CommandInvocationLike): Promise<CommandResult> => {
         const args = rawInput.trim().split(/\s+/).filter(Boolean);
         const keepArg = args.find(arg => !arg.startsWith('--'));
         const keepLatest = keepArg ? Number(keepArg) : 20;
         if (!Number.isInteger(keepLatest) || keepLatest < 0) return { kind: 'error', text: 'Usage: /tm-prune [non-negative keep-latest]' };
-        const result = await service.prune(agent.session.id, { keepLatest, abandonedBranches: args.includes('--abandoned-branches') });
+        const result = await service.prune(agent.session.id, {
+          keepLatest,
+          abandonedBranches: args.includes('--abandoned-branches'),
+          compactHistory: args.includes('--compact-history'),
+        });
         return { kind: 'success', text: `Pruned ${result.removedCheckpointIds.length} checkpoint(s), reclaimed ${formatBytes(result.reclaimedBytes)}. ${result.note}` };
       },
     });

@@ -45,9 +45,10 @@ dsh --profile web
 - **运行在非 Git 目录:** fallback 后端使用 manifest 和内容哈希快照，支持普通文件、目录和 symlink。
 - **先看再回滚:** Git 工作区提供文本 diff；非 Git fallback 至少列出将被目标快照覆盖的路径，并明确提示暂不提供文本 diff。
 - **选择性恢复:** `/tm-restore-files` 只写入指定文件/目录，并创建 rescue 和结果 checkpoint；它不会伪造会话回滚。
-- **存储治理:** `/tm-storage` 查看插件目录占用；`/tm-prune` 只删除不属于 current/branch head 且没有子节点的旧叶子节点；明确传入 `--abandoned-branches` 才会删除非当前探索分支。Git object 是共享的，删除私有 ref 不会自动执行危险的全仓库 GC。
+- **存储治理:** `/tm-storage` 查看插件目录占用；`/tm-prune` 默认只删除不属于 current/branch head 且没有子节点的旧叶子节点；明确传入 `--abandoned-branches` 才会删除非当前探索分支；明确传入 `--compact-history` 才会压缩旧线性节点并重新挂接子节点。Git object 是共享的，删除私有 ref 不会自动执行危险的全仓库 GC。
 - **崩溃恢复:** rewind/fork/选择性恢复会写入 durable restore journal；插件下次启动时如果发现未完成操作，会先恢复 rescue checkpoint，再清理 journal。
 - **硬配额:** `maxSnapshots` 和 `maxStorageBytes` 默认关闭；启用后达到上限会安全拒绝新 checkpoint，不会静默删除历史。
+- **自动配额清理:** `autoPrune: true` 才会在普通 checkpoint 前尝试压缩旧节点；无法安全腾出空间时仍然拒绝 checkpoint，不会强行删除 current 或 branch head。
 
 ## Safety model
 
@@ -74,6 +75,7 @@ dsh --profile web
     maxSnapshots: 0
     maxStorageBytes: 0
     shadowStore: false
+    autoPrune: false
 ```
 
 Web dashboard 只绑定 loopback，并拒绝非本机 Host 和跨 origin 请求。`/tm-rewind` 与 `/tm-fork` 需要宿主提供 `sessionController`，否则插件会拒绝只恢复文件的危险降级行为。

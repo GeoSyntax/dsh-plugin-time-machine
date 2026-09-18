@@ -129,6 +129,33 @@ export class DAGStateManager {
     return removable.map(cloneJson);
   }
 
+  /** Remove historical nodes while reparenting surviving children to the nearest ancestor. */
+  async compactNodes(checkpointIds: string[]): Promise<CheckpointNode[]> {
+    const requested = new Set(checkpointIds);
+    const protectedIds = new Set<string>([
+      ...(this.tree.currentCheckpointId ? [this.tree.currentCheckpointId] : []),
+      ...Object.values(this.tree.branches).map(branch => branch.headId).filter(Boolean),
+    ]);
+    const removable = Object.values(this.tree.nodes).filter(node => requested.has(node.id) && !protectedIds.has(node.id));
+    if (removable.length === 0) return [];
+    const removedIds = new Set(removable.map(node => node.id));
+    const nearestSurvivor = (parentId: string | null): string | null => {
+      let cursor = parentId;
+      while (cursor && removedIds.has(cursor)) cursor = this.tree.nodes[cursor]?.parentId ?? null;
+      return cursor;
+    };
+    await this.commitMutation(() => {
+      for (const node of Object.values(this.tree.nodes)) {
+        if (!removedIds.has(node.id)) node.parentId = nearestSurvivor(node.parentId);
+      }
+      for (const branch of Object.values(this.tree.branches)) {
+        branch.forkedFromId = nearestSurvivor(branch.forkedFromId);
+      }
+      for (const node of removable) delete this.tree.nodes[node.id];
+    });
+    return removable.map(cloneJson);
+  }
+
   /** Explicitly remove a non-current exploration branch and its private nodes. */
   async removeBranch(branchName: string): Promise<CheckpointNode[]> {
     if (branchName === this.tree.currentBranch) throw new Error('Cannot prune the current branch.');

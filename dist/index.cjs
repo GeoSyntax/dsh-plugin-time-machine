@@ -905,6 +905,32 @@ var DAGStateManager = class {
     });
     return removable.map(cloneJson);
   }
+  /** Remove historical nodes while reparenting surviving children to the nearest ancestor. */
+  async compactNodes(checkpointIds) {
+    const requested = new Set(checkpointIds);
+    const protectedIds = /* @__PURE__ */ new Set([
+      ...this.tree.currentCheckpointId ? [this.tree.currentCheckpointId] : [],
+      ...Object.values(this.tree.branches).map((branch) => branch.headId).filter(Boolean)
+    ]);
+    const removable = Object.values(this.tree.nodes).filter((node) => requested.has(node.id) && !protectedIds.has(node.id));
+    if (removable.length === 0) return [];
+    const removedIds = new Set(removable.map((node) => node.id));
+    const nearestSurvivor = (parentId) => {
+      let cursor = parentId;
+      while (cursor && removedIds.has(cursor)) cursor = this.tree.nodes[cursor]?.parentId ?? null;
+      return cursor;
+    };
+    await this.commitMutation(() => {
+      for (const node of Object.values(this.tree.nodes)) {
+        if (!removedIds.has(node.id)) node.parentId = nearestSurvivor(node.parentId);
+      }
+      for (const branch of Object.values(this.tree.branches)) {
+        branch.forkedFromId = nearestSurvivor(branch.forkedFromId);
+      }
+      for (const node of removable) delete this.tree.nodes[node.id];
+    });
+    return removable.map(cloneJson);
+  }
   /** Explicitly remove a non-current exploration branch and its private nodes. */
   async removeBranch(branchName) {
     if (branchName === this.tree.currentBranch) throw new Error("Cannot prune the current branch.");
@@ -1205,7 +1231,8 @@ var TimeMachineService = class {
       webHost: options.config?.webHost ?? "127.0.0.1",
       maxSnapshots: Math.max(0, Math.floor(options.config?.maxSnapshots ?? 0)),
       maxStorageBytes: Math.max(0, Math.floor(options.config?.maxStorageBytes ?? 0)),
-      shadowStore: options.config?.shadowStore ?? false
+      shadowStore: options.config?.shadowStore ?? false,
+      autoPrune: options.config?.autoPrune ?? false
     };
     this.gitEngine = new GitPlumbingEngine({
       workDir: this.workDir,
@@ -1248,7 +1275,10 @@ var TimeMachineService = class {
   async createTurnCheckpointUnlocked(params) {
     const dag = await this.getDAGManager(params.sessionId);
     const internalSafetyCheckpoint = params.tags?.includes("rescue") || params.tags?.includes("selective-restore");
-    if (!internalSafetyCheckpoint) await this.enforceStorageQuota(dag);
+    if (!internalSafetyCheckpoint) {
+      if (this.config.autoPrune) await this.autoPruneForQuota(dag);
+      await this.enforceStorageQuota(dag);
+    }
     const checkpointId = `chk_t${params.turnIndex}_${(0, import_node_crypto4.randomUUID)().replace(/-/g, "").slice(0, 12)}`;
     const currentNode = dag.getCurrentNode();
     const parentCommitOid = currentNode ? currentNode.gitCommitOid : null;
@@ -1536,22 +1566,48 @@ var TimeMachineService = class {
         const abandonedBranches = Object.keys(dag.tree.branches).filter((branch) => branch !== dag.tree.currentBranch);
         for (const branch of abandonedBranches) removed.push(...await dag.removeBranch(branch));
       }
-      const candidates = this.pruneCandidates(dag).filter((node) => !keep.has(node.id));
-      removed.push(...await dag.removeLeafNodes(candidates.map((node) => node.id)));
-      let reclaimedBytes = 0;
-      let gitRefsRemoved = 0;
-      for (const node of removed) {
-        if (node.gitCommitOid.startsWith("fallback_")) reclaimedBytes += await this.fallbackEngine.removeSnapshot(sessionId, node.id);
-        else if (await this.gitEngine.isGitRepo() && await this.gitEngine.deleteCheckpointRef(sessionId, node.id)) gitRefsRemoved += 1;
+      const candidates = Object.values(dag.tree.nodes).filter((node) => !keep.has(node.id));
+      if (options.compactHistory) {
+        removed.push(...await dag.compactNodes(candidates.map((node) => node.id)));
+      } else {
+        removed.push(...await dag.removeLeafNodes(candidates.map((node) => node.id)));
       }
+      const reclaimed = await this.reclaimNodes(sessionId, removed);
       return {
         sessionId,
         removedCheckpointIds: removed.map((node) => node.id),
-        reclaimedBytes,
-        gitRefsRemoved,
-        note: gitRefsRemoved > 0 ? "Git objects are shared; run repository maintenance only if you understand its impact." : "Fallback snapshot bytes were removed from plugin storage."
+        reclaimedBytes: reclaimed.reclaimedBytes,
+        gitRefsRemoved: reclaimed.gitRefsRemoved,
+        note: reclaimed.gitRefsRemoved > 0 ? "Git objects are shared; run repository maintenance only if you understand its impact." : "Fallback snapshot bytes were removed from plugin storage."
       };
     });
+  }
+  async autoPruneForQuota(dag) {
+    const nodes = Object.values(dag.tree.nodes).sort((left, right) => left.timestamp - right.timestamp);
+    const protectedIds = /* @__PURE__ */ new Set([
+      ...dag.tree.currentCheckpointId ? [dag.tree.currentCheckpointId] : [],
+      ...Object.values(dag.tree.branches).map((branch) => branch.headId).filter(Boolean)
+    ]);
+    let candidates = nodes.filter((node) => !protectedIds.has(node.id));
+    if (this.config.maxSnapshots > 0) {
+      const removeCount = Math.max(0, nodes.length - this.config.maxSnapshots + 1);
+      candidates = candidates.slice(0, removeCount);
+    }
+    if (this.config.maxStorageBytes > 0 && await directoryBytes(this.storageDir) >= this.config.maxStorageBytes) {
+      candidates = candidates.length ? candidates : nodes.filter((node) => !protectedIds.has(node.id));
+    }
+    if (candidates.length === 0) return;
+    const removed = await dag.compactNodes(candidates.map((node) => node.id));
+    await this.reclaimNodes(dag.tree.sessionId, removed);
+  }
+  async reclaimNodes(sessionId, nodes) {
+    let reclaimedBytes = 0;
+    let gitRefsRemoved = 0;
+    for (const node of nodes) {
+      if (node.gitCommitOid.startsWith("fallback_")) reclaimedBytes += await this.fallbackEngine.removeSnapshot(sessionId, node.id);
+      else if (await this.gitEngine.isGitRepo() && await this.gitEngine.deleteCheckpointRef(sessionId, node.id)) gitRefsRemoved += 1;
+    }
+    return { reclaimedBytes, gitRefsRemoved };
   }
   pruneCandidates(dag) {
     const protectedIds = /* @__PURE__ */ new Set([
@@ -1904,7 +1960,11 @@ var TimeMachineWebServer = class {
       if (keepLatest !== void 0 && (!Number.isInteger(keepLatest) || keepLatest < 0)) {
         throw Object.assign(new Error("keepLatest must be a non-negative integer"), { code: "BAD_REQUEST" });
       }
-      const result = await this.service.prune(sessionId, { keepLatest, abandonedBranches: body.abandonedBranches === true });
+      const result = await this.service.prune(sessionId, {
+        keepLatest,
+        abandonedBranches: body.abandonedBranches === true,
+        compactHistory: body.compactHistory === true
+      });
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ success: true, result }));
       return;
@@ -2062,13 +2122,17 @@ function registerCliCommands(ctx, service) {
     scope.commands.register({
       name: "tm-prune",
       description: "Prune old non-head Time Machine checkpoints",
-      input: { hint: "[keep-latest] [--abandoned-branches]" },
+      input: { hint: "[keep-latest] [--abandoned-branches] [--compact-history]" },
       handler: async ({ agent, rawInput }) => {
         const args = rawInput.trim().split(/\s+/).filter(Boolean);
         const keepArg = args.find((arg) => !arg.startsWith("--"));
         const keepLatest = keepArg ? Number(keepArg) : 20;
         if (!Number.isInteger(keepLatest) || keepLatest < 0) return { kind: "error", text: "Usage: /tm-prune [non-negative keep-latest]" };
-        const result = await service.prune(agent.session.id, { keepLatest, abandonedBranches: args.includes("--abandoned-branches") });
+        const result = await service.prune(agent.session.id, {
+          keepLatest,
+          abandonedBranches: args.includes("--abandoned-branches"),
+          compactHistory: args.includes("--compact-history")
+        });
         return { kind: "success", text: `Pruned ${result.removedCheckpointIds.length} checkpoint(s), reclaimed ${formatBytes(result.reclaimedBytes)}. ${result.note}` };
       }
     });
@@ -2197,7 +2261,8 @@ var Config = import_schemastery.default.object({
   webHost: import_schemastery.default.string().default("127.0.0.1"),
   maxSnapshots: import_schemastery.default.number().default(0),
   maxStorageBytes: import_schemastery.default.number().default(0),
-  shadowStore: import_schemastery.default.boolean().default(false)
+  shadowStore: import_schemastery.default.boolean().default(false),
+  autoPrune: import_schemastery.default.boolean().default(false)
 });
 function apply(ctx, config = {}) {
   const workDir = import_node_path6.default.resolve(process.cwd());

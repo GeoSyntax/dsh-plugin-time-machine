@@ -264,6 +264,44 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
     expect((await fs.readdir(path.join(tmpDir, '.shadow-service', 'git-shadow', 'objects'), { withFileTypes: true })).some(entry => entry.isDirectory())).toBe(true);
   });
 
+  it('compacts old linear checkpoints only when explicitly requested', async () => {
+    const sessionId = 'compact-session';
+    const file = path.join(tmpDir, 'compact.txt');
+    await fs.writeFile(file, 'one\n', 'utf8');
+    const first = await service.createTurnCheckpoint({ sessionId, turnIndex: 1, prompt: 'one', sessionState: { sessionId, messages: [] } });
+    await fs.writeFile(file, 'two\n', 'utf8');
+    const second = await service.createTurnCheckpoint({ sessionId, turnIndex: 2, prompt: 'two', sessionState: { sessionId, messages: [] } });
+    await fs.writeFile(file, 'three\n', 'utf8');
+    const third = await service.createTurnCheckpoint({ sessionId, turnIndex: 3, prompt: 'three', sessionState: { sessionId, messages: [] } });
+    const result = await service.prune(sessionId, { keepLatest: 1, compactHistory: true });
+    expect(result.removedCheckpointIds).toEqual(expect.arrayContaining([first.id, second.id]));
+    const dag = await service.getDAGManager(sessionId);
+    expect(dag.getNode(first.id)).toBeNull();
+    expect(dag.getNode(second.id)).toBeNull();
+    expect(dag.getNode(third.id)?.parentId).toBeNull();
+    expect((await service.getStorageStatus(sessionId)).checkpoints).toBe(1);
+  });
+
+  it('can auto-compact quota history only when explicitly enabled', async () => {
+    const auto = new TimeMachineService({
+      workDir: tmpDir,
+      storageDir: path.join(tmpDir, '.auto-prune-tm'),
+      config: { maxSnapshots: 2, autoPrune: true },
+    });
+    const sessionId = 'auto-prune-session';
+    const file = path.join(tmpDir, 'auto-prune.txt');
+    await fs.writeFile(file, 'one\n', 'utf8');
+    const first = await auto.createTurnCheckpoint({ sessionId, turnIndex: 1, prompt: 'one', sessionState: { sessionId, messages: [] } });
+    await fs.writeFile(file, 'two\n', 'utf8');
+    const second = await auto.createTurnCheckpoint({ sessionId, turnIndex: 2, prompt: 'two', sessionState: { sessionId, messages: [] } });
+    await fs.writeFile(file, 'three\n', 'utf8');
+    const third = await auto.createTurnCheckpoint({ sessionId, turnIndex: 3, prompt: 'three', sessionState: { sessionId, messages: [] } });
+    const dag = await auto.getDAGManager(sessionId);
+    expect(dag.getNode(first.id)).toBeNull();
+    expect(dag.getNode(second.id)).not.toBeNull();
+    expect(dag.getNode(third.id)?.parentId).toBe(second.id);
+  });
+
   it('finalizes a turn and reloads its DAG state after a service restart', async () => {
     const sessionId = 'restart-session';
     const file = path.join(tmpDir, 'restart.txt');

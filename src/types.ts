@@ -28,6 +28,22 @@ export interface FileChange {
   stagedLinesDeleted?: number;
 }
 
+/**
+ * A declaration from an integration that changed state outside the workspace.
+ * Time Machine records it for audit/reflection; it never runs compensation
+ * implicitly because the adapter owns the external system's semantics.
+ */
+export interface ExternalEffectRecord {
+  id: string;
+  adapter: string;
+  operation: string;
+  reversible: boolean;
+  compensation?: string;
+  failureSemantics: string;
+  status: 'unresolved' | 'compensated' | 'unknown';
+  recordedAt: number;
+}
+
 export interface CheckpointNode {
   id: string;
   parentId: string | null;
@@ -51,6 +67,8 @@ export interface CheckpointNode {
   settledIgnoredPaths?: string[];
   /** Local quarantine containing ignored files removed by an explicit restore. */
   ignoredBackupKey?: string;
+  /** External mutations declared by integrations; never compensated implicitly. */
+  externalEffects?: ExternalEffectRecord[];
 }
 
 export interface DAGTree {
@@ -184,4 +202,6 @@ export interface ReflectionSummary {
   failedNodeCount: number;
   summaryNote: string;
   suggestedPromptPrefix: string;
+  hasExternalEffects?: boolean;
+  externalEffectCount?: number;
 }

@@ -9,6 +9,7 @@ import { KeyedOperationLock } from './core/operation-lock.js';
 import { WorkspaceFileLock } from './core/workspace-lock.js';
 import type {
   CheckpointNode,
+  ExternalEffectRecord,
   DAGTree,
   DiffResult,
   ReflectionSummary,
@@ -274,6 +275,34 @@ export class TimeMachineService {
         failedTools: params.failedTools,
         settledGitTreeOid: settled?.treeOid,
         settledIgnoredPaths: settled?.ignoredPaths,
+      });
+    });
+  }
+
+  /**
+   * Record an external mutation against a checkpoint. The core deliberately
+   * does not execute compensation; an adapter can later use this declaration
+   * to perform an explicit, user-approved reversal.
+   */
+  async recordExternalEffect(
+    sessionId: string,
+    checkpointId: string,
+    effect: Omit<ExternalEffectRecord, 'id' | 'recordedAt'> & { id?: string },
+  ): Promise<CheckpointNode> {
+    return this.runWorkspaceOperation(async () => {
+      if (!effect.adapter.trim() || !effect.operation.trim() || !effect.failureSemantics.trim()) {
+        throw new Error('External effect adapter, operation, and failureSemantics are required.');
+      }
+      const dag = await this.getDAGManager(sessionId);
+      const node = dag.getNode(checkpointId);
+      if (!node) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
+      const record: ExternalEffectRecord = {
+        ...effect,
+        id: effect.id || randomUUID(),
+        recordedAt: Date.now(),
+      };
+      return dag.updateNode(checkpointId, {
+        externalEffects: [...(node.externalEffects ?? []), record],
       });
     });
   }

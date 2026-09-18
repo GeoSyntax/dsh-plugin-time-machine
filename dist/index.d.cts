@@ -28,6 +28,21 @@ interface FileChange {
     stagedLinesAdded?: number;
     stagedLinesDeleted?: number;
 }
+/**
+ * A declaration from an integration that changed state outside the workspace.
+ * Time Machine records it for audit/reflection; it never runs compensation
+ * implicitly because the adapter owns the external system's semantics.
+ */
+interface ExternalEffectRecord {
+    id: string;
+    adapter: string;
+    operation: string;
+    reversible: boolean;
+    compensation?: string;
+    failureSemantics: string;
+    status: 'unresolved' | 'compensated' | 'unknown';
+    recordedAt: number;
+}
 interface CheckpointNode {
     id: string;
     parentId: string | null;
@@ -55,6 +70,8 @@ interface CheckpointNode {
     settledIgnoredPaths?: string[];
     /** Local quarantine containing ignored files removed by an explicit restore. */
     ignoredBackupKey?: string;
+    /** External mutations declared by integrations; never compensated implicitly. */
+    externalEffects?: ExternalEffectRecord[];
 }
 interface DAGTree {
     sessionId: string;
@@ -178,6 +195,8 @@ interface ReflectionSummary {
     failedNodeCount: number;
     summaryNote: string;
     suggestedPromptPrefix: string;
+    hasExternalEffects?: boolean;
+    externalEffectCount?: number;
 }
 
 interface DAGManagerOptions {
@@ -209,7 +228,7 @@ declare class DAGStateManager {
      * 获取指定 ID 的节点
      */
     getNode(checkpointId: string): CheckpointNode | null;
-    updateNode(checkpointId: string, patch: Partial<Pick<CheckpointNode, 'status' | 'errorMessage' | 'failedTools' | 'summary' | 'settledGitTreeOid' | 'settledIgnoredPaths' | 'ignoredBackupKey'>>): Promise<CheckpointNode>;
+    updateNode(checkpointId: string, patch: Partial<Pick<CheckpointNode, 'status' | 'errorMessage' | 'failedTools' | 'summary' | 'settledGitTreeOid' | 'settledIgnoredPaths' | 'ignoredBackupKey' | 'externalEffects'>>): Promise<CheckpointNode>;
     /** Remove only leaf checkpoints that are not current or a branch head. */
     removeLeafNodes(checkpointIds: string[]): Promise<CheckpointNode[]>;
     /** Remove historical nodes while reparenting surviving children to the nearest ancestor. */
@@ -307,6 +326,14 @@ declare class TimeMachineService {
             input: any;
             error: string;
         }>;
+    }): Promise<CheckpointNode>;
+    /**
+     * Record an external mutation against a checkpoint. The core deliberately
+     * does not execute compensation; an adapter can later use this declaration
+     * to perform an explicit, user-approved reversal.
+     */
+    recordExternalEffect(sessionId: string, checkpointId: string, effect: Omit<ExternalEffectRecord, 'id' | 'recordedAt'> & {
+        id?: string;
     }): Promise<CheckpointNode>;
     /**
      * 核心：回滚物理工作区与会话状态至指定快照
@@ -701,4 +728,4 @@ declare class TimeMachinePlugin {
     constructor(ctx: Context, config?: Config);
 }
 
-export { type CheckpointNode, Config, type DAGManagerOptions, DAGStateManager, type DAGTree, type DiffResult, type FallbackOptions, FallbackSnapshotEngine, type FileChange, GitPlumbingEngine, type GitPlumbingOptions, type GitRestoreOptions, type GitSelectiveRestoreOptions, type GitSnapshot, type PruneResult, QuarantineKeyError, QuarantineQuotaError, ReflectionAdvisor, type ReflectionSummary, type RestoreOptions, RestorePlanError, type RestorePreview, type RestoreResult, type SelectiveRestoreResult, type SessionMessage, type SessionState, type ShadowGcResult, type ShadowRepackResult, SnapshotSizeError, StorageQuotaError, type StorageStatus, type TimeMachineConfig, TimeMachinePlugin, TimeMachineService, type TimeMachineServiceOptions, UnsupportedWorkspaceStateError, type WorkspaceCapabilities, WorkspaceDriftError, WorkspaceMergeConflictError, WorkspaceRestoreConflictError, apply, collectFailedTools, TimeMachinePlugin as default, name };
+export { type CheckpointNode, Config, type DAGManagerOptions, DAGStateManager, type DAGTree, type DiffResult, type ExternalEffectRecord, type FallbackOptions, FallbackSnapshotEngine, type FileChange, GitPlumbingEngine, type GitPlumbingOptions, type GitRestoreOptions, type GitSelectiveRestoreOptions, type GitSnapshot, type PruneResult, QuarantineKeyError, QuarantineQuotaError, ReflectionAdvisor, type ReflectionSummary, type RestoreOptions, RestorePlanError, type RestorePreview, type RestoreResult, type SelectiveRestoreResult, type SessionMessage, type SessionState, type ShadowGcResult, type ShadowRepackResult, SnapshotSizeError, StorageQuotaError, type StorageStatus, type TimeMachineConfig, TimeMachinePlugin, TimeMachineService, type TimeMachineServiceOptions, UnsupportedWorkspaceStateError, type WorkspaceCapabilities, WorkspaceDriftError, WorkspaceMergeConflictError, WorkspaceRestoreConflictError, apply, collectFailedTools, TimeMachinePlugin as default, name };

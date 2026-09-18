@@ -567,6 +567,48 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
     expect(result.reflectionAdvisory.suggestedPromptPrefix).toContain('Failed tool [shell]');
   });
 
+  it('persists external effect declarations and warns on a fork', async () => {
+    const sessionId = 'external-effect-ledger';
+    const file = path.join(tmpDir, 'external-effect.txt');
+    await fs.writeFile(file, 'v1\n', 'utf8');
+    const first = await service.createTurnCheckpoint({
+      sessionId,
+      turnIndex: 1,
+      prompt: 'baseline',
+      sessionState: { sessionId, messages: [] },
+    });
+    await fs.writeFile(file, 'v2\n', 'utf8');
+    const second = await service.createTurnCheckpoint({
+      sessionId,
+      turnIndex: 2,
+      prompt: 'provision remote cache',
+      sessionState: { sessionId, messages: [] },
+    });
+
+    const updated = await service.recordExternalEffect(sessionId, second.id, {
+      adapter: 'redis-adapter',
+      operation: 'create session namespace',
+      reversible: false,
+      failureSemantics: 'remote namespace may remain after workspace restore',
+      status: 'unresolved',
+      compensation: 'run redis-adapter cleanup with the recorded namespace id',
+    });
+    expect(updated.externalEffects).toHaveLength(1);
+    expect(updated.externalEffects?.[0]?.adapter).toBe('redis-adapter');
+
+    const restarted = new TimeMachineService({ workDir: tmpDir, storageDir: path.join(tmpDir, '.dsh-tm') });
+    const loaded = (await restarted.getDAGManager(sessionId)).getNode(second.id);
+    expect(loaded?.externalEffects?.[0]?.operation).toBe('create session namespace');
+
+    const result = await restarted.forkNewBranch({
+      sessionId,
+      fromCheckpointId: first.id,
+      newBranchName: 'external-effect-retry',
+    });
+    expect(result.reflectionAdvisory.hasExternalEffects).toBe(true);
+    expect(result.reflectionAdvisory.suggestedPromptPrefix).toContain('remote namespace');
+  });
+
   it('verifies the restored workspace digest for the fallback engine', async () => {
     const fallbackRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-fallback-service-'));
     try {

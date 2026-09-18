@@ -105,7 +105,7 @@ export class DAGStateManager {
     return this.tree.nodes[checkpointId] || null;
   }
 
-  async updateNode(checkpointId: string, patch: Partial<Pick<CheckpointNode, 'status' | 'errorMessage' | 'failedTools' | 'summary' | 'settledGitTreeOid' | 'settledIgnoredPaths' | 'ignoredBackupKey'>>): Promise<CheckpointNode> {
+  async updateNode(checkpointId: string, patch: Partial<Pick<CheckpointNode, 'status' | 'errorMessage' | 'failedTools' | 'summary' | 'settledGitTreeOid' | 'settledIgnoredPaths' | 'ignoredBackupKey' | 'externalEffects'>>): Promise<CheckpointNode> {
     const node = this.getNode(checkpointId);
     if (!node) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
     const updated = { ...node, ...cloneJson(patch) };

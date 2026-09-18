@@ -68,13 +68,18 @@ omitted-path state.
 
 ### External side-effect ledger
 
-Provide an extension interface for integrations to record reversible database,
-process, network, or cloud mutations. The core plugin must not pretend that a
-filesystem snapshot can undo them.
+The first extension surface is now available through
+`TimeMachineService.recordExternalEffect()`. Integrations can persist an
+adapter name, operation, reversibility declaration, compensation description,
+failure semantics, and status on a checkpoint. The core plugin deliberately
+does not execute compensation; fork reflection reports the declaration as a
+warning. Adapter discovery, authenticated compensation execution, and
+idempotency protocols remain future work.
 
 **Acceptance:** each adapter declares compensation guarantees and failure
 semantics; a missing adapter produces an explicit warning in the checkpoint and
-reflection report.
+reflection report. The core must never claim that a filesystem snapshot undoes
+an external mutation.
 
 ## Current non-goals
 

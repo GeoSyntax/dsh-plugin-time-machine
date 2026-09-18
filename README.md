@@ -147,6 +147,7 @@ index、ignored 集合和 protected paths 变化为失效条件，不能牺牲�
 - Git sparse checkout、submodule 和 merge/rebase/cherry-pick 进行中状态会被明确识别并拒绝创建/预览/恢复 checkpoint（`UNSUPPORTED_WORKSPACE_STATE`），避免把不完整工作区误报为可回滚快照；请先完成操作或使用普通 worktree。
 - 当前 manifest 只声明 `web` profile；原生 TUI 不在兼容承诺范围内。
 - Hermes Agent v2 已有自己的 checkpoint/rollback；本插件适合需要 DSH Session fork、DAG 探索或失败反思的场景。
+- 外部数据库、网络、进程或云资源变更不会被文件恢复假装“回滚”。集成方可调用 `service.recordExternalEffect(...)` 记录 adapter、操作、可逆性、补偿说明和失败语义；这些记录会持久化到 checkpoint，并在 fork 反思中生成警告，但核心不会未经用户批准执行补偿。
 
 问题定义、设计取舍、同类能力对照、社区路线图和完整验收矩阵见 [docs/PROBLEM.md](docs/PROBLEM.md)、[docs/COMPARISON.md](docs/COMPARISON.md)、[docs/ROADMAP.md](docs/ROADMAP.md)、[DESIGN.md](DESIGN.md) 和 [docs/TEST_PLAN.md](docs/TEST_PLAN.md)。
 

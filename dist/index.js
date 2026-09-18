@@ -1573,10 +1573,13 @@ var ReflectionAdvisor = class {
         hasPastFailures: false,
         failedNodeCount: 0,
         summaryNote: "",
-        suggestedPromptPrefix: ""
+        suggestedPromptPrefix: "",
+        hasExternalEffects: false,
+        externalEffectCount: 0
       };
     }
     const failureIncidents = [];
+    const externalEffects = abandonedNodes.flatMap((node) => node.externalEffects ?? []);
     for (const node of abandonedNodes) {
       if (node.status === "failed" || node.errorMessage || node.failedTools && node.failedTools.length > 0) {
         failureIncidents.push({
@@ -1587,11 +1590,14 @@ var ReflectionAdvisor = class {
       }
     }
     if (failureIncidents.length === 0) {
+      const hasEffects = externalEffects.length > 0;
       return {
         hasPastFailures: false,
         failedNodeCount: 0,
-        summaryNote: "Previous branches explored alternative solutions without logged runtime errors.",
-        suggestedPromptPrefix: ""
+        summaryNote: hasEffects ? `Previous branches declared ${externalEffects.length} external side effect(s); workspace restore does not compensate them.` : "Previous branches explored alternative solutions without logged runtime errors.",
+        suggestedPromptPrefix: hasEffects ? externalEffectAdvisory(externalEffects) : "",
+        hasExternalEffects: hasEffects,
+        externalEffectCount: externalEffects.length
       };
     }
     const lines = [
@@ -1610,6 +1616,14 @@ var ReflectionAdvisor = class {
         });
       }
     });
+    if (externalEffects.length > 0) {
+      lines.push(`External side effects were declared in abandoned branch(es); filesystem restore does not undo them:`);
+      externalEffects.slice(0, 5).forEach((effect) => {
+        lines.push(`  - [${effect.adapter}] ${effect.operation}: ${effect.reversible ? "adapter-declared reversible" : "not declared reversible"}; ${effect.failureSemantics.slice(0, 140)}`);
+        if (effect.compensation) lines.push(`    Explicit compensation: ${effect.compensation.slice(0, 160)}`);
+      });
+      lines.push(`WARNING: verify external state or run the adapter's explicit compensation before relying on this branch.`);
+    }
     lines.push(
       `CRITICAL INSTRUCTION: Do NOT repeat the exact approaches or failed commands above. Choose a cleaner, alternative architectural or implementation strategy.`
     );
@@ -1618,10 +1632,24 @@ var ReflectionAdvisor = class {
       hasPastFailures: true,
       failedNodeCount: failureIncidents.length,
       summaryNote: `Detected ${failureIncidents.length} failed attempts in alternative branches.`,
-      suggestedPromptPrefix: summaryText
+      suggestedPromptPrefix: summaryText,
+      hasExternalEffects: externalEffects.length > 0,
+      externalEffectCount: externalEffects.length
     };
   }
 };
+function externalEffectAdvisory(effects) {
+  const lines = [
+    `[TIME-MACHINE EXTERNAL EFFECT WARNING]`,
+    `Filesystem/session restore does not automatically undo external database, network, process, or cloud mutations.`,
+    `Verify the following declared effects before continuing:`
+  ];
+  for (const effect of effects.slice(0, 5)) {
+    lines.push(`  - [${effect.adapter}] ${effect.operation}: ${effect.failureSemantics.slice(0, 140)}`);
+    if (effect.compensation) lines.push(`    Explicit compensation: ${effect.compensation.slice(0, 160)}`);
+  }
+  return lines.join("\n");
+}
 
 // src/core/operation-lock.ts
 init_esm_shims();
@@ -1888,6 +1916,29 @@ var TimeMachineService = class {
         failedTools: params.failedTools,
         settledGitTreeOid: settled?.treeOid,
         settledIgnoredPaths: settled?.ignoredPaths
+      });
+    });
+  }
+  /**
+   * Record an external mutation against a checkpoint. The core deliberately
+   * does not execute compensation; an adapter can later use this declaration
+   * to perform an explicit, user-approved reversal.
+   */
+  async recordExternalEffect(sessionId, checkpointId, effect) {
+    return this.runWorkspaceOperation(async () => {
+      if (!effect.adapter.trim() || !effect.operation.trim() || !effect.failureSemantics.trim()) {
+        throw new Error("External effect adapter, operation, and failureSemantics are required.");
+      }
+      const dag = await this.getDAGManager(sessionId);
+      const node = dag.getNode(checkpointId);
+      if (!node) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
+      const record = {
+        ...effect,
+        id: effect.id || randomUUID5(),
+        recordedAt: Date.now()
+      };
+      return dag.updateNode(checkpointId, {
+        externalEffects: [...node.externalEffects ?? [], record]
       });
     });
   }

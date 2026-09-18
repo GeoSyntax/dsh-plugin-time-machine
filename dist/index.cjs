@@ -2183,7 +2183,17 @@ var TimeMachineService = class {
       shadowStore: git && this.config.shadowStore,
       quarantineEncryption: Boolean(this.config.quarantineEncryptionKeyEnv && process.env[this.config.quarantineEncryptionKeyEnv]),
       workspaceIsolation: "shared-lock",
-      workspace
+      workspace,
+      policies: {
+        restoreMode: this.config.restoreMode,
+        maxSnapshots: this.config.maxSnapshots,
+        maxStorageBytes: this.config.maxStorageBytes,
+        retentionMaxAgeMs: this.config.retentionMaxAgeMs,
+        maxSnapshotFileBytes: this.config.maxSnapshotFileBytes,
+        maxSnapshotBytes: this.config.maxSnapshotBytes,
+        maxQuarantineBytes: this.config.maxQuarantineBytes,
+        workspaceLockTimeoutMs: this.config.workspaceLockTimeoutMs
+      }
     };
   }
   async prune(sessionId, options = {}) {

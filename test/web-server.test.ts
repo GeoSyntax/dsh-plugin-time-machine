@@ -55,6 +55,14 @@ describe('TimeMachineWebServer', () => {
     expect(capabilities.selectiveRestore).toBe(true);
     expect(capabilities.quarantineEncryption).toBe(false);
     expect(capabilities.workspaceIsolation).toBe('shared-lock');
+    expect(capabilities.policies).toMatchObject({
+      restoreMode: 'safe',
+      maxSnapshots: 0,
+      maxStorageBytes: 0,
+      retentionMaxAgeMs: 0,
+      maxSnapshotFileBytes: 0,
+      maxSnapshotBytes: 0,
+    });
 
     // 3. 测试静态网页托管
     const htmlRes = await fetch(`http://localhost:${testPort}/`);

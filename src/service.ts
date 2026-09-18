@@ -614,6 +614,16 @@ export class TimeMachineService {
     quarantineEncryption: boolean;
     workspaceIsolation: 'shared-lock';
     workspace: { sparseCheckout: boolean; submodulePaths: string[]; inProgressOperation: string | null };
+    policies: {
+      restoreMode: 'safe' | 'merge' | 'force';
+      maxSnapshots: number;
+      maxStorageBytes: number;
+      retentionMaxAgeMs: number;
+      maxSnapshotFileBytes: number;
+      maxSnapshotBytes: number;
+      maxQuarantineBytes: number;
+      workspaceLockTimeoutMs: number;
+    };
   }> {
     const git = await this.gitEngine.isGitRepo();
     const workspace = git
@@ -629,6 +639,16 @@ export class TimeMachineService {
       quarantineEncryption: Boolean(this.config.quarantineEncryptionKeyEnv && process.env[this.config.quarantineEncryptionKeyEnv]),
       workspaceIsolation: 'shared-lock',
       workspace,
+      policies: {
+        restoreMode: this.config.restoreMode,
+        maxSnapshots: this.config.maxSnapshots,
+        maxStorageBytes: this.config.maxStorageBytes,
+        retentionMaxAgeMs: this.config.retentionMaxAgeMs,
+        maxSnapshotFileBytes: this.config.maxSnapshotFileBytes,
+        maxSnapshotBytes: this.config.maxSnapshotBytes,
+        maxQuarantineBytes: this.config.maxQuarantineBytes,
+        workspaceLockTimeoutMs: this.config.workspaceLockTimeoutMs,
+      },
     };
   }
 

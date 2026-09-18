@@ -166,7 +166,10 @@ try {
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ sessionId, checkpointId: checkpoint.id, branchName: 'web-smoke-alt' }),
   });
-  if (!fork.ok) throw new Error(`Real-host fork failed: ${fork.status} ${await fork.text()}`);
+  const forkBody = await fork.json();
+  if (!fork.ok || typeof forkBody.conversation?.sessionId !== 'string') {
+    throw new Error(`Real-host fork failed: ${fork.status} ${JSON.stringify(forkBody)}`);
+  }
   await new Promise((resolve) => setTimeout(resolve, 500));
   try { await readFile(file, 'utf8'); throw new Error('Fork left the generated file behind.'); } catch (error) { if (error.code !== 'ENOENT') throw error; }
 
@@ -177,7 +180,10 @@ try {
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ sessionId, checkpointId: checkpoint.id, force: true }),
   });
-  if (!rewind.ok) throw new Error(`Real-host rewind failed: ${rewind.status} ${await rewind.text()}`);
+  const rewindBody = await rewind.json();
+  if (!rewind.ok || typeof rewindBody.conversation?.sessionId !== 'string') {
+    throw new Error(`Real-host rewind failed: ${rewind.status} ${JSON.stringify(rewindBody)}`);
+  }
   console.log('Real DSH web host session, finalized checkpoint, fork, and rewind passed.');
 } finally {
   if (child && !child.killed) child.kill();

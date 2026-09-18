@@ -38,6 +38,15 @@ async function loadDag() {
   }
 }
 
+function adoptConversation(result) {
+  const nextSessionId = result?.conversation?.sessionId;
+  if (typeof nextSessionId !== 'string' || nextSessionId.length === 0) return false;
+  currentSessionId = nextSessionId;
+  selectedNodeId = null;
+  sessionBadge.textContent = currentSessionId;
+  return true;
+}
+
 function renderTimeline() {
   if (!dagData || !dagData.nodes) return;
   currentBranchBadge.textContent = String(dagData.currentBranch);
@@ -167,6 +176,7 @@ modalConfirmFork.addEventListener('click', async () => {
       body: JSON.stringify({ sessionId: currentSessionId, checkpointId: selectedNodeId, branchName, description }),
     });
     forkModal.classList.add('hidden');
+    adoptConversation(result);
     await loadDag();
     alert(`✔ Branch ${branchName} restored. Continue in DSH session: ${result.conversation.sessionId}`);
   } catch (error) {
@@ -185,6 +195,7 @@ async function triggerRewind(nodeId, turnIndex) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sessionId: currentSessionId, checkpointId: nodeId }),
     });
+    adoptConversation(result);
     await loadDag();
     alert(`✔ Restored Turn #${turnIndex}. Continue in DSH session: ${result.conversation.sessionId}`);
   } catch (error) {

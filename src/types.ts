@@ -67,6 +67,8 @@ export interface CheckpointNode {
   settledIgnoredPaths?: string[];
   /** Local quarantine containing ignored files removed by an explicit restore. */
   ignoredBackupKey?: string;
+  /** Files deliberately omitted by an opt-in partial snapshot. */
+  omittedPaths?: string[];
   /** External mutations declared by integrations; never compensated implicitly. */
   externalEffects?: ExternalEffectRecord[];
 }
@@ -120,6 +122,8 @@ export interface TimeMachineConfig {
   maxSnapshotFileBytes?: number;
   /** Maximum aggregate regular-file bytes in one checkpoint; 0 disables the guard. */
   maxSnapshotBytes?: number;
+  /** Opt in to omitting files that exceed snapshot limits; disabled by default. */
+  allowPartialSnapshots?: boolean;
 }
 
 export interface RestoreOptions {
@@ -157,6 +161,7 @@ export interface RestorePreview {
   targetTreeOid: string;
   currentIgnoredPaths: string[];
   targetIgnoredPaths: string[];
+  targetOmittedPaths?: string[];
   ignoredPathsToDelete: string[];
   diffs: DiffResult[];
   /** Paths changed after the active checkpoint that make safe restore refuse overwrite. */

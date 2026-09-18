@@ -417,6 +417,24 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
     expect((await quotaService.getDAGManager(sessionId)).getNode(first.id)).not.toBeNull();
   });
 
+  it('records omitted paths for explicit partial snapshots and preserves them on rewind', async () => {
+    const partialService = new TimeMachineService({
+      workDir: tmpDir,
+      storageDir: path.join(tmpDir, '.partial-tm'),
+      config: { maxSnapshotFileBytes: 4, allowPartialSnapshots: true },
+    });
+    const large = path.join(tmpDir, 'large.txt');
+    await fs.writeFile(large, 'too-large-for-capture', 'utf8');
+    const checkpoint = await partialService.createTurnCheckpoint({
+      sessionId: 'partial-service', turnIndex: 1, prompt: 'partial',
+      sessionState: { sessionId: 'partial-service', messages: [] },
+    });
+    expect(checkpoint.omittedPaths).toEqual(['large.txt']);
+    await fs.writeFile(large, 'live value must survive', 'utf8');
+    await partialService.rewindToCheckpoint('partial-service', checkpoint.id, { mode: 'force' });
+    expect(await fs.readFile(large, 'utf8')).toBe('live value must survive');
+  });
+
   it('supports the opt-in shadow object store through the service', async () => {
     const shadowService = new TimeMachineService({
       workDir: tmpDir,

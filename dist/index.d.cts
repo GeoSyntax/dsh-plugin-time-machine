@@ -70,6 +70,8 @@ interface CheckpointNode {
     settledIgnoredPaths?: string[];
     /** Local quarantine containing ignored files removed by an explicit restore. */
     ignoredBackupKey?: string;
+    /** Files deliberately omitted by an opt-in partial snapshot. */
+    omittedPaths?: string[];
     /** External mutations declared by integrations; never compensated implicitly. */
     externalEffects?: ExternalEffectRecord[];
 }
@@ -121,6 +123,8 @@ interface TimeMachineConfig {
     maxSnapshotFileBytes?: number;
     /** Maximum aggregate regular-file bytes in one checkpoint; 0 disables the guard. */
     maxSnapshotBytes?: number;
+    /** Opt in to omitting files that exceed snapshot limits; disabled by default. */
+    allowPartialSnapshots?: boolean;
 }
 interface RestoreOptions {
     mode?: 'safe' | 'merge' | 'force';
@@ -154,6 +158,7 @@ interface RestorePreview {
     targetTreeOid: string;
     currentIgnoredPaths: string[];
     targetIgnoredPaths: string[];
+    targetOmittedPaths?: string[];
     ignoredPathsToDelete: string[];
     diffs: DiffResult[];
     /** Paths changed after the active checkpoint that make safe restore refuse overwrite. */
@@ -392,6 +397,7 @@ declare class TimeMachineService {
         shadowStore: boolean;
         quarantineEncryption: boolean;
         quarantineMigration: boolean;
+        partialSnapshots: boolean;
         externalEffectLedger: true;
         workspaceIsolation: 'shared-lock';
         workspace: {
@@ -406,6 +412,7 @@ declare class TimeMachineService {
             retentionMaxAgeMs: number;
             maxSnapshotFileBytes: number;
             maxSnapshotBytes: number;
+            allowPartialSnapshots: boolean;
             maxQuarantineBytes: number;
             workspaceLockTimeoutMs: number;
         };
@@ -447,12 +454,15 @@ interface GitPlumbingOptions {
     maxSnapshotFileBytes?: number;
     /** Maximum aggregate regular-file bytes in one checkpoint; 0 disables the guard. */
     maxSnapshotBytes?: number;
+    /** Opt in to omitting files that exceed snapshot limits. */
+    allowPartialSnapshots?: boolean;
 }
 interface GitSnapshot {
     treeOid: string;
     commitOid: string;
     changedFiles: FileChange[];
     ignoredPaths: string[];
+    omittedPaths: string[];
 }
 interface WorkspaceCapabilities {
     sparseCheckout: boolean;
@@ -483,6 +493,8 @@ interface GitRestoreOptions {
     mode?: 'safe' | 'merge' | 'force';
     deleteNewIgnoredPaths?: boolean;
     ignoredBackupKey?: string;
+    /** Paths omitted from the target snapshot; preserve their live content. */
+    omittedPaths?: string[];
 }
 interface GitSelectiveRestoreOptions {
     expectedCurrentTreeOid?: string;
@@ -545,6 +557,7 @@ declare class GitPlumbingEngine {
     private readonly maxQuarantineBytes;
     private readonly maxSnapshotFileBytes;
     private readonly maxSnapshotBytes;
+    private readonly allowPartialSnapshots;
     private readonly quarantineKey?;
     private shadowReady?;
     /** Last complete managed tree and the Git status signature that produced it. */
@@ -565,7 +578,9 @@ declare class GitPlumbingEngine {
         message?: string;
     }): Promise<GitSnapshot>;
     /** Compute the current managed tree without publishing a commit or ref. */
-    inspectWorkspace(): Promise<{
+    inspectWorkspace(options?: {
+        omitPaths?: string[];
+    }): Promise<{
         treeOid: string;
         ignoredPaths: string[];
     }>;
@@ -583,6 +598,8 @@ declare class GitPlumbingEngine {
         deletedIgnoredPaths: string[];
         restoredTreeOid: string;
     }>;
+    private stashWorkspacePaths;
+    private restoreStashedWorkspacePaths;
     private mergeWorkspaceTree;
     /** Restore only selected tracked workspace paths using a disposable index. */
     restoreSelectedPaths(commitOrTreeOid: string, paths: string[], options?: GitSelectiveRestoreOptions): Promise<string[]>;

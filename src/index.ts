@@ -32,6 +32,7 @@ export const Config: Schema<Config> = Schema.object({
   restorePlanTtlMs: Schema.number().default(900000),
   maxSnapshotFileBytes: Schema.number().default(0),
   maxSnapshotBytes: Schema.number().default(0),
+  allowPartialSnapshots: Schema.boolean().default(false),
 });
 
 interface SessionEventLike {

@@ -232,6 +232,9 @@ async function triggerRewind(nodeId, turnIndex) {
   const more = (preview.diffs || []).length > 12 ? `\n…and ${(preview.diffs || []).length - 12} more` : '';
   const conflicts = (preview.conflictingPaths || []).slice(0, 12).join('\n');
   const conflictMore = (preview.conflictingPaths || []).length > 12 ? `\n…and ${(preview.conflictingPaths || []).length - 12} more` : '';
+  const omitted = (preview.targetOmittedPaths || []).length
+    ? `\n\n⚠ This is a partial checkpoint. Omitted paths will be preserved live:\n${preview.targetOmittedPaths.join('\n')}`
+    : '';
   const warning = preview.requiresForce
     ? `\n\n⚠ Workspace drift detected; safe restore will refuse to overwrite it.\nConflicts:\n${conflicts || '(unavailable)'}${conflictMore}`
     : '';
@@ -241,7 +244,7 @@ async function triggerRewind(nodeId, turnIndex) {
     if (!merge) return;
   }
   const confirmed = confirm(
-    `Rewind to Turn #${turnIndex}${merge ? ' with three-way merge' : ''}?\n\nPlanned file changes:\n${files || '(none)'}${more}${warning}\n\nA rescue point is created first.`,
+    `Rewind to Turn #${turnIndex}${merge ? ' with three-way merge' : ''}?\n\nPlanned file changes:\n${files || '(none)'}${more}${warning}${omitted}\n\nA rescue point is created first.`,
   );
   if (!confirmed) return;
   try {

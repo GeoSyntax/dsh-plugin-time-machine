@@ -37,6 +37,8 @@ export interface GitPlumbingOptions {
   maxSnapshotFileBytes?: number;
   /** Maximum aggregate regular-file bytes in one checkpoint; 0 disables the guard. */
   maxSnapshotBytes?: number;
+  /** Opt in to omitting files that exceed snapshot limits. */
+  allowPartialSnapshots?: boolean;
 }
 
 export interface GitSnapshot {
@@ -44,6 +46,7 @@ export interface GitSnapshot {
   commitOid: string;
   changedFiles: FileChange[];
   ignoredPaths: string[];
+  omittedPaths: string[];
 }
 
 export interface WorkspaceCapabilities {
@@ -79,6 +82,8 @@ export interface GitRestoreOptions {
   mode?: 'safe' | 'merge' | 'force';
   deleteNewIgnoredPaths?: boolean;
   ignoredBackupKey?: string;
+  /** Paths omitted from the target snapshot; preserve their live content. */
+  omittedPaths?: string[];
 }
 
 export interface GitSelectiveRestoreOptions {
@@ -169,6 +174,7 @@ export class GitPlumbingEngine {
   private readonly maxQuarantineBytes: number;
   private readonly maxSnapshotFileBytes: number;
   private readonly maxSnapshotBytes: number;
+  private readonly allowPartialSnapshots: boolean;
   private readonly quarantineKey?: Buffer;
   private shadowReady?: Promise<void>;
   /** Last complete managed tree and the Git status signature that produced it. */
@@ -183,6 +189,7 @@ export class GitPlumbingEngine {
     this.maxQuarantineBytes = Math.max(0, Math.floor(options.maxQuarantineBytes ?? 0));
     this.maxSnapshotFileBytes = Math.max(0, Math.floor(options.maxSnapshotFileBytes ?? 0));
     this.maxSnapshotBytes = Math.max(0, Math.floor(options.maxSnapshotBytes ?? 0));
+    this.allowPartialSnapshots = options.allowPartialSnapshots === true;
     this.quarantineKey = options.quarantineEncryptionKey
       ? createHash('sha256').update(options.quarantineEncryptionKey).digest()
       : undefined;
@@ -257,9 +264,10 @@ export class GitPlumbingEngine {
     const cached = status.cacheable && this.workspaceTreeCache?.signature === status.signature
       ? this.workspaceTreeCache.treeOid
       : undefined;
-    const { treeOid, indexFile } = cached
-      ? { treeOid: cached, indexFile: undefined }
+    const treeResult = cached
+      ? { treeOid: cached, indexFile: undefined, omittedPaths: [] as string[] }
       : await this.writeWorkspaceTree(enforceSnapshotLimits);
+    const { treeOid, indexFile } = treeResult;
     try {
       const commitMsg = params.message || `DSH Checkpoint [${params.sessionId}:${params.checkpointId}]`;
       const commitArgs = ['commit-tree', treeOid, '-m', commitMsg];
@@ -286,15 +294,17 @@ export class GitPlumbingEngine {
           : undefined;
       }
 
-      const changedFiles = params.parentCommitOid
+      const changedFiles = (params.parentCommitOid
         ? await this.computeChangedFiles(params.parentCommitOid, commitOid)
-        : await this.listTreeFiles(treeOid);
+        : await this.listTreeFiles(treeOid))
+        .filter(change => !treeResult.omittedPaths.includes(change.path));
 
       return {
         treeOid,
         commitOid,
         changedFiles,
         ignoredPaths: await this.listIgnoredPaths(),
+        omittedPaths: treeResult.omittedPaths,
       };
     } finally {
       if (indexFile) await fs.rm(indexFile, { force: true }).catch(() => undefined);
@@ -302,8 +312,8 @@ export class GitPlumbingEngine {
   }
 
   /** Compute the current managed tree without publishing a commit or ref. */
-  async inspectWorkspace(): Promise<{ treeOid: string; ignoredPaths: string[] }> {
-    const { treeOid, indexFile } = await this.writeWorkspaceTree();
+  async inspectWorkspace(options: { omitPaths?: string[] } = {}): Promise<{ treeOid: string; ignoredPaths: string[] }> {
+    const { treeOid, indexFile } = await this.writeWorkspaceTree(false, options.omitPaths ?? []);
     try {
       return { treeOid, ignoredPaths: await this.listIgnoredPaths() };
     } finally {
@@ -405,6 +415,13 @@ export class GitPlumbingEngine {
       }
     }
 
+    // Partial snapshots intentionally omit oversized paths. Preserve the live
+    // content across read-tree so a rewind never destroys data the checkpoint
+    // explicitly said it did not capture.
+    const omittedStash = options.omittedPaths?.length
+      ? await this.stashWorkspacePaths(options.omittedPaths)
+      : undefined;
+
     const root = await this.getRepoRoot();
     const { indexFile } = await this.writeWorkspaceTree();
     try {
@@ -430,11 +447,43 @@ export class GitPlumbingEngine {
           await fs.rm(await this.safeWorkspacePath(relative), { recursive: true, force: true });
         }
       }
+      if (omittedStash) await this.restoreStashedWorkspacePaths(omittedStash);
     } finally {
       await fs.rm(indexFile, { force: true }).catch(() => undefined);
+      if (omittedStash) await fs.rm(omittedStash.root, { recursive: true, force: true }).catch(() => undefined);
     }
     this.workspaceTreeCache = undefined;
     return { deletedIgnoredPaths, restoredTreeOid: restoreTree };
+  }
+
+  private async stashWorkspacePaths(paths: string[]): Promise<{ root: string; entries: string[] }> {
+    const root = path.join(await this.getGitDir(), `dsh-tm-omitted-${randomUUID()}`);
+    const entries: string[] = [];
+    try {
+      for (const relative of [...new Set(paths.map(normalizeGitPath).filter(Boolean))]) {
+        const source = await this.safeWorkspacePath(relative);
+        const stat = await fs.lstat(source).catch(() => undefined);
+        if (!stat) continue;
+        const destination = path.join(root, ...relative.split('/'));
+        await fs.mkdir(path.dirname(destination), { recursive: true });
+        await fs.cp(source, destination, { recursive: true, force: true, verbatimSymlinks: true });
+        entries.push(relative);
+      }
+      return { root, entries };
+    } catch (error) {
+      await fs.rm(root, { recursive: true, force: true }).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  private async restoreStashedWorkspacePaths(stash: { root: string; entries: string[] }): Promise<void> {
+    for (const relative of stash.entries) {
+      const source = path.join(stash.root, ...relative.split('/'));
+      const destination = await this.safeWorkspacePath(relative);
+      await fs.mkdir(path.dirname(destination), { recursive: true });
+      await fs.rm(destination, { recursive: true, force: true });
+      await fs.cp(source, destination, { recursive: true, force: true, verbatimSymlinks: true });
+    }
   }
 
   private async mergeWorkspaceTree(baseTree: string | undefined, targetTree: string, currentTree: string): Promise<string> {
@@ -677,7 +726,7 @@ export class GitPlumbingEngine {
     return env;
   }
 
-  private async writeWorkspaceTree(enforceSnapshotLimits = false): Promise<{ treeOid: string; indexFile: string }> {
+  private async writeWorkspaceTree(enforceSnapshotLimits = false, extraOmittedPaths: string[] = []): Promise<{ treeOid: string; indexFile: string; omittedPaths: string[] }> {
     const root = await this.getRepoRoot();
     const indexFile = path.join(await this.getGitDir(), `dsh-tm-index-${randomUUID()}`);
     const env = { GIT_INDEX_FILE: indexFile };
@@ -688,6 +737,7 @@ export class GitPlumbingEngine {
         await this.runGit(['read-tree', '--empty'], env, root);
       }
       const protectedPaths = this.protectedRepoPaths(root);
+      let omittedPaths: string[] = [...new Set(extraOmittedPaths.map(normalizeGitPath).filter(Boolean))];
       if (enforceSnapshotLimits) {
         const { stdout: candidates } = await this.runGit([
           'ls-files', '-z', '--cached', '--modified', '--deleted', '--others', '--exclude-standard',
@@ -695,9 +745,10 @@ export class GitPlumbingEngine {
         const candidateFiles = candidates.split('\0').filter(Boolean).map(normalizeGitPath).filter(file => !protectedPaths.some(
           relative => file === relative || file.startsWith(`${relative}/`),
         ));
-        if (enforceSnapshotLimits) await this.assertSnapshotSize(root, candidateFiles);
-        for (let offset = 0; offset < candidateFiles.length; offset += 128) {
-          await this.runGit(['add', '-A', '--', ...candidateFiles.slice(offset, offset + 128)], env, root);
+        omittedPaths = await this.assertSnapshotSize(root, candidateFiles);
+        const filesToIndex = candidateFiles.filter(file => !omittedPaths.includes(file));
+        for (let offset = 0; offset < filesToIndex.length; offset += 128) {
+          await this.runGit(['add', '-A', '--', ...filesToIndex.slice(offset, offset + 128)], env, root);
         }
       } else if (protectedPaths.length === 0) {
         // Fast path for ordinary snapshots: avoid a full candidate enumeration
@@ -720,8 +771,14 @@ export class GitPlumbingEngine {
           root,
         );
       }
+      // A partial snapshot must not retain the previous HEAD version of an
+      // omitted modified file. Removing it from the temporary index makes the
+      // omission explicit; restore logic preserves the live path instead.
+      for (let offset = 0; offset < omittedPaths.length; offset += 128) {
+        await this.runGit(['update-index', '--force-remove', '--', ...omittedPaths.slice(offset, offset + 128)], env, root);
+      }
       const { stdout } = await this.runGit(['write-tree'], env, root);
-      return { treeOid: stdout.trim(), indexFile };
+      return { treeOid: stdout.trim(), indexFile, omittedPaths };
     } catch (error) {
       await fs.rm(indexFile, { force: true }).catch(() => undefined);
       throw error;
@@ -743,20 +800,24 @@ export class GitPlumbingEngine {
     return { signature: stdout, cacheable: entries.length === 0 };
   }
 
-  private async assertSnapshotSize(root: string, files: string[]): Promise<void> {
-    if (this.maxSnapshotFileBytes <= 0 && this.maxSnapshotBytes <= 0) return;
+  private async assertSnapshotSize(root: string, files: string[]): Promise<string[]> {
+    if (this.maxSnapshotFileBytes <= 0 && this.maxSnapshotBytes <= 0) return [];
     let totalBytes = 0;
+    const omitted: string[] = [];
     for (const relative of files) {
       const stat = await fs.lstat(path.join(root, ...relative.split('/'))).catch(() => undefined);
       if (!stat?.isFile()) continue;
       if (this.maxSnapshotFileBytes > 0 && stat.size > this.maxSnapshotFileBytes) {
+        if (this.allowPartialSnapshots) { omitted.push(relative); continue; }
         throw new SnapshotSizeError({ file: relative, fileBytes: stat.size, limitBytes: this.maxSnapshotFileBytes });
       }
-      totalBytes += stat.size;
-      if (this.maxSnapshotBytes > 0 && totalBytes > this.maxSnapshotBytes) {
+      if (this.maxSnapshotBytes > 0 && totalBytes + stat.size > this.maxSnapshotBytes) {
+        if (this.allowPartialSnapshots) { omitted.push(relative); continue; }
         throw new SnapshotSizeError({ totalBytes, limitBytes: this.maxSnapshotBytes });
       }
+      totalBytes += stat.size;
     }
+    return omitted;
   }
 
   private async listIgnoredPaths(): Promise<string[]> {

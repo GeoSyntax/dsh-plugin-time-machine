@@ -55,6 +55,7 @@ dsh --profile web
 - **自动配额清理:** `autoPrune: true` 才会在普通 checkpoint 前尝试压缩旧节点；无法安全腾出空间时仍然拒绝 checkpoint，不会强行删除 current 或 branch head。
 - **自动年龄保留:** `retentionMaxAgeMs` 大于 0 时，普通 checkpoint 前会自动压缩超过该年龄的非 current、非 branch head 节点；默认关闭，内部 rescue checkpoint 不触发清理。
 - **明文 quarantine 迁移:** 启用 `quarantineEncryptionKeyEnv` 后，`/tm-quarantine-migrate <backup-key>` 或 `POST /api/quarantine-migrate` 可显式把旧明文备份转换为 AES-256-GCM；迁移失败会保留原目录，插件不会自动混用明文。
+- **显式部分快照（谨慎启用）:** 同时设置 `allowPartialSnapshots: true` 与快照大小上限后，超限 regular file 会记录在 checkpoint 的 `omittedPaths` 中并从不可变树排除；恢复时保留该路径的实时内容，不会假装已捕获。默认仍然拒绝超限快照并返回 `SNAPSHOT_SIZE_LIMIT`。
 
 ## Safety model
 
@@ -93,6 +94,8 @@ dsh --profile web
     # 0 disables capture-size guards.
     maxSnapshotFileBytes: 0
     maxSnapshotBytes: 0
+    # Dangerous compatibility mode: preserve and report files omitted by the limits.
+    allowPartialSnapshots: false
 ```
 
 Web dashboard 只绑定 loopback，并拒绝非本机 Host 和跨 origin 请求。`/tm-rewind` 与 `/tm-fork` 需要宿主提供 `sessionController`，否则插件会拒绝只恢复文件的危险降级行为。
@@ -126,7 +129,7 @@ TM_DSH_SOURCE=/path/to/deepseek-harness pnpm smoke:dsh:source
 - 工作区变更操作带有跨进程文件锁；`workspaceLockTimeoutMs` 控制等待其他 DSH 实例的最长时间。它能避免并发覆盖，但不会替代为多个 Agent 创建独立 worktree。
 - `maxQuarantineBytes` 可选限制 ignored 文件 quarantine 的总容量；超过上限时返回 `QUARANTINE_QUOTA_EXCEEDED`，不会丢弃备份。
 - `quarantineEncryptionKeyEnv` 可选指定一个环境变量名；启用后 ignored-file quarantine 使用 AES-256-GCM 加密，密钥本身不会写入 DAG、manifest 或 Git refs。缺少密钥、密文损坏或发现旧的明文 quarantine 会返回 `QUARANTINE_KEY_INVALID` 并保留备份，不会静默删除或混用数据；明文迁移必须由运维显式执行。
-- `maxSnapshotFileBytes` 和 `maxSnapshotBytes` 在捕获前限制单文件与单 checkpoint 的 regular-file 总大小；超过限制返回 `SNAPSHOT_SIZE_LIMIT`，不会创建半成品 checkpoint。默认均为 0（不限制），而存储目录总量仍由 `maxStorageBytes` 控制。
+- `maxSnapshotFileBytes` 和 `maxSnapshotBytes` 在捕获前限制单文件与单 checkpoint 的 regular-file 总大小；默认均为 0（不限制）。默认超过限制返回 `SNAPSHOT_SIZE_LIMIT`，不会创建半成品 checkpoint；只有显式开启 `allowPartialSnapshots` 才会成功创建带 `omittedPaths` 的部分 checkpoint。部分 checkpoint 永远不会覆盖这些路径，且必须在 UI/CLI 中向用户显示其不完整性。
 - `/tm-prune --older-than=7d` 提供显式的时间保留策略；它只让超过阈值且不受 DAG head/ancestor 保护的节点进入清理候选，不会自动运行，也不会删除当前分支所需的历史。
 - 如需自动生命周期治理，可设置 `retentionMaxAgeMs`；它只在创建普通 checkpoint 前运行，并沿用 DAG 保护规则。自动策略默认关闭，避免用户在未察觉时丢失探索历史。
 

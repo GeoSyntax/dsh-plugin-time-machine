@@ -115,6 +115,7 @@ export class TimeMachineService {
       restorePlanTtlMs: Math.max(0, Math.floor(options.config?.restorePlanTtlMs ?? 900000)),
       maxSnapshotFileBytes: Math.max(0, Math.floor(options.config?.maxSnapshotFileBytes ?? 0)),
       maxSnapshotBytes: Math.max(0, Math.floor(options.config?.maxSnapshotBytes ?? 0)),
+      allowPartialSnapshots: options.config?.allowPartialSnapshots ?? false,
     };
 
     this.gitEngine = new GitPlumbingEngine({
@@ -129,6 +130,7 @@ export class TimeMachineService {
         : undefined,
       maxSnapshotFileBytes: this.config.maxSnapshotFileBytes,
       maxSnapshotBytes: this.config.maxSnapshotBytes,
+      allowPartialSnapshots: this.config.allowPartialSnapshots,
     });
 
     this.fallbackEngine = new FallbackSnapshotEngine({
@@ -211,6 +213,7 @@ export class TimeMachineService {
     let commitOid = '';
     let changedFiles = [];
     let ignoredPaths: string[] = [];
+    let omittedPaths: string[] = [];
 
     const isGit = await this.gitEngine.isGitRepo();
     if (isGit) {
@@ -224,6 +227,7 @@ export class TimeMachineService {
       commitOid = snap.commitOid;
       changedFiles = snap.changedFiles;
       ignoredPaths = snap.ignoredPaths;
+      omittedPaths = snap.omittedPaths;
     } else {
       const snap = await this.fallbackEngine.createSnapshot({
         sessionId: params.sessionId,
@@ -251,6 +255,7 @@ export class TimeMachineService {
       failedTools: params.failedTools,
       tags: params.tags,
       ignoredPaths,
+      omittedPaths,
     };
 
     await dag.addNode(node);
@@ -267,7 +272,7 @@ export class TimeMachineService {
     return this.runWorkspaceOperation(async () => {
       const dag = await this.getDAGManager(params.sessionId);
       const settled = await this.gitEngine.isGitRepo()
-        ? await this.gitEngine.inspectWorkspace()
+        ? await this.gitEngine.inspectWorkspace({ omitPaths: dag.getNode(params.checkpointId)?.omittedPaths ?? [] })
         : { treeOid: await this.fallbackEngine.inspectWorkspace(), ignoredPaths: [] };
       return dag.updateNode(params.checkpointId, {
         status: params.status,
@@ -514,7 +519,7 @@ export class TimeMachineService {
       const isGit = await this.gitEngine.isGitRepo();
       if (isGit) await this.gitEngine.assertSupportedWorkspace();
       const currentState = isGit
-        ? await this.gitEngine.inspectWorkspace()
+        ? await this.gitEngine.inspectWorkspace({ omitPaths: current?.omittedPaths ?? [] })
         : { treeOid: await this.fallbackEngine.inspectWorkspace(), ignoredPaths: [] };
       const controlPlane = isGit
         ? await this.gitEngine.inspectControlPlane()
@@ -565,6 +570,7 @@ export class TimeMachineService {
         targetTreeOid: target.gitTreeOid,
         currentIgnoredPaths: currentState.ignoredPaths,
         targetIgnoredPaths,
+        targetOmittedPaths: target.omittedPaths ?? [],
         ignoredPathsToDelete: currentState.ignoredPaths.filter(item => !targetIgnoredPaths.includes(item)),
         diffs,
         conflictingPaths,
@@ -601,7 +607,7 @@ export class TimeMachineService {
     if ((current?.id ?? null) !== plan.currentCheckpointId) {
       throw new RestorePlanError('The active checkpoint changed after preview; run preview again.');
     }
-    const actual = await this.inspectWorkspaceSignature();
+    const actual = await this.inspectWorkspaceSignature(current?.omittedPaths ?? []);
     if (actual.treeOid !== plan.currentTreeOid || !sameStrings(actual.ignoredPaths, plan.currentIgnoredPaths)) {
       throw new RestorePlanError('Workspace changed after preview; run preview again before restoring.');
     }
@@ -611,9 +617,9 @@ export class TimeMachineService {
     }
   }
 
-  private async inspectWorkspaceSignature(): Promise<{ treeOid: string; ignoredPaths: string[] }> {
+  private async inspectWorkspaceSignature(omitPaths: string[] = []): Promise<{ treeOid: string; ignoredPaths: string[] }> {
     return await this.gitEngine.isGitRepo()
-      ? await this.gitEngine.inspectWorkspace()
+      ? await this.gitEngine.inspectWorkspace({ omitPaths })
       : { treeOid: await this.fallbackEngine.inspectWorkspace(), ignoredPaths: [] };
   }
 
@@ -659,6 +665,7 @@ export class TimeMachineService {
     shadowStore: boolean;
     quarantineEncryption: boolean;
     quarantineMigration: boolean;
+    partialSnapshots: boolean;
     externalEffectLedger: true;
     workspaceIsolation: 'shared-lock';
     workspace: { sparseCheckout: boolean; submodulePaths: string[]; inProgressOperation: string | null };
@@ -669,6 +676,7 @@ export class TimeMachineService {
       retentionMaxAgeMs: number;
       maxSnapshotFileBytes: number;
       maxSnapshotBytes: number;
+      allowPartialSnapshots: boolean;
       maxQuarantineBytes: number;
       workspaceLockTimeoutMs: number;
     };
@@ -687,6 +695,7 @@ export class TimeMachineService {
       shadowStore: git && this.config.shadowStore,
       quarantineEncryption: Boolean(this.config.quarantineEncryptionKeyEnv && process.env[this.config.quarantineEncryptionKeyEnv]),
       quarantineMigration: git && Boolean(this.config.quarantineEncryptionKeyEnv),
+      partialSnapshots: git && this.config.allowPartialSnapshots && (this.config.maxSnapshotFileBytes > 0 || this.config.maxSnapshotBytes > 0),
       externalEffectLedger: true,
       workspaceIsolation: 'shared-lock',
       workspace,
@@ -697,6 +706,7 @@ export class TimeMachineService {
         retentionMaxAgeMs: this.config.retentionMaxAgeMs,
         maxSnapshotFileBytes: this.config.maxSnapshotFileBytes,
         maxSnapshotBytes: this.config.maxSnapshotBytes,
+        allowPartialSnapshots: this.config.allowPartialSnapshots,
         maxQuarantineBytes: this.config.maxQuarantineBytes,
         workspaceLockTimeoutMs: this.config.workspaceLockTimeoutMs,
       },
@@ -861,7 +871,7 @@ export class TimeMachineService {
 
     if (mode === 'safe' && current) {
       const actual = await this.gitEngine.isGitRepo()
-        ? await this.gitEngine.inspectWorkspace()
+        ? await this.gitEngine.inspectWorkspace({ omitPaths: current.omittedPaths ?? [] })
         : { treeOid: await this.fallbackEngine.inspectWorkspace(), ignoredPaths: [] };
       const expectedTree = current.settledGitTreeOid ?? current.gitTreeOid;
       const expectedIgnored = current.settledIgnoredPaths ?? current.ignoredPaths ?? [];
@@ -939,9 +949,10 @@ export class TimeMachineService {
         targetIgnoredPaths: target.ignoredPaths ?? [],
         deleteNewIgnoredPaths: options.deleteNewIgnoredPaths,
         ignoredBackupKey: options.ignoredBackupKey,
+        omittedPaths: target.omittedPaths ?? [],
       });
       if (target.ignoredBackupKey) await this.gitEngine.restoreIgnoredBackup(target.ignoredBackupKey);
-      const verified = await this.gitEngine.inspectWorkspace();
+      const verified = await this.gitEngine.inspectWorkspace({ omitPaths: target.omittedPaths ?? [] });
       const expectedTree = options.mode === 'merge' ? result.restoredTreeOid : target.gitTreeOid;
       if (verified.treeOid !== expectedTree || !sameStrings(verified.ignoredPaths, target.ignoredPaths ?? [])) {
         throw new Error(`Workspace integrity check failed after restoring checkpoint '${target.id}'.`);

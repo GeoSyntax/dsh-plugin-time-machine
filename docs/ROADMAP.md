@@ -56,16 +56,17 @@ portable fallback.
 **Acceptance:** the action carries the session-bound restore-plan token, shows
 conflict paths before mutation, and reports the new forked session id.
 
-### Explicit partial-capture mode (opt-in only)
+### Explicit partial-capture mode (opt-in only) — implemented
 
-If community users need Change Ledger-style oversized-file skipping, persist
-omitted paths and reasons in each checkpoint, preserve omitted live paths during
-restore, and surface them in CLI/Web/API responses. The default remains
+Community users can opt into Change Ledger-style oversized-file skipping with
+`allowPartialSnapshots`. Omitted paths are persisted in each Git checkpoint,
+removed from the immutable tree, preserved as live content during restore, and
+returned by preview/capability APIs. The default remains
 `SNAPSHOT_SIZE_LIMIT` fail-closed.
 
 **Acceptance:** a successful partial checkpoint can never claim complete
-workspace coverage; restore, prune, quota, and capability output all expose the
-omitted-path state.
+workspace coverage; restore and preview preserve/expose omitted paths, while
+default mode and fallback mode continue to reject oversized captures.
 
 ## P2 — scope beyond the filesystem
 

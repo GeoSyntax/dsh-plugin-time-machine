@@ -173,6 +173,7 @@ var init_git_plumbing = __esm({
       maxQuarantineBytes;
       maxSnapshotFileBytes;
       maxSnapshotBytes;
+      allowPartialSnapshots;
       quarantineKey;
       shadowReady;
       /** Last complete managed tree and the Git status signature that produced it. */
@@ -186,6 +187,7 @@ var init_git_plumbing = __esm({
         this.maxQuarantineBytes = Math.max(0, Math.floor(options.maxQuarantineBytes ?? 0));
         this.maxSnapshotFileBytes = Math.max(0, Math.floor(options.maxSnapshotFileBytes ?? 0));
         this.maxSnapshotBytes = Math.max(0, Math.floor(options.maxSnapshotBytes ?? 0));
+        this.allowPartialSnapshots = options.allowPartialSnapshots === true;
         this.quarantineKey = options.quarantineEncryptionKey ? (0, import_node_crypto.createHash)("sha256").update(options.quarantineEncryptionKey).digest() : void 0;
       }
       get usesShadowStore() {
@@ -239,7 +241,8 @@ Reason: ${errorMsg}`);
         const root = await this.getRepoRoot();
         const status = await this.workspaceStatusSignature(root);
         const cached = status.cacheable && this.workspaceTreeCache?.signature === status.signature ? this.workspaceTreeCache.treeOid : void 0;
-        const { treeOid, indexFile } = cached ? { treeOid: cached, indexFile: void 0 } : await this.writeWorkspaceTree(enforceSnapshotLimits);
+        const treeResult = cached ? { treeOid: cached, indexFile: void 0, omittedPaths: [] } : await this.writeWorkspaceTree(enforceSnapshotLimits);
+        const { treeOid, indexFile } = treeResult;
         try {
           const commitMsg = params.message || `DSH Checkpoint [${params.sessionId}:${params.checkpointId}]`;
           const commitArgs = ["commit-tree", treeOid, "-m", commitMsg];
@@ -261,20 +264,21 @@ Reason: ${errorMsg}`);
             const nextStatus = await this.workspaceStatusSignature(root);
             this.workspaceTreeCache = nextStatus.cacheable ? { treeOid, signature: nextStatus.signature } : void 0;
           }
-          const changedFiles = params.parentCommitOid ? await this.computeChangedFiles(params.parentCommitOid, commitOid) : await this.listTreeFiles(treeOid);
+          const changedFiles = (params.parentCommitOid ? await this.computeChangedFiles(params.parentCommitOid, commitOid) : await this.listTreeFiles(treeOid)).filter((change) => !treeResult.omittedPaths.includes(change.path));
           return {
             treeOid,
             commitOid,
             changedFiles,
-            ignoredPaths: await this.listIgnoredPaths()
+            ignoredPaths: await this.listIgnoredPaths(),
+            omittedPaths: treeResult.omittedPaths
           };
         } finally {
           if (indexFile) await import_promises.default.rm(indexFile, { force: true }).catch(() => void 0);
         }
       }
       /** Compute the current managed tree without publishing a commit or ref. */
-      async inspectWorkspace() {
-        const { treeOid, indexFile } = await this.writeWorkspaceTree();
+      async inspectWorkspace(options = {}) {
+        const { treeOid, indexFile } = await this.writeWorkspaceTree(false, options.omitPaths ?? []);
         try {
           return { treeOid, ignoredPaths: await this.listIgnoredPaths() };
         } finally {
@@ -358,6 +362,7 @@ Reason: ${errorMsg}`);
             deletedIgnoredPaths.push(relative);
           }
         }
+        const omittedStash = options.omittedPaths?.length ? await this.stashWorkspacePaths(options.omittedPaths) : void 0;
         const root = await this.getRepoRoot();
         const { indexFile } = await this.writeWorkspaceTree();
         try {
@@ -381,11 +386,41 @@ Reason: ${errorMsg}`);
               await import_promises.default.rm(await this.safeWorkspacePath(relative), { recursive: true, force: true });
             }
           }
+          if (omittedStash) await this.restoreStashedWorkspacePaths(omittedStash);
         } finally {
           await import_promises.default.rm(indexFile, { force: true }).catch(() => void 0);
+          if (omittedStash) await import_promises.default.rm(omittedStash.root, { recursive: true, force: true }).catch(() => void 0);
         }
         this.workspaceTreeCache = void 0;
         return { deletedIgnoredPaths, restoredTreeOid: restoreTree };
+      }
+      async stashWorkspacePaths(paths) {
+        const root = import_node_path.default.join(await this.getGitDir(), `dsh-tm-omitted-${(0, import_node_crypto.randomUUID)()}`);
+        const entries = [];
+        try {
+          for (const relative of [...new Set(paths.map(normalizeGitPath).filter(Boolean))]) {
+            const source = await this.safeWorkspacePath(relative);
+            const stat = await import_promises.default.lstat(source).catch(() => void 0);
+            if (!stat) continue;
+            const destination = import_node_path.default.join(root, ...relative.split("/"));
+            await import_promises.default.mkdir(import_node_path.default.dirname(destination), { recursive: true });
+            await import_promises.default.cp(source, destination, { recursive: true, force: true, verbatimSymlinks: true });
+            entries.push(relative);
+          }
+          return { root, entries };
+        } catch (error) {
+          await import_promises.default.rm(root, { recursive: true, force: true }).catch(() => void 0);
+          throw error;
+        }
+      }
+      async restoreStashedWorkspacePaths(stash) {
+        for (const relative of stash.entries) {
+          const source = import_node_path.default.join(stash.root, ...relative.split("/"));
+          const destination = await this.safeWorkspacePath(relative);
+          await import_promises.default.mkdir(import_node_path.default.dirname(destination), { recursive: true });
+          await import_promises.default.rm(destination, { recursive: true, force: true });
+          await import_promises.default.cp(source, destination, { recursive: true, force: true, verbatimSymlinks: true });
+        }
       }
       async mergeWorkspaceTree(baseTree, targetTree, currentTree) {
         if (!baseTree) throw new Error("Merge restore requires the active checkpoint tree.");
@@ -608,7 +643,7 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
         }
         return env;
       }
-      async writeWorkspaceTree(enforceSnapshotLimits = false) {
+      async writeWorkspaceTree(enforceSnapshotLimits = false, extraOmittedPaths = []) {
         const root = await this.getRepoRoot();
         const indexFile = import_node_path.default.join(await this.getGitDir(), `dsh-tm-index-${(0, import_node_crypto.randomUUID)()}`);
         const env = { GIT_INDEX_FILE: indexFile };
@@ -619,6 +654,7 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
             await this.runGit(["read-tree", "--empty"], env, root);
           }
           const protectedPaths = this.protectedRepoPaths(root);
+          let omittedPaths = [...new Set(extraOmittedPaths.map(normalizeGitPath).filter(Boolean))];
           if (enforceSnapshotLimits) {
             const { stdout: candidates } = await this.runGit([
               "ls-files",
@@ -632,9 +668,10 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
             const candidateFiles = candidates.split("\0").filter(Boolean).map(normalizeGitPath).filter((file) => !protectedPaths.some(
               (relative) => file === relative || file.startsWith(`${relative}/`)
             ));
-            if (enforceSnapshotLimits) await this.assertSnapshotSize(root, candidateFiles);
-            for (let offset = 0; offset < candidateFiles.length; offset += 128) {
-              await this.runGit(["add", "-A", "--", ...candidateFiles.slice(offset, offset + 128)], env, root);
+            omittedPaths = await this.assertSnapshotSize(root, candidateFiles);
+            const filesToIndex = candidateFiles.filter((file) => !omittedPaths.includes(file));
+            for (let offset = 0; offset < filesToIndex.length; offset += 128) {
+              await this.runGit(["add", "-A", "--", ...filesToIndex.slice(offset, offset + 128)], env, root);
             }
           } else if (protectedPaths.length === 0) {
             await this.runGit(["add", "-A", "--", "."], env, root);
@@ -651,8 +688,11 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
               root
             );
           }
+          for (let offset = 0; offset < omittedPaths.length; offset += 128) {
+            await this.runGit(["update-index", "--force-remove", "--", ...omittedPaths.slice(offset, offset + 128)], env, root);
+          }
           const { stdout } = await this.runGit(["write-tree"], env, root);
-          return { treeOid: stdout.trim(), indexFile };
+          return { treeOid: stdout.trim(), indexFile, omittedPaths };
         } catch (error) {
           await import_promises.default.rm(indexFile, { force: true }).catch(() => void 0);
           throw error;
@@ -677,19 +717,29 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
         return { signature: stdout, cacheable: entries.length === 0 };
       }
       async assertSnapshotSize(root, files) {
-        if (this.maxSnapshotFileBytes <= 0 && this.maxSnapshotBytes <= 0) return;
+        if (this.maxSnapshotFileBytes <= 0 && this.maxSnapshotBytes <= 0) return [];
         let totalBytes = 0;
+        const omitted = [];
         for (const relative of files) {
           const stat = await import_promises.default.lstat(import_node_path.default.join(root, ...relative.split("/"))).catch(() => void 0);
           if (!stat?.isFile()) continue;
           if (this.maxSnapshotFileBytes > 0 && stat.size > this.maxSnapshotFileBytes) {
+            if (this.allowPartialSnapshots) {
+              omitted.push(relative);
+              continue;
+            }
             throw new SnapshotSizeError({ file: relative, fileBytes: stat.size, limitBytes: this.maxSnapshotFileBytes });
           }
-          totalBytes += stat.size;
-          if (this.maxSnapshotBytes > 0 && totalBytes > this.maxSnapshotBytes) {
+          if (this.maxSnapshotBytes > 0 && totalBytes + stat.size > this.maxSnapshotBytes) {
+            if (this.allowPartialSnapshots) {
+              omitted.push(relative);
+              continue;
+            }
             throw new SnapshotSizeError({ totalBytes, limitBytes: this.maxSnapshotBytes });
           }
+          totalBytes += stat.size;
         }
+        return omitted;
       }
       async listIgnoredPaths() {
         const root = await this.getRepoRoot();
@@ -1904,7 +1954,8 @@ var TimeMachineService = class {
       quarantineEncryptionKeyEnv: options.config?.quarantineEncryptionKeyEnv ?? "",
       restorePlanTtlMs: Math.max(0, Math.floor(options.config?.restorePlanTtlMs ?? 9e5)),
       maxSnapshotFileBytes: Math.max(0, Math.floor(options.config?.maxSnapshotFileBytes ?? 0)),
-      maxSnapshotBytes: Math.max(0, Math.floor(options.config?.maxSnapshotBytes ?? 0))
+      maxSnapshotBytes: Math.max(0, Math.floor(options.config?.maxSnapshotBytes ?? 0)),
+      allowPartialSnapshots: options.config?.allowPartialSnapshots ?? false
     };
     this.gitEngine = new GitPlumbingEngine({
       workDir: this.workDir,
@@ -1915,7 +1966,8 @@ var TimeMachineService = class {
       maxQuarantineBytes: this.config.maxQuarantineBytes,
       quarantineEncryptionKey: this.config.quarantineEncryptionKeyEnv ? process.env[this.config.quarantineEncryptionKeyEnv] : void 0,
       maxSnapshotFileBytes: this.config.maxSnapshotFileBytes,
-      maxSnapshotBytes: this.config.maxSnapshotBytes
+      maxSnapshotBytes: this.config.maxSnapshotBytes,
+      allowPartialSnapshots: this.config.allowPartialSnapshots
     });
     this.fallbackEngine = new FallbackSnapshotEngine({
       workDir: this.workDir,
@@ -1971,6 +2023,7 @@ var TimeMachineService = class {
     let commitOid = "";
     let changedFiles = [];
     let ignoredPaths = [];
+    let omittedPaths = [];
     const isGit = await this.gitEngine.isGitRepo();
     if (isGit) {
       const snap = await this.gitEngine.createSnapshot({
@@ -1983,6 +2036,7 @@ var TimeMachineService = class {
       commitOid = snap.commitOid;
       changedFiles = snap.changedFiles;
       ignoredPaths = snap.ignoredPaths;
+      omittedPaths = snap.omittedPaths;
     } else {
       const snap = await this.fallbackEngine.createSnapshot({
         sessionId: params.sessionId,
@@ -2008,7 +2062,8 @@ var TimeMachineService = class {
       errorMessage: params.errorMessage,
       failedTools: params.failedTools,
       tags: params.tags,
-      ignoredPaths
+      ignoredPaths,
+      omittedPaths
     };
     await dag.addNode(node);
     return cloneJson2(node);
@@ -2016,7 +2071,7 @@ var TimeMachineService = class {
   async finalizeTurnCheckpoint(params) {
     return this.runWorkspaceOperation(async () => {
       const dag = await this.getDAGManager(params.sessionId);
-      const settled = await this.gitEngine.isGitRepo() ? await this.gitEngine.inspectWorkspace() : { treeOid: await this.fallbackEngine.inspectWorkspace(), ignoredPaths: [] };
+      const settled = await this.gitEngine.isGitRepo() ? await this.gitEngine.inspectWorkspace({ omitPaths: dag.getNode(params.checkpointId)?.omittedPaths ?? [] }) : { treeOid: await this.fallbackEngine.inspectWorkspace(), ignoredPaths: [] };
       return dag.updateNode(params.checkpointId, {
         status: params.status,
         errorMessage: params.errorMessage,
@@ -2235,7 +2290,7 @@ var TimeMachineService = class {
       const current = dag.getCurrentNode();
       const isGit = await this.gitEngine.isGitRepo();
       if (isGit) await this.gitEngine.assertSupportedWorkspace();
-      const currentState = isGit ? await this.gitEngine.inspectWorkspace() : { treeOid: await this.fallbackEngine.inspectWorkspace(), ignoredPaths: [] };
+      const currentState = isGit ? await this.gitEngine.inspectWorkspace({ omitPaths: current?.omittedPaths ?? [] }) : { treeOid: await this.fallbackEngine.inspectWorkspace(), ignoredPaths: [] };
       const controlPlane = isGit ? await this.gitEngine.inspectControlPlane() : { headOid: null, branch: "", operation: null };
       const targetIgnoredPaths = target.ignoredPaths ?? [];
       const diffs = isGit ? await this.gitEngine.getDiffBetween(currentState.treeOid, target.gitCommitOid) : target.changedFiles.map((change) => ({
@@ -2277,6 +2332,7 @@ var TimeMachineService = class {
         targetTreeOid: target.gitTreeOid,
         currentIgnoredPaths: currentState.ignoredPaths,
         targetIgnoredPaths,
+        targetOmittedPaths: target.omittedPaths ?? [],
         ignoredPathsToDelete: currentState.ignoredPaths.filter((item) => !targetIgnoredPaths.includes(item)),
         diffs,
         conflictingPaths,
@@ -2306,7 +2362,7 @@ var TimeMachineService = class {
     if ((current?.id ?? null) !== plan.currentCheckpointId) {
       throw new RestorePlanError("The active checkpoint changed after preview; run preview again.");
     }
-    const actual = await this.inspectWorkspaceSignature();
+    const actual = await this.inspectWorkspaceSignature(current?.omittedPaths ?? []);
     if (actual.treeOid !== plan.currentTreeOid || !sameStrings(actual.ignoredPaths, plan.currentIgnoredPaths)) {
       throw new RestorePlanError("Workspace changed after preview; run preview again before restoring.");
     }
@@ -2315,8 +2371,8 @@ var TimeMachineService = class {
       throw new RestorePlanError("Git HEAD, branch, or in-progress operation changed after preview; run preview again.");
     }
   }
-  async inspectWorkspaceSignature() {
-    return await this.gitEngine.isGitRepo() ? await this.gitEngine.inspectWorkspace() : { treeOid: await this.fallbackEngine.inspectWorkspace(), ignoredPaths: [] };
+  async inspectWorkspaceSignature(omitPaths = []) {
+    return await this.gitEngine.isGitRepo() ? await this.gitEngine.inspectWorkspace({ omitPaths }) : { treeOid: await this.fallbackEngine.inspectWorkspace(), ignoredPaths: [] };
   }
   async inspectControlPlane() {
     return await this.gitEngine.isGitRepo() ? await this.gitEngine.inspectControlPlane() : { headOid: null, branch: "", operation: null };
@@ -2359,6 +2415,7 @@ var TimeMachineService = class {
       shadowStore: git && this.config.shadowStore,
       quarantineEncryption: Boolean(this.config.quarantineEncryptionKeyEnv && process.env[this.config.quarantineEncryptionKeyEnv]),
       quarantineMigration: git && Boolean(this.config.quarantineEncryptionKeyEnv),
+      partialSnapshots: git && this.config.allowPartialSnapshots && (this.config.maxSnapshotFileBytes > 0 || this.config.maxSnapshotBytes > 0),
       externalEffectLedger: true,
       workspaceIsolation: "shared-lock",
       workspace,
@@ -2369,6 +2426,7 @@ var TimeMachineService = class {
         retentionMaxAgeMs: this.config.retentionMaxAgeMs,
         maxSnapshotFileBytes: this.config.maxSnapshotFileBytes,
         maxSnapshotBytes: this.config.maxSnapshotBytes,
+        allowPartialSnapshots: this.config.allowPartialSnapshots,
         maxQuarantineBytes: this.config.maxQuarantineBytes,
         workspaceLockTimeoutMs: this.config.workspaceLockTimeoutMs
       }
@@ -2507,7 +2565,7 @@ var TimeMachineService = class {
     const mode = options.mode ?? this.config.restoreMode;
     if (await this.gitEngine.isGitRepo()) await this.gitEngine.assertSupportedWorkspace();
     if (mode === "safe" && current) {
-      const actual = await this.gitEngine.isGitRepo() ? await this.gitEngine.inspectWorkspace() : { treeOid: await this.fallbackEngine.inspectWorkspace(), ignoredPaths: [] };
+      const actual = await this.gitEngine.isGitRepo() ? await this.gitEngine.inspectWorkspace({ omitPaths: current.omittedPaths ?? [] }) : { treeOid: await this.fallbackEngine.inspectWorkspace(), ignoredPaths: [] };
       const expectedTree = current.settledGitTreeOid ?? current.gitTreeOid;
       const expectedIgnored = current.settledIgnoredPaths ?? current.ignoredPaths ?? [];
       if (actual.treeOid !== expectedTree || !sameStrings(actual.ignoredPaths, expectedIgnored)) {
@@ -2573,10 +2631,11 @@ var TimeMachineService = class {
         expectedCurrentIgnoredPaths: expected?.ignoredPaths ?? [],
         targetIgnoredPaths: target.ignoredPaths ?? [],
         deleteNewIgnoredPaths: options.deleteNewIgnoredPaths,
-        ignoredBackupKey: options.ignoredBackupKey
+        ignoredBackupKey: options.ignoredBackupKey,
+        omittedPaths: target.omittedPaths ?? []
       });
       if (target.ignoredBackupKey) await this.gitEngine.restoreIgnoredBackup(target.ignoredBackupKey);
-      const verified2 = await this.gitEngine.inspectWorkspace();
+      const verified2 = await this.gitEngine.inspectWorkspace({ omitPaths: target.omittedPaths ?? [] });
       const expectedTree = options.mode === "merge" ? result.restoredTreeOid : target.gitTreeOid;
       if (verified2.treeOid !== expectedTree || !sameStrings(verified2.ignoredPaths, target.ignoredPaths ?? [])) {
         throw new Error(`Workspace integrity check failed after restoring checkpoint '${target.id}'.`);
@@ -3097,9 +3156,10 @@ function registerCliCommands(ctx, service) {
         const drift = preview.requiresForce ? "workspace drift detected; --force may be required" : "workspace matches active checkpoint";
         const files = preview.diffs.length ? preview.diffs.map((item) => `${item.status} ${item.file}`).join(", ") : "no managed file changes";
         const ignored = preview.ignoredPathsToDelete.length ? ` Ignored paths to delete: ${preview.ignoredPathsToDelete.join(", ")}.` : "";
+        const omitted = preview.targetOmittedPaths?.length ? ` INCOMPLETE checkpoint: omitted paths preserved live: ${preview.targetOmittedPaths.join(", ")}.` : "";
         const conflicts = preview.conflictingPaths.length ? ` Conflicting paths: ${preview.conflictingPaths.join(", ")}.` : "";
         const plan = ` Restore plan: ${preview.restorePlanId}${preview.restorePlanExpiresAt ? ` (expires ${new Date(preview.restorePlanExpiresAt).toISOString()})` : " (no expiry)"}.`;
-        return { kind: "success", text: `Preview ${checkpointId}: ${drift}. Changes: ${files}.${ignored}${conflicts}${plan}` };
+        return { kind: "success", text: `Preview ${checkpointId}: ${drift}. Changes: ${files}.${ignored}${omitted}${conflicts}${plan}` };
       }
     });
     scope.commands.register({
@@ -3206,7 +3266,8 @@ var Config = import_schemastery.default.object({
   quarantineEncryptionKeyEnv: import_schemastery.default.string().default(""),
   restorePlanTtlMs: import_schemastery.default.number().default(9e5),
   maxSnapshotFileBytes: import_schemastery.default.number().default(0),
-  maxSnapshotBytes: import_schemastery.default.number().default(0)
+  maxSnapshotBytes: import_schemastery.default.number().default(0),
+  allowPartialSnapshots: import_schemastery.default.boolean().default(false)
 });
 function apply(ctx, config = {}) {
   const workDir = import_node_path7.default.resolve(process.cwd());

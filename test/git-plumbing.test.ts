@@ -66,6 +66,25 @@ describe('GitPlumbingEngine', () => {
     expect((await execAsync('git', ['status', '--short'], { cwd: tmpDir })).stdout).toContain('large.txt');
   });
 
+  it('supports explicit partial snapshots and preserves omitted live paths on restore', async () => {
+    const file = path.join(tmpDir, 'large.txt');
+    await fs.writeFile(file, 'captured-too-large', 'utf8');
+    const partial = new GitPlumbingEngine({
+      workDir: tmpDir,
+      maxSnapshotFileBytes: 4,
+      allowPartialSnapshots: true,
+    });
+    const snapshot = await partial.createSnapshot({ sessionId: 'partial', checkpointId: 'one' });
+    expect(snapshot.omittedPaths).toEqual(['large.txt']);
+    expect((await partial.getDiffBetween(snapshot.commitOid, snapshot.commitOid))).toEqual([]);
+
+    await fs.writeFile(file, 'live-content-after-checkpoint', 'utf8');
+    await partial.restoreSnapshot(snapshot.commitOid, { omittedPaths: snapshot.omittedPaths });
+    expect(await fs.readFile(file, 'utf8')).toBe('live-content-after-checkpoint');
+    const inspected = await partial.inspectWorkspace({ omitPaths: snapshot.omittedPaths });
+    expect(inspected.treeOid).toBe(snapshot.treeOid);
+  });
+
   it('should create snapshot without polluting git log', async () => {
     // 写入第一个文件
     const file1 = path.join(tmpDir, 'hello.txt');

@@ -239,6 +239,9 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
     await expect(quotaService.createTurnCheckpoint({
       sessionId, turnIndex: 2, prompt: 'blocked', sessionState: { sessionId, messages: [] },
     })).rejects.toMatchObject({ code: 'STORAGE_QUOTA_EXCEEDED' });
+    await expect(quotaService.rewindToCheckpoint(sessionId, first.id, { mode: 'force' })).resolves.toMatchObject({
+      targetNode: { id: first.id },
+    });
     expect((await quotaService.getDAGManager(sessionId)).getNode(first.id)).not.toBeNull();
   });
 

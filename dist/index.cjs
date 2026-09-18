@@ -1164,7 +1164,8 @@ var TimeMachineService = class {
   }
   async createTurnCheckpointUnlocked(params) {
     const dag = await this.getDAGManager(params.sessionId);
-    await this.enforceStorageQuota(dag);
+    const internalSafetyCheckpoint = params.tags?.includes("rescue") || params.tags?.includes("selective-restore");
+    if (!internalSafetyCheckpoint) await this.enforceStorageQuota(dag);
     const checkpointId = `chk_t${params.turnIndex}_${(0, import_node_crypto4.randomUUID)().replace(/-/g, "").slice(0, 12)}`;
     const currentNode = dag.getCurrentNode();
     const parentCommitOid = currentNode ? currentNode.gitCommitOid : null;

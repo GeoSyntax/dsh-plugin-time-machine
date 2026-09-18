@@ -144,7 +144,8 @@ export class TimeMachineService {
     tags?: string[];
   }): Promise<CheckpointNode> {
     const dag = await this.getDAGManager(params.sessionId);
-    await this.enforceStorageQuota(dag);
+    const internalSafetyCheckpoint = params.tags?.includes('rescue') || params.tags?.includes('selective-restore');
+    if (!internalSafetyCheckpoint) await this.enforceStorageQuota(dag);
     const checkpointId = `chk_t${params.turnIndex}_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
 
     const currentNode = dag.getCurrentNode();

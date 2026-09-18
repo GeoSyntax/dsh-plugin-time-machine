@@ -60,6 +60,7 @@
 | B-07 | 本地 DSH 源码宿主加载插件 | `TM_DSH_SOURCE=... pnpm smoke:dsh:source` |
 | B-08 | 本地 OpenAI-compatible 模型驱动真实 turn | `TM_DSH_LIVE=1 TM_GEMINI_API_KEY=... pnpm smoke:dsh:source` |
 | B-09 | 同一 DSH_HOME/workspace 重启并保留 DAG | `TM_DSH_LIVE=1 TM_DSH_LIVE_RESTART=1 TM_GEMINI_API_KEY=... pnpm smoke:dsh:source` |
+| B-10 | 真实 DSH Web 宿主 session + checkpoint + fork + rewind | `TM_GEMINI_API_KEY=... pnpm smoke:dsh:web` |
 
 ### L1：纯逻辑单元测试
 
@@ -271,6 +272,7 @@ artifacts/<run-id>/
 - 真实 DSH 源码宿主加载插件通过。
 - 真实本地模型请求、文件创建、turn 结束后的 finalized checkpoint 落盘通过。
 - 使用同一 `DSH_HOME` 与 workspace 的 live restart 测试通过，第二次运行保留并新增 DAG checkpoint。
+- 真实 DSH Web 宿主通过 `session/create`、`session/prompt` 驱动 turn，并完成真实 `/api/fork` 与 `/api/rewind`。
 - 真实 checkpoint DAG 和 Dashboard status/dag 通过。
 - Web API rewind/fork、Host/JSON 安全、Session fork 失败补偿和重启 DAG 持久化已有自动化覆盖。
 
@@ -281,6 +283,8 @@ artifacts/<run-id>/
 3. 真实模型失败 turn 的 `failed` checkpoint 和反思链路。
 4. 重启后从同一 DSH_HOME 恢复 DAG 和 session 边界。
 5. Windows Git 新版本临时索引兼容性专项测试。
+
+注：真实 Web smoke 已覆盖插件 REST API 的 fork/rewind 与宿主 SessionController；CLI 内置命令 `/tm-*` 仍需要在交互式 TUI 中人工验收，不能由 headless/Web API 结果替代。
 
 在上述五项完成并保存证据前，项目只能标记为 **integration-tested / not yet release-qualified**，不能宣称“完整证明生产可用”。
 

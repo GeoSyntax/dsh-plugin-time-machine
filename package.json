@@ -25,6 +25,7 @@
     "prepack": "pnpm build",
     "smoke:dsh": "node test/smoke-dsh.mjs",
     "smoke:dsh:source": "node test/smoke-dsh-source.mjs",
+    "smoke:dsh:web": "node test/smoke-dsh-web.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "benchmark": "tsx test/benchmark.ts",

@@ -210,7 +210,8 @@ Reason: ${errorMsg}`);
           throw new Error(`Working directory '${this.workDir}' is not a valid Git repository.`);
         }
         await this.assertSupportedWorkspace();
-        const { treeOid, indexFile } = await this.writeWorkspaceTree(true);
+        const enforceSnapshotLimits = this.maxSnapshotFileBytes > 0 || this.maxSnapshotBytes > 0;
+        const { treeOid, indexFile } = await this.writeWorkspaceTree(enforceSnapshotLimits);
         try {
           const commitMsg = params.message || `DSH Checkpoint [${params.sessionId}:${params.checkpointId}]`;
           const commitArgs = ["commit-tree", treeOid, "-m", commitMsg];
@@ -564,7 +565,7 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
             await this.runGit(["read-tree", "--empty"], env, root);
           }
           const protectedPaths = this.protectedRepoPaths(root);
-          if (enforceSnapshotLimits || protectedPaths.length === 0) {
+          if (enforceSnapshotLimits) {
             const { stdout: candidates } = await this.runGit([
               "ls-files",
               "-z",
@@ -581,6 +582,8 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
             for (let offset = 0; offset < candidateFiles.length; offset += 128) {
               await this.runGit(["add", "-A", "--", ...candidateFiles.slice(offset, offset + 128)], env, root);
             }
+          } else if (protectedPaths.length === 0) {
+            await this.runGit(["add", "-A", "--", "."], env, root);
           } else {
             const excludes = protectedPaths.map((relative) => `:(exclude)${relative}`);
             await this.runGit(["add", "-A", "--", ".", ...excludes], env, root);

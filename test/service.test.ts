@@ -213,6 +213,20 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
       .rejects.toMatchObject({ code: 'RESTORE_PLAN_INVALID' });
   });
 
+  it('rejects a reviewed plan when the Git branch changes', async () => {
+    const sessionId = 'branch-drift-plan';
+    const file = path.join(tmpDir, 'branch-plan.txt');
+    await fs.writeFile(file, 'v1\n', 'utf8');
+    const first = await service.createTurnCheckpoint({ sessionId, turnIndex: 1, prompt: 'initial', sessionState: { sessionId, messages: [] } });
+    await fs.writeFile(file, 'v2\n', 'utf8');
+    await service.createTurnCheckpoint({ sessionId, turnIndex: 2, prompt: 'changed', sessionState: { sessionId, messages: [] } });
+    const preview = await service.previewRestore(sessionId, first.id);
+    await execAsync('git', ['symbolic-ref', 'HEAD', 'refs/heads/time-machine-plan-test'], { cwd: tmpDir });
+    await expect(service.rewindToCheckpoint(sessionId, first.id, { restorePlanId: preview.restorePlanId }))
+      .rejects.toMatchObject({ code: 'RESTORE_PLAN_INVALID' });
+    expect(await fs.readFile(file, 'utf8')).toBe('v2\n');
+  });
+
   it('rejects ignored deletion when the quarantine hard limit would be exceeded', async () => {
     const limited = new TimeMachineService({
       workDir: tmpDir,

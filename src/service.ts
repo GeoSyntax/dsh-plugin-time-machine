@@ -53,6 +53,9 @@ interface RestorePlan {
   currentCheckpointId: string | null;
   currentTreeOid: string;
   currentIgnoredPaths: string[];
+  headOid: string | null;
+  branch: string;
+  operation: string | null;
   createdAt: number;
   expiresAt: number | null;
 }
@@ -452,6 +455,9 @@ export class TimeMachineService {
       const currentState = isGit
         ? await this.gitEngine.inspectWorkspace()
         : { treeOid: await this.fallbackEngine.inspectWorkspace(), ignoredPaths: [] };
+      const controlPlane = isGit
+        ? await this.gitEngine.inspectControlPlane()
+        : { headOid: null, branch: '', operation: null };
       const targetIgnoredPaths = target.ignoredPaths ?? [];
       const diffs = isGit
         ? await this.gitEngine.getDiffBetween(currentState.treeOid, target.gitCommitOid)
@@ -484,6 +490,9 @@ export class TimeMachineService {
         currentCheckpointId: current?.id ?? null,
         currentTreeOid: currentState.treeOid,
         currentIgnoredPaths: [...currentState.ignoredPaths],
+        headOid: controlPlane.headOid,
+        branch: controlPlane.branch,
+        operation: controlPlane.operation,
         createdAt,
         expiresAt,
       });
@@ -535,12 +544,22 @@ export class TimeMachineService {
     if (actual.treeOid !== plan.currentTreeOid || !sameStrings(actual.ignoredPaths, plan.currentIgnoredPaths)) {
       throw new RestorePlanError('Workspace changed after preview; run preview again before restoring.');
     }
+    const controlPlane = await this.inspectControlPlane();
+    if (controlPlane.headOid !== plan.headOid || controlPlane.branch !== plan.branch || controlPlane.operation !== plan.operation) {
+      throw new RestorePlanError('Git HEAD, branch, or in-progress operation changed after preview; run preview again.');
+    }
   }
 
   private async inspectWorkspaceSignature(): Promise<{ treeOid: string; ignoredPaths: string[] }> {
     return await this.gitEngine.isGitRepo()
       ? await this.gitEngine.inspectWorkspace()
       : { treeOid: await this.fallbackEngine.inspectWorkspace(), ignoredPaths: [] };
+  }
+
+  private async inspectControlPlane(): Promise<{ headOid: string | null; branch: string; operation: string | null }> {
+    return await this.gitEngine.isGitRepo()
+      ? await this.gitEngine.inspectControlPlane()
+      : { headOid: null, branch: '', operation: null };
   }
 
   /**

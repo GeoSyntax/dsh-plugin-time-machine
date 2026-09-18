@@ -39,10 +39,10 @@ messages, and records rescue/result checkpoints instead of pretending the
 conversation was rewound.
 
 The comparison is deliberately not a claim that Time Machine is ahead of every
-peer. In particular, the current Change Ledger implementation has several
-production-hardening features that are still on our roadmap: expiring,
-session-bound restore plans; explicit Git HEAD/branch/in-progress-operation
-fences; sparse-checkout and submodule policy; unsupported-file and per-file size
+peer. Time Machine now has expiring, single-use, session-bound restore plans
+with Git HEAD/branch/in-progress-operation fences for reviewed Web/CLI restores.
+The current Change Ledger implementation still goes further with
+sparse-checkout and submodule policy; unsupported-file and per-file size
 reporting; path-identity caches for large workspaces; and a host-native,
 message-anchored rewind action. We should adopt those ideas where they fit
 without copying their storage format.

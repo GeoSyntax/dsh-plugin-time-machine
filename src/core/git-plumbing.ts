@@ -209,6 +209,31 @@ export class GitPlumbingEngine {
     }
   }
 
+  /** Read Git control-plane state without touching the user's index or refs. */
+  async inspectControlPlane(): Promise<{ headOid: string | null; branch: string; operation: string | null }> {
+    if (!(await this.isGitRepo())) return { headOid: null, branch: '', operation: null };
+    const headOid = await this.runGit(['rev-parse', '--verify', 'HEAD'])
+      .then(result => result.stdout.trim() || null)
+      .catch(() => null);
+    const branch = await this.runGit(['symbolic-ref', '--short', '-q', 'HEAD'])
+      .then(result => result.stdout.trim())
+      .catch(() => '');
+    const gitDir = await this.getGitDir();
+    const operationFiles: Array<[string, string]> = [
+      ['MERGE_HEAD', 'merge'],
+      ['CHERRY_PICK_HEAD', 'cherry-pick'],
+      ['REVERT_HEAD', 'revert'],
+    ];
+    for (const [file, operation] of operationFiles) {
+      if (await fs.access(path.join(gitDir, file)).then(() => true).catch(() => false)) return { headOid, branch, operation };
+    }
+    const rebaseDirs: Array<[string, string]> = [['rebase-merge', 'rebase'], ['rebase-apply', 'rebase']];
+    for (const [directory, operation] of rebaseDirs) {
+      if (await fs.access(path.join(gitDir, directory)).then(() => true).catch(() => false)) return { headOid, branch, operation };
+    }
+    return { headOid, branch, operation: null };
+  }
+
   /** Restore with an isolated index so the user's staged changes are never rewritten. */
   async restoreSnapshot(commitOrTreeOid: string, options: GitRestoreOptions = {}): Promise<{ deletedIgnoredPaths: string[] }> {
     if (!(await this.isGitRepo())) {

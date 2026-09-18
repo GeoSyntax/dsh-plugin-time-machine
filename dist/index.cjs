@@ -220,6 +220,26 @@ Reason: ${errorMsg}`);
           await import_promises.default.rm(indexFile, { force: true }).catch(() => void 0);
         }
       }
+      /** Read Git control-plane state without touching the user's index or refs. */
+      async inspectControlPlane() {
+        if (!await this.isGitRepo()) return { headOid: null, branch: "", operation: null };
+        const headOid = await this.runGit(["rev-parse", "--verify", "HEAD"]).then((result) => result.stdout.trim() || null).catch(() => null);
+        const branch = await this.runGit(["symbolic-ref", "--short", "-q", "HEAD"]).then((result) => result.stdout.trim()).catch(() => "");
+        const gitDir = await this.getGitDir();
+        const operationFiles = [
+          ["MERGE_HEAD", "merge"],
+          ["CHERRY_PICK_HEAD", "cherry-pick"],
+          ["REVERT_HEAD", "revert"]
+        ];
+        for (const [file, operation] of operationFiles) {
+          if (await import_promises.default.access(import_node_path.default.join(gitDir, file)).then(() => true).catch(() => false)) return { headOid, branch, operation };
+        }
+        const rebaseDirs = [["rebase-merge", "rebase"], ["rebase-apply", "rebase"]];
+        for (const [directory, operation] of rebaseDirs) {
+          if (await import_promises.default.access(import_node_path.default.join(gitDir, directory)).then(() => true).catch(() => false)) return { headOid, branch, operation };
+        }
+        return { headOid, branch, operation: null };
+      }
       /** Restore with an isolated index so the user's staged changes are never rewritten. */
       async restoreSnapshot(commitOrTreeOid, options = {}) {
         if (!await this.isGitRepo()) {
@@ -1755,6 +1775,7 @@ var TimeMachineService = class {
       const current = dag.getCurrentNode();
       const isGit = await this.gitEngine.isGitRepo();
       const currentState = isGit ? await this.gitEngine.inspectWorkspace() : { treeOid: await this.fallbackEngine.inspectWorkspace(), ignoredPaths: [] };
+      const controlPlane = isGit ? await this.gitEngine.inspectControlPlane() : { headOid: null, branch: "", operation: null };
       const targetIgnoredPaths = target.ignoredPaths ?? [];
       const diffs = isGit ? await this.gitEngine.getDiffBetween(currentState.treeOid, target.gitCommitOid) : target.changedFiles.map((change) => ({
         file: change.path,
@@ -1781,6 +1802,9 @@ var TimeMachineService = class {
         currentCheckpointId: current?.id ?? null,
         currentTreeOid: currentState.treeOid,
         currentIgnoredPaths: [...currentState.ignoredPaths],
+        headOid: controlPlane.headOid,
+        branch: controlPlane.branch,
+        operation: controlPlane.operation,
         createdAt,
         expiresAt
       });
@@ -1825,9 +1849,16 @@ var TimeMachineService = class {
     if (actual.treeOid !== plan.currentTreeOid || !sameStrings(actual.ignoredPaths, plan.currentIgnoredPaths)) {
       throw new RestorePlanError("Workspace changed after preview; run preview again before restoring.");
     }
+    const controlPlane = await this.inspectControlPlane();
+    if (controlPlane.headOid !== plan.headOid || controlPlane.branch !== plan.branch || controlPlane.operation !== plan.operation) {
+      throw new RestorePlanError("Git HEAD, branch, or in-progress operation changed after preview; run preview again.");
+    }
   }
   async inspectWorkspaceSignature() {
     return await this.gitEngine.isGitRepo() ? await this.gitEngine.inspectWorkspace() : { treeOid: await this.fallbackEngine.inspectWorkspace(), ignoredPaths: [] };
+  }
+  async inspectControlPlane() {
+    return await this.gitEngine.isGitRepo() ? await this.gitEngine.inspectControlPlane() : { headOid: null, branch: "", operation: null };
   }
   /**
    * 打印终端彩色 ASCII 拓扑树

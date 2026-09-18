@@ -335,6 +335,7 @@ declare class TimeMachineService {
     /** Consume a preview token and fail closed if the reviewed workspace changed. */
     private consumeRestorePlan;
     private inspectWorkspaceSignature;
+    private inspectControlPlane;
     /**
      * 打印终端彩色 ASCII 拓扑树
      */
@@ -446,6 +447,12 @@ declare class GitPlumbingEngine {
     inspectWorkspace(): Promise<{
         treeOid: string;
         ignoredPaths: string[];
+    }>;
+    /** Read Git control-plane state without touching the user's index or refs. */
+    inspectControlPlane(): Promise<{
+        headOid: string | null;
+        branch: string;
+        operation: string | null;
     }>;
     /** Restore with an isolated index so the user's staged changes are never rewritten. */
     restoreSnapshot(commitOrTreeOid: string, options?: GitRestoreOptions): Promise<{

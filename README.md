@@ -184,6 +184,9 @@ TM_DSH_SOURCE=E:/desktop/dsh/deepseek-harness TM_DSH_LIVE=1 TM_DSH_LIVE_RESTART=
 
 # Optional: boot the real DSH web host and exercise session/create, prompt, fork, and rewind.
 TM_DSH_SOURCE=E:/desktop/dsh/deepseek-harness TM_GEMINI_API_KEY=<redacted> pnpm smoke:dsh:web
+
+# Optional: verify an unreachable model endpoint still produces a durable failed checkpoint.
+TM_DSH_SOURCE=E:/desktop/dsh/deepseek-harness pnpm smoke:dsh:failure
 ```
 
 测试覆盖 Git index 不污染、managed orphan 删除、ignored quarantine/rescue、safe drift refusal、非 Git 精确恢复、DAG 分支、反思和 loopback Web 安全边界。

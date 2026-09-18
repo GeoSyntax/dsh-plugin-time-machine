@@ -178,6 +178,26 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
     expect(dag.getCurrentNode()?.sessionState.messages[0]?.content).toBe('current');
   });
 
+  it('prunes an abandoned branch only when explicitly requested and keeps shared ancestors', async () => {
+    const sessionId = 'prune-session';
+    await fs.writeFile(path.join(tmpDir, 'history.txt'), 'one\n', 'utf8');
+    const first = await service.createTurnCheckpoint({ sessionId, turnIndex: 1, prompt: 'one', sessionState: { sessionId, messages: [] } });
+    await fs.writeFile(path.join(tmpDir, 'history.txt'), 'two\n', 'utf8');
+    const second = await service.createTurnCheckpoint({ sessionId, turnIndex: 2, prompt: 'two', sessionState: { sessionId, messages: [] } });
+    await service.forkNewBranch({ sessionId, fromCheckpointId: first.id, newBranchName: 'experiment' });
+    await fs.writeFile(path.join(tmpDir, 'history.txt'), 'three\n', 'utf8');
+    const third = await service.createTurnCheckpoint({ sessionId, turnIndex: 3, prompt: 'three', sessionState: { sessionId, messages: [] } });
+
+    const status = await service.getStorageStatus(sessionId);
+    expect(status.checkpoints).toBeGreaterThanOrEqual(4); // fork creates a rescue checkpoint
+    const result = await service.prune(sessionId, { keepLatest: 0, abandonedBranches: true });
+    expect(result.removedCheckpointIds).toContain(second.id);
+    const dag = await service.getDAGManager(sessionId);
+    expect(dag.getNode(first.id)).not.toBeNull();
+    expect(dag.getNode(second.id)).toBeNull();
+    expect(dag.getNode(third.id)).not.toBeNull();
+  });
+
   it('finalizes a turn and reloads its DAG state after a service restart', async () => {
     const sessionId = 'restart-session';
     const file = path.join(tmpDir, 'restart.txt');

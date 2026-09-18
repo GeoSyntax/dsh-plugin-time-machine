@@ -150,6 +150,22 @@ describe('TimeMachineWebServer', () => {
     expect(await fs.readFile(right, 'utf8')).toBe('right-v2\n');
   });
 
+  it('exposes storage status and explicit prune controls', async () => {
+    await fs.writeFile(path.join(tmpDir, 'storage.txt'), 'one\n', 'utf8');
+    await service.createTurnCheckpoint({
+      sessionId: 'storage-web', turnIndex: 1, prompt: 'storage', sessionState: { sessionId: 'storage-web', messages: [] },
+    });
+    const status = await fetch(`http://localhost:${testPort}/api/storage?sessionId=storage-web`);
+    expect(status.status).toBe(200);
+    expect((await status.json()).status.checkpoints).toBe(1);
+    const prune = await fetch(`http://localhost:${testPort}/api/prune`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: 'storage-web', keepLatest: 0 }),
+    });
+    expect(prune.status).toBe(200);
+    expect((await prune.json()).result.removedCheckpointIds).toEqual([]);
+  });
+
   it('should compensate a physical rewind when conversation restart fails', async () => {
     const file = path.join(tmpDir, 'compensation.txt');
     await fs.writeFile(file, 'before\n', 'utf8');

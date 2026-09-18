@@ -25,6 +25,8 @@ dsh --profile web
 
 ```text
 /tm-tree
+/tm-storage
+/tm-prune [keep-latest]
 /tm-preview <checkpoint>
 /tm-restore-files <checkpoint> <path...>
 /tm-fork <checkpoint> <branch>
@@ -43,6 +45,7 @@ dsh --profile web
 - **运行在非 Git 目录:** fallback 后端使用 manifest 和内容哈希快照，支持普通文件、目录和 symlink。
 - **先看再回滚:** Git 工作区提供文本 diff；非 Git fallback 至少列出将被目标快照覆盖的路径，并明确提示暂不提供文本 diff。
 - **选择性恢复:** `/tm-restore-files` 只写入指定文件/目录，并创建 rescue 和结果 checkpoint；它不会伪造会话回滚。
+- **存储治理:** `/tm-storage` 查看插件目录占用；`/tm-prune` 只删除不属于 current/branch head 且没有子节点的旧叶子节点；明确传入 `--abandoned-branches` 才会删除非当前探索分支。Git object 是共享的，删除私有 ref 不会自动执行危险的全仓库 GC。
 
 ## Safety model
 

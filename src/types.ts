@@ -127,6 +127,24 @@ export interface SelectiveRestoreResult {
   resultCheckpointId?: string;
 }
 
+export interface StorageStatus {
+  storageDir: string;
+  bytes: number;
+  files: number;
+  sessions: number;
+  checkpoints: number;
+  pruneCandidates: number;
+  gitObjectsShared: boolean;
+}
+
+export interface PruneResult {
+  sessionId: string;
+  removedCheckpointIds: string[];
+  reclaimedBytes: number;
+  gitRefsRemoved: number;
+  note: string;
+}
+
 export interface ReflectionSummary {
   hasPastFailures: boolean;
   failedNodeCount: number;

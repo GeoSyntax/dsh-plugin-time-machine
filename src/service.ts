@@ -1,4 +1,5 @@
 import path from 'node:path';
+import fs from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { GitPlumbingEngine } from './core/git-plumbing.js';
 import { FallbackSnapshotEngine } from './core/fallback-engine.js';
@@ -14,6 +15,8 @@ import type {
   RestoreOptions,
   RestoreResult,
   SelectiveRestoreResult,
+  PruneResult,
+  StorageStatus,
   SessionState,
   TimeMachineConfig,
 } from './types.js';
@@ -401,6 +404,75 @@ export class TimeMachineService {
     return dag.renderAsciiTree();
   }
 
+  async getStorageStatus(sessionId?: string): Promise<StorageStatus> {
+    const sessions = sessionId ? [sessionId] : await this.listStoredSessions();
+    const managers = await Promise.all(sessions.map(item => this.getDAGManager(item)));
+    const checkpoints = managers.reduce((sum, manager) => sum + Object.keys(manager.tree.nodes).length, 0);
+    const leaves = managers.reduce((sum, manager) => sum + this.pruneCandidates(manager).length, 0);
+    const files = await countFiles(this.storageDir);
+    const bytes = await directoryBytes(this.storageDir);
+    return {
+      storageDir: this.storageDir,
+      bytes,
+      files,
+      sessions: sessions.length,
+      checkpoints,
+      pruneCandidates: leaves,
+      gitObjectsShared: await this.gitEngine.isGitRepo(),
+    };
+  }
+
+  async prune(sessionId: string, options: { keepLatest?: number; abandonedBranches?: boolean } = {}): Promise<PruneResult> {
+    return this.operations.run(this.workDir, async () => {
+      const dag = await this.getDAGManager(sessionId);
+      const keepLatest = Math.max(0, Math.floor(options.keepLatest ?? 20));
+      const nodes = Object.values(dag.tree.nodes).sort((left, right) => right.timestamp - left.timestamp);
+      const keep = new Set(nodes.slice(0, keepLatest).map(node => node.id));
+      let removed: CheckpointNode[] = [];
+      if (options.abandonedBranches) {
+        const abandonedBranches = Object.keys(dag.tree.branches).filter(branch => branch !== dag.tree.currentBranch);
+        for (const branch of abandonedBranches) removed.push(...await dag.removeBranch(branch));
+      }
+      const candidates = this.pruneCandidates(dag).filter(node => !keep.has(node.id));
+      removed.push(...await dag.removeLeafNodes(candidates.map(node => node.id)));
+      let reclaimedBytes = 0;
+      let gitRefsRemoved = 0;
+      for (const node of removed) {
+        if (node.gitCommitOid.startsWith('fallback_')) reclaimedBytes += await this.fallbackEngine.removeSnapshot(sessionId, node.id);
+        else if (await this.gitEngine.isGitRepo() && await this.gitEngine.deleteCheckpointRef(sessionId, node.id)) gitRefsRemoved += 1;
+      }
+      return {
+        sessionId,
+        removedCheckpointIds: removed.map(node => node.id),
+        reclaimedBytes,
+        gitRefsRemoved,
+        note: gitRefsRemoved > 0 ? 'Git objects are shared; run repository maintenance only if you understand its impact.' : 'Fallback snapshot bytes were removed from plugin storage.',
+      };
+    });
+  }
+
+  private pruneCandidates(dag: DAGStateManager): CheckpointNode[] {
+    const protectedIds = new Set([
+      ...(dag.tree.currentCheckpointId ? [dag.tree.currentCheckpointId] : []),
+      ...Object.values(dag.tree.branches).map(branch => branch.headId).filter(Boolean),
+    ]);
+    const parents = new Set(Object.values(dag.tree.nodes).map(node => node.parentId).filter((id): id is string => Boolean(id)));
+    return Object.values(dag.tree.nodes).filter(node => !protectedIds.has(node.id) && !parents.has(node.id));
+  }
+
+  private async listStoredSessions(): Promise<string[]> {
+    const entries = await fs.readdir(this.storageDir, { withFileTypes: true }).catch(() => [] as import('node:fs').Dirent[]);
+    const sessions = new Set<string>();
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.startsWith('dag_') || !entry.name.endsWith('.json')) continue;
+      try {
+        const tree = JSON.parse(await fs.readFile(path.join(this.storageDir, entry.name), 'utf8')) as DAGTree;
+        if (typeof tree.sessionId === 'string') sessions.add(tree.sessionId);
+      } catch { /* status must remain best-effort for corrupt/partial storage */ }
+    }
+    return [...sessions];
+  }
+
   private async restoreWithRescue(
     dag: DAGStateManager,
     target: CheckpointNode,
@@ -502,4 +574,30 @@ function cloneJson<T>(value: T): T {
 
 function sameStrings(left: string[], right: string[]): boolean {
   return left.length === right.length && left.every((item, index) => item === right[index]);
+}
+
+async function directoryBytes(root: string): Promise<number> {
+  let total = 0;
+  const visit = async (directory: string): Promise<void> => {
+    for (const entry of await fs.readdir(directory, { withFileTypes: true }).catch(() => [] as import('node:fs').Dirent[])) {
+      const absolute = path.join(directory, entry.name);
+      if (entry.isDirectory()) await visit(absolute);
+      else total += (await fs.stat(absolute).catch(() => ({ size: 0 }))).size;
+    }
+  };
+  await visit(root);
+  return total;
+}
+
+async function countFiles(root: string): Promise<number> {
+  let total = 0;
+  const visit = async (directory: string): Promise<void> => {
+    for (const entry of await fs.readdir(directory, { withFileTypes: true }).catch(() => [] as import('node:fs').Dirent[])) {
+      const absolute = path.join(directory, entry.name);
+      if (entry.isDirectory()) await visit(absolute);
+      else total += 1;
+    }
+  };
+  await visit(root);
+  return total;
 }

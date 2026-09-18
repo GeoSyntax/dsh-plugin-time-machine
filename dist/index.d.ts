@@ -123,6 +123,22 @@ interface SelectiveRestoreResult {
     rescueCheckpointId?: string;
     resultCheckpointId?: string;
 }
+interface StorageStatus {
+    storageDir: string;
+    bytes: number;
+    files: number;
+    sessions: number;
+    checkpoints: number;
+    pruneCandidates: number;
+    gitObjectsShared: boolean;
+}
+interface PruneResult {
+    sessionId: string;
+    removedCheckpointIds: string[];
+    reclaimedBytes: number;
+    gitRefsRemoved: number;
+    note: string;
+}
 interface ReflectionSummary {
     hasPastFailures: boolean;
     failedNodeCount: number;
@@ -160,6 +176,10 @@ declare class DAGStateManager {
      */
     getNode(checkpointId: string): CheckpointNode | null;
     updateNode(checkpointId: string, patch: Partial<Pick<CheckpointNode, 'status' | 'errorMessage' | 'failedTools' | 'summary' | 'settledGitTreeOid' | 'settledIgnoredPaths' | 'ignoredBackupKey'>>): Promise<CheckpointNode>;
+    /** Remove only leaf checkpoints that are not current or a branch head. */
+    removeLeafNodes(checkpointIds: string[]): Promise<CheckpointNode[]>;
+    /** Explicitly remove a non-current exploration branch and its private nodes. */
+    removeBranch(branchName: string): Promise<CheckpointNode[]>;
     /**
      * 回滚当前指针到指定历史节点（保持在当前分支）
      */
@@ -273,6 +293,13 @@ declare class TimeMachineService {
      * 打印终端彩色 ASCII 拓扑树
      */
     renderTree(sessionId: string): Promise<string>;
+    getStorageStatus(sessionId?: string): Promise<StorageStatus>;
+    prune(sessionId: string, options?: {
+        keepLatest?: number;
+        abandonedBranches?: boolean;
+    }): Promise<PruneResult>;
+    private pruneCandidates;
+    private listStoredSessions;
     private restoreWithRescue;
     private restoreNode;
 }
@@ -359,6 +386,7 @@ declare class GitPlumbingEngine {
     private backupIgnoredPath;
     private parseUnifiedDiff;
     cleanupSession(sessionId: string): Promise<void>;
+    deleteCheckpointRef(sessionId: string, checkpointId: string): Promise<boolean>;
 }
 
 interface FallbackOptions {
@@ -387,6 +415,7 @@ declare class FallbackSnapshotEngine {
         expectedCurrentTreeOid?: string;
         mode?: 'safe' | 'force';
     }): Promise<string[]>;
+    removeSnapshot(sessionId: string, checkpointId: string): Promise<number>;
     private captureTree;
     private scanTree;
     private isPreserved;
@@ -467,4 +496,4 @@ declare class TimeMachinePlugin {
     constructor(ctx: Context, config?: Config);
 }
 
-export { type CheckpointNode, Config, type DAGManagerOptions, DAGStateManager, type DAGTree, type DiffResult, type FallbackOptions, FallbackSnapshotEngine, type FileChange, GitPlumbingEngine, type GitPlumbingOptions, type GitRestoreOptions, type GitSelectiveRestoreOptions, type GitSnapshot, ReflectionAdvisor, type ReflectionSummary, type RestoreOptions, type RestorePreview, type RestoreResult, type SelectiveRestoreResult, type SessionMessage, type SessionState, type TimeMachineConfig, TimeMachinePlugin, TimeMachineService, type TimeMachineServiceOptions, WorkspaceDriftError, WorkspaceRestoreConflictError, apply, collectFailedTools, TimeMachinePlugin as default, name };
+export { type CheckpointNode, Config, type DAGManagerOptions, DAGStateManager, type DAGTree, type DiffResult, type FallbackOptions, FallbackSnapshotEngine, type FileChange, GitPlumbingEngine, type GitPlumbingOptions, type GitRestoreOptions, type GitSelectiveRestoreOptions, type GitSnapshot, type PruneResult, ReflectionAdvisor, type ReflectionSummary, type RestoreOptions, type RestorePreview, type RestoreResult, type SelectiveRestoreResult, type SessionMessage, type SessionState, type StorageStatus, type TimeMachineConfig, TimeMachinePlugin, TimeMachineService, type TimeMachineServiceOptions, WorkspaceDriftError, WorkspaceRestoreConflictError, apply, collectFailedTools, TimeMachinePlugin as default, name };

@@ -28,6 +28,30 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
     });
 
     scope.commands.register({
+      name: 'tm-storage',
+      description: 'Show Time Machine snapshot storage usage',
+      recordInput: false,
+      handler: async ({ agent }: CommandInvocationLike): Promise<CommandResult> => {
+        const status = await service.getStorageStatus(agent.session.id);
+        return { kind: 'success', text: `Time Machine storage: ${formatBytes(status.bytes)} in ${status.files} files; ${status.checkpoints} checkpoints; ${status.pruneCandidates} safe leaf candidate(s).` };
+      },
+    });
+
+    scope.commands.register({
+      name: 'tm-prune',
+      description: 'Prune old non-head Time Machine checkpoints',
+      input: { hint: '[keep-latest] [--abandoned-branches]' },
+      handler: async ({ agent, rawInput }: CommandInvocationLike): Promise<CommandResult> => {
+        const args = rawInput.trim().split(/\s+/).filter(Boolean);
+        const keepArg = args.find(arg => !arg.startsWith('--'));
+        const keepLatest = keepArg ? Number(keepArg) : 20;
+        if (!Number.isInteger(keepLatest) || keepLatest < 0) return { kind: 'error', text: 'Usage: /tm-prune [non-negative keep-latest]' };
+        const result = await service.prune(agent.session.id, { keepLatest, abandonedBranches: args.includes('--abandoned-branches') });
+        return { kind: 'success', text: `Pruned ${result.removedCheckpointIds.length} checkpoint(s), reclaimed ${formatBytes(result.reclaimedBytes)}. ${result.note}` };
+      },
+    });
+
+    scope.commands.register({
       name: 'tm-rewind',
       description: 'Restore workspace and fork conversation at a checkpoint',
       input: { hint: '<checkpoint> [--force] [--delete-new-ignored]' },
@@ -117,6 +141,12 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
       },
     });
   });
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
 }
 
 async function restartConversation(

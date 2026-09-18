@@ -113,6 +113,35 @@ export class DAGStateManager {
     return cloneJson(updated);
   }
 
+  /** Remove only leaf checkpoints that are not current or a branch head. */
+  async removeLeafNodes(checkpointIds: string[]): Promise<CheckpointNode[]> {
+    const requested = new Set(checkpointIds);
+    const protectedIds = new Set<string>([
+      ...(this.tree.currentCheckpointId ? [this.tree.currentCheckpointId] : []),
+      ...Object.values(this.tree.branches).map(branch => branch.headId).filter(Boolean),
+    ]);
+    const children = new Set(Object.values(this.tree.nodes).map(node => node.parentId).filter((id): id is string => Boolean(id)));
+    const removable = Object.values(this.tree.nodes).filter(node => requested.has(node.id) && !protectedIds.has(node.id) && !children.has(node.id));
+    if (removable.length === 0) return [];
+    await this.commitMutation(() => {
+      for (const node of removable) delete this.tree.nodes[node.id];
+    });
+    return removable.map(cloneJson);
+  }
+
+  /** Explicitly remove a non-current exploration branch and its private nodes. */
+  async removeBranch(branchName: string): Promise<CheckpointNode[]> {
+    if (branchName === this.tree.currentBranch) throw new Error('Cannot prune the current branch.');
+    if (!this.tree.branches[branchName]) return [];
+    const protectedAncestors = new Set(this.getLineage(this.tree.currentCheckpointId ?? '').map(node => node.id));
+    const removed = Object.values(this.tree.nodes).filter(node => node.branch === branchName && !protectedAncestors.has(node.id));
+    await this.commitMutation(() => {
+      delete this.tree.branches[branchName];
+      for (const node of removed) delete this.tree.nodes[node.id];
+    });
+    return removed.map(cloneJson);
+  }
+
   /**
    * 回滚当前指针到指定历史节点（保持在当前分支）
    */

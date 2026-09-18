@@ -441,6 +441,14 @@ export class GitPlumbingEngine {
       await this.runGit(['update-ref', '-d', ref.trim()]);
     }
   }
+
+  async deleteCheckpointRef(sessionId: string, checkpointId: string): Promise<boolean> {
+    const ref = `${this.refPrefix}/${encodeRefPart(sessionId)}/nodes/${encodeRefPart(checkpointId)}`;
+    const exists = await this.runGit(['show-ref', '--verify', '--quiet', ref]).then(() => true).catch(() => false);
+    if (!exists) return false;
+    await this.runGit(['update-ref', '-d', ref]);
+    return true;
+  }
 }
 
 function encodeRefPart(value: string): string {

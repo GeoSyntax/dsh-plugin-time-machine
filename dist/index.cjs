@@ -438,6 +438,13 @@ Reason: ${errorMsg}`);
           await this.runGit(["update-ref", "-d", ref.trim()]);
         }
       }
+      async deleteCheckpointRef(sessionId, checkpointId) {
+        const ref = `${this.refPrefix}/${encodeRefPart(sessionId)}/nodes/${encodeRefPart(checkpointId)}`;
+        const exists = await this.runGit(["show-ref", "--verify", "--quiet", ref]).then(() => true).catch(() => false);
+        if (!exists) return false;
+        await this.runGit(["update-ref", "-d", ref]);
+        return true;
+      }
     };
   }
 });
@@ -468,6 +475,7 @@ var import_picocolors2 = __toESM(require("picocolors"), 1);
 // src/service.ts
 init_cjs_shims();
 var import_node_path4 = __toESM(require("path"), 1);
+var import_promises4 = __toESM(require("fs/promises"), 1);
 var import_node_crypto4 = require("crypto");
 init_git_plumbing();
 
@@ -589,6 +597,12 @@ var FallbackSnapshotEngine = class {
     }
     return normalized;
   }
+  async removeSnapshot(sessionId, checkpointId) {
+    const target = this.getCheckpointDir(sessionId, checkpointId);
+    const before = await directorySize(target);
+    await import_promises2.default.rm(target, { recursive: true, force: true });
+    return before;
+  }
   async captureTree(sourceRoot, destinationRoot) {
     const entries = await this.scanTree(sourceRoot);
     for (const entry of entries) {
@@ -676,6 +690,18 @@ function deepestFirst(left, right) {
 }
 function shallowestFirst(left, right) {
   return left.path.split("/").length - right.path.split("/").length || left.path.localeCompare(right.path);
+}
+async function directorySize(root) {
+  let total = 0;
+  const visit = async (directory) => {
+    for (const entry of await import_promises2.default.readdir(directory, { withFileTypes: true }).catch(() => [])) {
+      const absolute = import_node_path2.default.join(directory, entry.name);
+      if (entry.isDirectory()) await visit(absolute);
+      else total += (await import_promises2.default.stat(absolute).catch(() => ({ size: 0 }))).size;
+    }
+  };
+  await visit(root);
+  return total;
 }
 
 // src/core/dag-manager.ts
@@ -781,6 +807,33 @@ var DAGStateManager = class {
       this.tree.nodes[checkpointId] = updated;
     });
     return cloneJson(updated);
+  }
+  /** Remove only leaf checkpoints that are not current or a branch head. */
+  async removeLeafNodes(checkpointIds) {
+    const requested = new Set(checkpointIds);
+    const protectedIds = /* @__PURE__ */ new Set([
+      ...this.tree.currentCheckpointId ? [this.tree.currentCheckpointId] : [],
+      ...Object.values(this.tree.branches).map((branch) => branch.headId).filter(Boolean)
+    ]);
+    const children = new Set(Object.values(this.tree.nodes).map((node) => node.parentId).filter((id) => Boolean(id)));
+    const removable = Object.values(this.tree.nodes).filter((node) => requested.has(node.id) && !protectedIds.has(node.id) && !children.has(node.id));
+    if (removable.length === 0) return [];
+    await this.commitMutation(() => {
+      for (const node of removable) delete this.tree.nodes[node.id];
+    });
+    return removable.map(cloneJson);
+  }
+  /** Explicitly remove a non-current exploration branch and its private nodes. */
+  async removeBranch(branchName) {
+    if (branchName === this.tree.currentBranch) throw new Error("Cannot prune the current branch.");
+    if (!this.tree.branches[branchName]) return [];
+    const protectedAncestors = new Set(this.getLineage(this.tree.currentCheckpointId ?? "").map((node) => node.id));
+    const removed = Object.values(this.tree.nodes).filter((node) => node.branch === branchName && !protectedAncestors.has(node.id));
+    await this.commitMutation(() => {
+      delete this.tree.branches[branchName];
+      for (const node of removed) delete this.tree.nodes[node.id];
+    });
+    return removed.map(cloneJson);
   }
   /**
    * 回滚当前指针到指定历史节点（保持在当前分支）
@@ -1339,6 +1392,72 @@ var TimeMachineService = class {
     const dag = await this.getDAGManager(sessionId);
     return dag.renderAsciiTree();
   }
+  async getStorageStatus(sessionId) {
+    const sessions = sessionId ? [sessionId] : await this.listStoredSessions();
+    const managers = await Promise.all(sessions.map((item) => this.getDAGManager(item)));
+    const checkpoints = managers.reduce((sum, manager) => sum + Object.keys(manager.tree.nodes).length, 0);
+    const leaves = managers.reduce((sum, manager) => sum + this.pruneCandidates(manager).length, 0);
+    const files = await countFiles(this.storageDir);
+    const bytes = await directoryBytes(this.storageDir);
+    return {
+      storageDir: this.storageDir,
+      bytes,
+      files,
+      sessions: sessions.length,
+      checkpoints,
+      pruneCandidates: leaves,
+      gitObjectsShared: await this.gitEngine.isGitRepo()
+    };
+  }
+  async prune(sessionId, options = {}) {
+    return this.operations.run(this.workDir, async () => {
+      const dag = await this.getDAGManager(sessionId);
+      const keepLatest = Math.max(0, Math.floor(options.keepLatest ?? 20));
+      const nodes = Object.values(dag.tree.nodes).sort((left, right) => right.timestamp - left.timestamp);
+      const keep = new Set(nodes.slice(0, keepLatest).map((node) => node.id));
+      let removed = [];
+      if (options.abandonedBranches) {
+        const abandonedBranches = Object.keys(dag.tree.branches).filter((branch) => branch !== dag.tree.currentBranch);
+        for (const branch of abandonedBranches) removed.push(...await dag.removeBranch(branch));
+      }
+      const candidates = this.pruneCandidates(dag).filter((node) => !keep.has(node.id));
+      removed.push(...await dag.removeLeafNodes(candidates.map((node) => node.id)));
+      let reclaimedBytes = 0;
+      let gitRefsRemoved = 0;
+      for (const node of removed) {
+        if (node.gitCommitOid.startsWith("fallback_")) reclaimedBytes += await this.fallbackEngine.removeSnapshot(sessionId, node.id);
+        else if (await this.gitEngine.isGitRepo() && await this.gitEngine.deleteCheckpointRef(sessionId, node.id)) gitRefsRemoved += 1;
+      }
+      return {
+        sessionId,
+        removedCheckpointIds: removed.map((node) => node.id),
+        reclaimedBytes,
+        gitRefsRemoved,
+        note: gitRefsRemoved > 0 ? "Git objects are shared; run repository maintenance only if you understand its impact." : "Fallback snapshot bytes were removed from plugin storage."
+      };
+    });
+  }
+  pruneCandidates(dag) {
+    const protectedIds = /* @__PURE__ */ new Set([
+      ...dag.tree.currentCheckpointId ? [dag.tree.currentCheckpointId] : [],
+      ...Object.values(dag.tree.branches).map((branch) => branch.headId).filter(Boolean)
+    ]);
+    const parents = new Set(Object.values(dag.tree.nodes).map((node) => node.parentId).filter((id) => Boolean(id)));
+    return Object.values(dag.tree.nodes).filter((node) => !protectedIds.has(node.id) && !parents.has(node.id));
+  }
+  async listStoredSessions() {
+    const entries = await import_promises4.default.readdir(this.storageDir, { withFileTypes: true }).catch(() => []);
+    const sessions = /* @__PURE__ */ new Set();
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.startsWith("dag_") || !entry.name.endsWith(".json")) continue;
+      try {
+        const tree = JSON.parse(await import_promises4.default.readFile(import_node_path4.default.join(this.storageDir, entry.name), "utf8"));
+        if (typeof tree.sessionId === "string") sessions.add(tree.sessionId);
+      } catch {
+      }
+    }
+    return [...sessions];
+  }
   async restoreWithRescue(dag, target, options) {
     const current = dag.getCurrentNode() ?? void 0;
     const mode = options.mode ?? this.config.restoreMode;
@@ -1421,12 +1540,36 @@ function cloneJson2(value) {
 function sameStrings(left, right) {
   return left.length === right.length && left.every((item, index) => item === right[index]);
 }
+async function directoryBytes(root) {
+  let total = 0;
+  const visit = async (directory) => {
+    for (const entry of await import_promises4.default.readdir(directory, { withFileTypes: true }).catch(() => [])) {
+      const absolute = import_node_path4.default.join(directory, entry.name);
+      if (entry.isDirectory()) await visit(absolute);
+      else total += (await import_promises4.default.stat(absolute).catch(() => ({ size: 0 }))).size;
+    }
+  };
+  await visit(root);
+  return total;
+}
+async function countFiles(root) {
+  let total = 0;
+  const visit = async (directory) => {
+    for (const entry of await import_promises4.default.readdir(directory, { withFileTypes: true }).catch(() => [])) {
+      const absolute = import_node_path4.default.join(directory, entry.name);
+      if (entry.isDirectory()) await visit(absolute);
+      else total += 1;
+    }
+  };
+  await visit(root);
+  return total;
+}
 
 // src/web/server.ts
 init_cjs_shims();
 var import_node_http = __toESM(require("http"), 1);
 var import_node_path5 = __toESM(require("path"), 1);
-var import_promises4 = __toESM(require("fs/promises"), 1);
+var import_promises5 = __toESM(require("fs/promises"), 1);
 var import_node_url = require("url");
 var TimeMachineWebServer = class {
   server = null;
@@ -1504,6 +1647,13 @@ var TimeMachineWebServer = class {
       res.end(JSON.stringify(dag.tree));
       return;
     }
+    if (pathname === "/api/storage" && req.method === "GET") {
+      const sessionId = query.get("sessionId") || void 0;
+      const status = await this.service.getStorageStatus(sessionId);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ status }));
+      return;
+    }
     if (pathname === "/api/diff" && req.method === "GET") {
       const sessionId = query.get("sessionId") || "default";
       const baseId = query.get("base") || "";
@@ -1550,6 +1700,18 @@ var TimeMachineWebServer = class {
       const result = await this.service.restoreSelectedPaths(sessionId, body.checkpointId, paths, {
         mode: body.force === true ? "force" : void 0
       });
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: true, result }));
+      return;
+    }
+    if (pathname === "/api/prune" && req.method === "POST") {
+      const body = await this.readJsonBody(req);
+      const sessionId = body.sessionId || "default";
+      const keepLatest = body.keepLatest === void 0 ? void 0 : Number(body.keepLatest);
+      if (keepLatest !== void 0 && (!Number.isInteger(keepLatest) || keepLatest < 0)) {
+        throw Object.assign(new Error("keepLatest must be a non-negative integer"), { code: "BAD_REQUEST" });
+      }
+      const result = await this.service.prune(sessionId, { keepLatest, abandonedBranches: body.abandonedBranches === true });
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ success: true, result }));
       return;
@@ -1625,7 +1787,7 @@ var TimeMachineWebServer = class {
       const relative = import_node_path5.default.relative(import_node_path5.default.resolve(dir), candidate);
       if (relative.startsWith("..") || import_node_path5.default.isAbsolute(relative)) continue;
       try {
-        await import_promises4.default.access(candidate);
+        await import_promises5.default.access(candidate);
         fullPath = candidate;
         break;
       } catch {
@@ -1633,7 +1795,7 @@ var TimeMachineWebServer = class {
     }
     try {
       if (!fullPath) throw new Error("Asset not found");
-      const content = await import_promises4.default.readFile(fullPath);
+      const content = await import_promises5.default.readFile(fullPath);
       const ext = import_node_path5.default.extname(fullPath);
       const contentTypes = {
         ".html": "text/html; charset=utf-8",
@@ -1692,6 +1854,28 @@ function registerCliCommands(ctx, service) {
         kind: "success",
         text: await service.renderTree(agent.session.id)
       })
+    });
+    scope.commands.register({
+      name: "tm-storage",
+      description: "Show Time Machine snapshot storage usage",
+      recordInput: false,
+      handler: async ({ agent }) => {
+        const status = await service.getStorageStatus(agent.session.id);
+        return { kind: "success", text: `Time Machine storage: ${formatBytes(status.bytes)} in ${status.files} files; ${status.checkpoints} checkpoints; ${status.pruneCandidates} safe leaf candidate(s).` };
+      }
+    });
+    scope.commands.register({
+      name: "tm-prune",
+      description: "Prune old non-head Time Machine checkpoints",
+      input: { hint: "[keep-latest] [--abandoned-branches]" },
+      handler: async ({ agent, rawInput }) => {
+        const args = rawInput.trim().split(/\s+/).filter(Boolean);
+        const keepArg = args.find((arg) => !arg.startsWith("--"));
+        const keepLatest = keepArg ? Number(keepArg) : 20;
+        if (!Number.isInteger(keepLatest) || keepLatest < 0) return { kind: "error", text: "Usage: /tm-prune [non-negative keep-latest]" };
+        const result = await service.prune(agent.session.id, { keepLatest, abandonedBranches: args.includes("--abandoned-branches") });
+        return { kind: "success", text: `Pruned ${result.removedCheckpointIds.length} checkpoint(s), reclaimed ${formatBytes(result.reclaimedBytes)}. ${result.note}` };
+      }
     });
     scope.commands.register({
       name: "tm-rewind",
@@ -1778,6 +1962,11 @@ ${result.reflectionAdvisory.suggestedPromptPrefix}` : "";
       }
     });
   });
+}
+function formatBytes(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
 }
 async function restartConversation(controller, sourceSessionId, checkpoint, cwd) {
   const boundary = checkpoint.sessionState.boundarySeq;

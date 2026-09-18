@@ -100,6 +100,14 @@ export class TimeMachineWebServer {
       return;
     }
 
+    if (pathname === '/api/storage' && req.method === 'GET') {
+      const sessionId = query.get('sessionId') || undefined;
+      const status = await this.service.getStorageStatus(sessionId);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status }));
+      return;
+    }
+
     if (pathname === '/api/diff' && req.method === 'GET') {
       const sessionId = query.get('sessionId') || 'default';
       const baseId = query.get('base') || '';
@@ -149,6 +157,19 @@ export class TimeMachineWebServer {
       const result = await this.service.restoreSelectedPaths(sessionId, body.checkpointId, paths, {
         mode: body.force === true ? 'force' : undefined,
       });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, result }));
+      return;
+    }
+
+    if (pathname === '/api/prune' && req.method === 'POST') {
+      const body = await this.readJsonBody(req);
+      const sessionId = body.sessionId || 'default';
+      const keepLatest = body.keepLatest === undefined ? undefined : Number(body.keepLatest);
+      if (keepLatest !== undefined && (!Number.isInteger(keepLatest) || keepLatest < 0)) {
+        throw Object.assign(new Error('keepLatest must be a non-negative integer'), { code: 'BAD_REQUEST' });
+      }
+      const result = await this.service.prune(sessionId, { keepLatest, abandonedBranches: body.abandonedBranches === true });
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, result }));
       return;

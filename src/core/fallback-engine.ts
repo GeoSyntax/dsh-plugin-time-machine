@@ -154,6 +154,13 @@ export class FallbackSnapshotEngine {
     return normalized;
   }
 
+  async removeSnapshot(sessionId: string, checkpointId: string): Promise<number> {
+    const target = this.getCheckpointDir(sessionId, checkpointId);
+    const before = await directorySize(target);
+    await fs.rm(target, { recursive: true, force: true });
+    return before;
+  }
+
   private async captureTree(sourceRoot: string, destinationRoot: string): Promise<SnapshotEntry[]> {
     const entries = await this.scanTree(sourceRoot);
     for (const entry of entries) {
@@ -250,4 +257,17 @@ function deepestFirst(left: SnapshotEntry, right: SnapshotEntry): number {
 
 function shallowestFirst(left: SnapshotEntry, right: SnapshotEntry): number {
   return left.path.split('/').length - right.path.split('/').length || left.path.localeCompare(right.path);
+}
+
+async function directorySize(root: string): Promise<number> {
+  let total = 0;
+  const visit = async (directory: string): Promise<void> => {
+    for (const entry of await fs.readdir(directory, { withFileTypes: true }).catch(() => [] as import('node:fs').Dirent[])) {
+      const absolute = path.join(directory, entry.name);
+      if (entry.isDirectory()) await visit(absolute);
+      else total += (await fs.stat(absolute).catch(() => ({ size: 0 }))).size;
+    }
+  };
+  await visit(root);
+  return total;
 }

@@ -53,6 +53,7 @@ describe('TimeMachineWebServer', () => {
     expect(capabilities.fallback).toBe(true);
     expect(capabilities.mergeRestore).toBe(false);
     expect(capabilities.selectiveRestore).toBe(true);
+    expect(capabilities.quarantineEncryption).toBe(false);
     expect(capabilities.workspaceIsolation).toBe('shared-lock');
 
     // 3. 测试静态网页托管

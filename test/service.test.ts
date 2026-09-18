@@ -260,6 +260,48 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
     expect(await fs.readFile(path.join(tmpDir, 'limited.secret'), 'utf8')).toBe('secret payload\n');
   });
 
+  it('encrypts ignored quarantine backups and fails closed with a wrong key', async () => {
+    const envName = 'DSH_TM_TEST_QUARANTINE_KEY';
+    const previous = process.env[envName];
+    process.env[envName] = 'correct-test-key';
+    const encrypted = new TimeMachineService({
+      workDir: tmpDir,
+      storageDir: path.join(tmpDir, '.encrypted-quarantine'),
+      config: { quarantineEncryptionKeyEnv: envName },
+    });
+    try {
+      const sessionId = 'encrypted-quarantine';
+      await fs.writeFile(path.join(tmpDir, '.gitignore'), 'secret.env\n', 'utf8');
+      await fs.writeFile(path.join(tmpDir, 'app.ts'), 'v1\n', 'utf8');
+      const first = await encrypted.createTurnCheckpoint({ sessionId, turnIndex: 1, prompt: 'base', sessionState: { sessionId, messages: [] } });
+      await fs.writeFile(path.join(tmpDir, 'app.ts'), 'v2\n', 'utf8');
+      await fs.writeFile(path.join(tmpDir, 'secret.env'), 'token=encrypted\n', 'utf8');
+      await encrypted.createTurnCheckpoint({ sessionId, turnIndex: 2, prompt: 'secret', sessionState: { sessionId, messages: [] } });
+      const result = await encrypted.rewindToCheckpoint(sessionId, first.id, { deleteNewIgnoredPaths: true });
+      const rescueKey = Buffer.from(result.rescueCheckpointId!, 'utf8').toString('base64url');
+      const quarantine = await fs.readFile(path.join(tmpDir, '.encrypted-quarantine', 'ignored-quarantine', rescueKey, '.manifest.json'), 'utf8');
+      expect(quarantine).not.toContain('token=encrypted');
+      await expect(fs.access(path.join(tmpDir, 'secret.env'))).rejects.toThrow();
+
+      process.env[envName] = 'wrong-key';
+      const wrongKey = new TimeMachineService({
+        workDir: tmpDir,
+        storageDir: path.join(tmpDir, '.encrypted-quarantine'),
+        config: { quarantineEncryptionKeyEnv: envName },
+      });
+      await expect(wrongKey.rewindToCheckpoint(sessionId, result.rescueCheckpointId!, { mode: 'force', createRescuePoint: false }))
+        .rejects.toMatchObject({ code: 'QUARANTINE_KEY_INVALID' });
+      expect(await fs.readFile(path.join(tmpDir, 'app.ts'), 'utf8')).toBe('v1\n');
+
+      process.env[envName] = 'correct-test-key';
+      await encrypted.rewindToCheckpoint(sessionId, result.rescueCheckpointId!, { mode: 'force', createRescuePoint: false });
+      expect(await fs.readFile(path.join(tmpDir, 'secret.env'), 'utf8')).toBe('token=encrypted\n');
+    } finally {
+      if (previous === undefined) delete process.env[envName];
+      else process.env[envName] = previous;
+    }
+  });
+
   it('restores selected paths while preserving other workspace files and conversation state', async () => {
     const sessionId = 'selective-session';
     const left = path.join(tmpDir, 'left.txt');

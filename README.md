@@ -84,6 +84,8 @@ dsh --profile web
     retentionMaxAgeMs: 0
     workspaceLockTimeoutMs: 30000
     maxQuarantineBytes: 0
+    # Optional: env var name containing the quarantine encryption key.
+    quarantineEncryptionKeyEnv: ''
     # Preview plans are single-use and expire after 15 minutes by default.
     restorePlanTtlMs: 900000
     # 0 disables capture-size guards.
@@ -92,7 +94,7 @@ dsh --profile web
 ```
 
 Web dashboard 只绑定 loopback，并拒绝非本机 Host 和跨 origin 请求。`/tm-rewind` 与 `/tm-fork` 需要宿主提供 `sessionController`，否则插件会拒绝只恢复文件的危险降级行为。
-集成方可读取 `GET /api/capabilities`，提前判断当前工作区是否支持 Git 三方 merge、selective restore、shadow store，以及 sparse checkout/submodule/进行中操作限制；`workspaceIsolation: shared-lock` 明确表示当前是共享工作区加锁，不是独立 worktree/container。
+集成方可读取 `GET /api/capabilities`，提前判断当前工作区是否支持 Git 三方 merge、selective restore、shadow store、quarantine 加密，以及 sparse checkout/submodule/进行中操作限制；`workspaceIsolation: shared-lock` 明确表示当前是共享工作区加锁，不是独立 worktree/container。
 
 ## Verification
 
@@ -117,6 +119,7 @@ TM_DSH_SOURCE=/path/to/deepseek-harness pnpm smoke:dsh:source
 - `shadowStore: true` 会把插件新写入的 Git objects 放到 `storageDir/git-shadow/objects`，主仓库 objects 仅作为只读 alternate；这是 opt-in。删除插件 refs 时会清理 shadow loose objects；显式 `--repack-shadow` 会按私有 refs 重建 pack，但不会改写或执行用户仓库的全局 Git GC。
 - 工作区变更操作带有跨进程文件锁；`workspaceLockTimeoutMs` 控制等待其他 DSH 实例的最长时间。它能避免并发覆盖，但不会替代为多个 Agent 创建独立 worktree。
 - `maxQuarantineBytes` 可选限制 ignored 文件 quarantine 的总容量；超过上限时返回 `QUARANTINE_QUOTA_EXCEEDED`，不会丢弃备份。
+- `quarantineEncryptionKeyEnv` 可选指定一个环境变量名；启用后 ignored-file quarantine 使用 AES-256-GCM 加密，密钥本身不会写入 DAG、manifest 或 Git refs。缺少密钥或密文损坏会返回 `QUARANTINE_KEY_INVALID` 并保留备份，不会静默删除数据。
 - `maxSnapshotFileBytes` 和 `maxSnapshotBytes` 在捕获前限制单文件与单 checkpoint 的 regular-file 总大小；超过限制返回 `SNAPSHOT_SIZE_LIMIT`，不会创建半成品 checkpoint。默认均为 0（不限制），而存储目录总量仍由 `maxStorageBytes` 控制。
 - `/tm-prune --older-than=7d` 提供显式的时间保留策略；它只让超过阈值且不受 DAG head/ancestor 保护的节点进入清理候选，不会自动运行，也不会删除当前分支所需的历史。
 - 如需自动生命周期治理，可设置 `retentionMaxAgeMs`；它只在创建普通 checkpoint 前运行，并沿用 DAG 保护规则。自动策略默认关闭，避免用户在未察觉时丢失探索历史。

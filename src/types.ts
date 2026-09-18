@@ -94,6 +94,8 @@ export interface TimeMachineConfig {
   workspaceLockTimeoutMs?: number;
   /** Hard limit for ignored-file quarantine bytes; 0 disables the guard. */
   maxQuarantineBytes?: number;
+  /** Optional environment variable containing a key used to encrypt quarantine backups. */
+  quarantineEncryptionKeyEnv?: string;
   /** Lifetime of a preview restore plan. Set to 0 to disable plan expiry. */
   restorePlanTtlMs?: number;
   /** Maximum size of one captured regular file; 0 disables the guard. */

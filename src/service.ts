@@ -110,6 +110,7 @@ export class TimeMachineService {
       retentionMaxAgeMs: Math.max(0, Math.floor(options.config?.retentionMaxAgeMs ?? 0)),
       workspaceLockTimeoutMs: Math.max(0, Math.floor(options.config?.workspaceLockTimeoutMs ?? 30000)),
       maxQuarantineBytes: Math.max(0, Math.floor(options.config?.maxQuarantineBytes ?? 0)),
+      quarantineEncryptionKeyEnv: options.config?.quarantineEncryptionKeyEnv ?? '',
       restorePlanTtlMs: Math.max(0, Math.floor(options.config?.restorePlanTtlMs ?? 900000)),
       maxSnapshotFileBytes: Math.max(0, Math.floor(options.config?.maxSnapshotFileBytes ?? 0)),
       maxSnapshotBytes: Math.max(0, Math.floor(options.config?.maxSnapshotBytes ?? 0)),
@@ -122,6 +123,9 @@ export class TimeMachineService {
       quarantineDir: path.join(this.storageDir, 'ignored-quarantine'),
       shadowObjectDir: this.config.shadowStore ? path.join(this.storageDir, 'git-shadow', 'objects') : undefined,
       maxQuarantineBytes: this.config.maxQuarantineBytes,
+      quarantineEncryptionKey: this.config.quarantineEncryptionKeyEnv
+        ? process.env[this.config.quarantineEncryptionKeyEnv]
+        : undefined,
       maxSnapshotFileBytes: this.config.maxSnapshotFileBytes,
       maxSnapshotBytes: this.config.maxSnapshotBytes,
     });
@@ -607,6 +611,7 @@ export class TimeMachineService {
     mergeRestore: boolean;
     selectiveRestore: boolean;
     shadowStore: boolean;
+    quarantineEncryption: boolean;
     workspaceIsolation: 'shared-lock';
     workspace: { sparseCheckout: boolean; submodulePaths: string[]; inProgressOperation: string | null };
   }> {
@@ -621,6 +626,7 @@ export class TimeMachineService {
       mergeRestore: usable,
       selectiveRestore: usable || !git,
       shadowStore: git && this.config.shadowStore,
+      quarantineEncryption: Boolean(this.config.quarantineEncryptionKeyEnv && process.env[this.config.quarantineEncryptionKeyEnv]),
       workspaceIsolation: 'shared-lock',
       workspace,
     };
@@ -853,6 +859,8 @@ export class TimeMachineService {
   ): Promise<{ deletedIgnoredPaths: string[] }> {
     const isGit = await this.gitEngine.isGitRepo();
     if (isGit && target.gitCommitOid && !target.gitCommitOid.startsWith('fallback_')) {
+      const backupKey = options.ignoredBackupKey ?? target.ignoredBackupKey;
+      if (backupKey) await this.gitEngine.validateIgnoredBackup(backupKey);
       const result = await this.gitEngine.restoreSnapshot(target.gitCommitOid, {
         mode: options.mode,
         expectedCurrentTreeOid: expected?.gitTreeOid,

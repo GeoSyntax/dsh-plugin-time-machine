@@ -21,6 +21,7 @@ var init_esm_shims = __esm({
 var git_plumbing_exports = {};
 __export(git_plumbing_exports, {
   GitPlumbingEngine: () => GitPlumbingEngine,
+  QuarantineKeyError: () => QuarantineKeyError,
   QuarantineQuotaError: () => QuarantineQuotaError,
   SnapshotSizeError: () => SnapshotSizeError,
   UnsupportedWorkspaceStateError: () => UnsupportedWorkspaceStateError,
@@ -29,7 +30,7 @@ __export(git_plumbing_exports, {
   WorkspaceRestoreConflictError: () => WorkspaceRestoreConflictError
 });
 import { execFile, spawn } from "child_process";
-import { randomUUID } from "crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "crypto";
 import { promisify } from "util";
 import path2 from "path";
 import fs from "fs/promises";
@@ -62,7 +63,7 @@ function symmetricDifference(left, right) {
 function longestFirst(left, right) {
   return right.split("/").length - left.split("/").length || right.localeCompare(left);
 }
-var execFileAsync, WorkspaceDriftError, UnsupportedWorkspaceStateError, WorkspaceRestoreConflictError, WorkspaceMergeConflictError, QuarantineQuotaError, SnapshotSizeError, GitPlumbingEngine;
+var execFileAsync, WorkspaceDriftError, UnsupportedWorkspaceStateError, WorkspaceRestoreConflictError, WorkspaceMergeConflictError, QuarantineQuotaError, QuarantineKeyError, SnapshotSizeError, GitPlumbingEngine;
 var init_git_plumbing = __esm({
   "src/core/git-plumbing.ts"() {
     "use strict";
@@ -120,6 +121,13 @@ var init_git_plumbing = __esm({
       requiredBytes;
       code = "QUARANTINE_QUOTA_EXCEEDED";
     };
+    QuarantineKeyError = class extends Error {
+      code = "QUARANTINE_KEY_INVALID";
+      constructor(message) {
+        super(message);
+        this.name = "QuarantineKeyError";
+      }
+    };
     SnapshotSizeError = class extends Error {
       constructor(details) {
         const message = details.file ? `Snapshot file '${details.file}' is ${details.fileBytes} bytes; limit is ${details.limitBytes} bytes.` : `Snapshot is ${details.totalBytes} bytes; limit is ${details.limitBytes} bytes.`;
@@ -142,6 +150,7 @@ var init_git_plumbing = __esm({
       maxQuarantineBytes;
       maxSnapshotFileBytes;
       maxSnapshotBytes;
+      quarantineKey;
       shadowReady;
       constructor(options) {
         this.workDir = path2.resolve(options.workDir);
@@ -152,6 +161,7 @@ var init_git_plumbing = __esm({
         this.maxQuarantineBytes = Math.max(0, Math.floor(options.maxQuarantineBytes ?? 0));
         this.maxSnapshotFileBytes = Math.max(0, Math.floor(options.maxSnapshotFileBytes ?? 0));
         this.maxSnapshotBytes = Math.max(0, Math.floor(options.maxSnapshotBytes ?? 0));
+        this.quarantineKey = options.quarantineEncryptionKey ? createHash("sha256").update(options.quarantineEncryptionKey).digest() : void 0;
       }
       get usesShadowStore() {
         return Boolean(this.shadowObjectDir);
@@ -410,6 +420,42 @@ Reason: ${errorMsg}`);
       async restoreIgnoredBackup(key) {
         if (!this.quarantineDir) return;
         const backupRoot = path2.join(this.quarantineDir, encodeRefPart(key));
+        const encryptedManifest = await fs.readFile(path2.join(backupRoot, ".manifest.json"), "utf8").then((raw) => JSON.parse(raw)).catch((error) => {
+          if (error?.code === "ENOENT") return void 0;
+          throw new QuarantineKeyError(`Encrypted quarantine manifest is invalid: ${error?.message ?? "unknown error"}`);
+        });
+        if (encryptedManifest) {
+          if (!this.quarantineKey) throw new QuarantineKeyError("Encrypted quarantine requires the configured key.");
+          if (encryptedManifest.version !== 1 || !Array.isArray(encryptedManifest.entries)) throw new QuarantineKeyError("Encrypted quarantine manifest version is unsupported.");
+          const directories = encryptedManifest.entries.filter((entry) => entry.type === "directory").sort((a, b) => a.path.localeCompare(b.path));
+          for (const entry of directories) {
+            const destination = await this.safeWorkspacePath(entry.path);
+            await fs.mkdir(destination, { recursive: true, mode: entry.mode });
+          }
+          for (const entry of encryptedManifest.entries.filter((item) => item.type !== "directory")) {
+            const destination = await this.safeWorkspacePath(entry.path);
+            await fs.mkdir(path2.dirname(destination), { recursive: true });
+            await fs.rm(destination, { recursive: true, force: true });
+            if (entry.type === "symlink") {
+              await fs.symlink(entry.linkTarget, destination);
+              continue;
+            }
+            if (!entry.payload || !entry.nonce) throw new QuarantineKeyError(`Encrypted quarantine entry '${entry.path}' is incomplete.`);
+            const encrypted = await fs.readFile(path2.join(backupRoot, entry.payload));
+            if (encrypted.length < 16) throw new QuarantineKeyError(`Encrypted quarantine entry '${entry.path}' is corrupt.`);
+            let plaintext;
+            try {
+              const decipher = createDecipheriv("aes-256-gcm", this.quarantineKey, Buffer.from(entry.nonce, "base64url"));
+              decipher.setAuthTag(encrypted.subarray(encrypted.length - 16));
+              plaintext = Buffer.concat([decipher.update(encrypted.subarray(0, encrypted.length - 16)), decipher.final()]);
+            } catch {
+              throw new QuarantineKeyError(`Encrypted quarantine entry '${entry.path}' failed authentication.`);
+            }
+            await fs.writeFile(destination, plaintext);
+            await fs.chmod(destination, entry.mode).catch(() => void 0);
+          }
+          return;
+        }
         const root = await this.getRepoRoot();
         const entries = await fs.readdir(backupRoot, { withFileTypes: true }).catch((error) => {
           if (error?.code === "ENOENT") return [];
@@ -419,6 +465,30 @@ Reason: ${errorMsg}`);
           const source = path2.join(backupRoot, entry.name);
           const destination = path2.join(root, entry.name);
           await fs.cp(source, destination, { recursive: true, force: true, verbatimSymlinks: true });
+        }
+      }
+      /** Validate encrypted quarantine content before a restore mutates the workspace. */
+      async validateIgnoredBackup(key) {
+        if (!this.quarantineDir || !this.quarantineKey) return;
+        const backupRoot = path2.join(this.quarantineDir, encodeRefPart(key));
+        const manifest = await fs.readFile(path2.join(backupRoot, ".manifest.json"), "utf8").then((raw) => JSON.parse(raw)).catch((error) => {
+          if (error?.code === "ENOENT") return void 0;
+          throw new QuarantineKeyError(`Encrypted quarantine manifest is invalid: ${error?.message ?? "unknown error"}`);
+        });
+        if (!manifest) return;
+        if (manifest.version !== 1 || !Array.isArray(manifest.entries)) throw new QuarantineKeyError("Encrypted quarantine manifest version is unsupported.");
+        for (const entry of manifest.entries.filter((item) => item.type === "file")) {
+          if (!entry.payload || !entry.nonce) throw new QuarantineKeyError(`Encrypted quarantine entry '${entry.path}' is incomplete.`);
+          const encrypted = await fs.readFile(path2.join(backupRoot, entry.payload));
+          if (encrypted.length < 16) throw new QuarantineKeyError(`Encrypted quarantine entry '${entry.path}' is corrupt.`);
+          try {
+            const decipher = createDecipheriv("aes-256-gcm", this.quarantineKey, Buffer.from(entry.nonce, "base64url"));
+            decipher.setAuthTag(encrypted.subarray(encrypted.length - 16));
+            decipher.update(encrypted.subarray(0, encrypted.length - 16));
+            decipher.final();
+          } catch {
+            throw new QuarantineKeyError(`Encrypted quarantine entry '${entry.path}' failed authentication.`);
+          }
         }
       }
       /** Remove a quarantine backup only after the DAG no longer references its key. */
@@ -622,6 +692,10 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
       }
       async backupIgnoredPath(key, relative, absolute) {
         if (!this.quarantineDir) throw new Error("Ignored-path deletion requires a quarantineDir.");
+        if (this.quarantineKey) {
+          await this.backupIgnoredPathEncrypted(key, relative, absolute);
+          return;
+        }
         const destination = path2.join(this.quarantineDir, encodeRefPart(key), ...relative.split("/"));
         if (this.maxQuarantineBytes > 0) {
           const currentBytes = await directoryBytes(this.quarantineDir);
@@ -632,6 +706,79 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
         }
         await fs.mkdir(path2.dirname(destination), { recursive: true });
         await fs.cp(absolute, destination, { recursive: true, force: true, verbatimSymlinks: true });
+      }
+      async backupIgnoredPathEncrypted(key, relative, absolute) {
+        const root = path2.join(this.quarantineDir, encodeRefPart(key));
+        const manifestPath = path2.join(root, ".manifest.json");
+        const existing = await fs.readFile(manifestPath, "utf8").then((raw) => JSON.parse(raw)).catch(async (error) => {
+          if (error?.code === "ENOENT") {
+            const entries = await fs.readdir(root).catch(() => []);
+            if (entries.length) throw new QuarantineKeyError("Plaintext quarantine exists; refusing to mix it with encrypted backups.");
+            return { version: 1, entries: [] };
+          }
+          throw new QuarantineKeyError(`Encrypted quarantine manifest is invalid: ${error?.message ?? "unknown error"}`);
+        });
+        if (existing.version !== 1 || !Array.isArray(existing.entries)) throw new QuarantineKeyError("Encrypted quarantine manifest version is unsupported.");
+        const staging = path2.join(root, `.staging-${randomUUID()}`);
+        const payloadDir = path2.join(staging, "payload");
+        await fs.mkdir(payloadDir, { recursive: true });
+        const added = [];
+        try {
+          await this.collectEncryptedQuarantineEntries(absolute, relative, payloadDir, added);
+          const stagedBytes = await directoryBytes(staging);
+          const existingBytes = await directoryBytes(root);
+          const manifestBytes = Buffer.byteLength(JSON.stringify({ version: 1, entries: [...existing.entries, ...added] }));
+          const currentBytes = await directoryBytes(this.quarantineDir);
+          const requiredBytes = currentBytes - existingBytes + stagedBytes + manifestBytes;
+          if (this.maxQuarantineBytes > 0 && requiredBytes > this.maxQuarantineBytes) {
+            throw new QuarantineQuotaError(this.maxQuarantineBytes, requiredBytes);
+          }
+          await fs.mkdir(path2.join(root, "payload"), { recursive: true });
+          for (const entry of added) {
+            const source = path2.join(payloadDir, entry.payload);
+            const destination = path2.join(root, "payload", entry.payload);
+            await fs.rename(source, destination);
+            entry.payload = path2.posix.join("payload", entry.payload);
+          }
+          await fs.rm(staging, { recursive: true, force: true });
+          const next = { version: 1, entries: [...existing.entries, ...added] };
+          const temporaryManifest = `${manifestPath}.${randomUUID()}.tmp`;
+          await fs.writeFile(temporaryManifest, `${JSON.stringify(next, null, 2)}
+`, "utf8");
+          await fs.rename(temporaryManifest, manifestPath);
+        } catch (error) {
+          await fs.rm(staging, { recursive: true, force: true }).catch(() => void 0);
+          throw error;
+        }
+      }
+      async collectEncryptedQuarantineEntries(source, relative, payloadDir, output) {
+        const stat = await fs.lstat(source);
+        if (stat.isDirectory()) {
+          output.push({ path: normalizeGitPath(relative), type: "directory", mode: stat.mode & 511 });
+          for (const child of await fs.readdir(source)) {
+            await this.collectEncryptedQuarantineEntries(path2.join(source, child), path2.posix.join(relative, child), payloadDir, output);
+          }
+          return;
+        }
+        if (stat.isSymbolicLink()) {
+          output.push({ path: normalizeGitPath(relative), type: "symlink", mode: stat.mode & 511, linkTarget: await fs.readlink(source) });
+          return;
+        }
+        if (!stat.isFile()) throw new QuarantineKeyError(`Unsupported ignored backup entry: ${relative}`);
+        const plaintext = await fs.readFile(source);
+        const nonce = randomBytes(12);
+        const cipher = createCipheriv("aes-256-gcm", this.quarantineKey, nonce);
+        const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+        const tag = cipher.getAuthTag();
+        const payload = randomUUID();
+        await fs.writeFile(path2.join(payloadDir, payload), Buffer.concat([ciphertext, tag]));
+        output.push({
+          path: normalizeGitPath(relative),
+          type: "file",
+          mode: stat.mode & 511,
+          payload,
+          nonce: nonce.toString("base64url")
+        });
       }
       parseUnifiedDiff(rawDiff) {
         const results = [];
@@ -791,7 +938,7 @@ import { randomUUID as randomUUID5 } from "crypto";
 // src/core/fallback-engine.ts
 init_esm_shims();
 init_git_plumbing();
-import { createHash, randomUUID as randomUUID2 } from "crypto";
+import { createHash as createHash2, randomUUID as randomUUID2 } from "crypto";
 import path3 from "path";
 import fs2 from "fs/promises";
 var FallbackSnapshotEngine = class {
@@ -987,7 +1134,7 @@ var FallbackSnapshotEngine = class {
   }
 };
 async function hashSnapshot(root, entries) {
-  const hash = createHash("sha256");
+  const hash = createHash2("sha256");
   for (const entry of entries) {
     hash.update(`${entry.type}\0${entry.path}\0${entry.mode}\0${entry.linkTarget ?? ""}\0`);
     if (entry.type === "file") hash.update(await fs2.readFile(path3.join(root, ...entry.path.split("/"))));
@@ -1566,6 +1713,7 @@ var TimeMachineService = class {
       retentionMaxAgeMs: Math.max(0, Math.floor(options.config?.retentionMaxAgeMs ?? 0)),
       workspaceLockTimeoutMs: Math.max(0, Math.floor(options.config?.workspaceLockTimeoutMs ?? 3e4)),
       maxQuarantineBytes: Math.max(0, Math.floor(options.config?.maxQuarantineBytes ?? 0)),
+      quarantineEncryptionKeyEnv: options.config?.quarantineEncryptionKeyEnv ?? "",
       restorePlanTtlMs: Math.max(0, Math.floor(options.config?.restorePlanTtlMs ?? 9e5)),
       maxSnapshotFileBytes: Math.max(0, Math.floor(options.config?.maxSnapshotFileBytes ?? 0)),
       maxSnapshotBytes: Math.max(0, Math.floor(options.config?.maxSnapshotBytes ?? 0))
@@ -1577,6 +1725,7 @@ var TimeMachineService = class {
       quarantineDir: path6.join(this.storageDir, "ignored-quarantine"),
       shadowObjectDir: this.config.shadowStore ? path6.join(this.storageDir, "git-shadow", "objects") : void 0,
       maxQuarantineBytes: this.config.maxQuarantineBytes,
+      quarantineEncryptionKey: this.config.quarantineEncryptionKeyEnv ? process.env[this.config.quarantineEncryptionKeyEnv] : void 0,
       maxSnapshotFileBytes: this.config.maxSnapshotFileBytes,
       maxSnapshotBytes: this.config.maxSnapshotBytes
     });
@@ -1981,6 +2130,7 @@ var TimeMachineService = class {
       mergeRestore: usable,
       selectiveRestore: usable || !git,
       shadowStore: git && this.config.shadowStore,
+      quarantineEncryption: Boolean(this.config.quarantineEncryptionKeyEnv && process.env[this.config.quarantineEncryptionKeyEnv]),
       workspaceIsolation: "shared-lock",
       workspace
     };
@@ -2176,6 +2326,8 @@ var TimeMachineService = class {
   async restoreNode(target, expected, options) {
     const isGit = await this.gitEngine.isGitRepo();
     if (isGit && target.gitCommitOid && !target.gitCommitOid.startsWith("fallback_")) {
+      const backupKey = options.ignoredBackupKey ?? target.ignoredBackupKey;
+      if (backupKey) await this.gitEngine.validateIgnoredBackup(backupKey);
       const result = await this.gitEngine.restoreSnapshot(target.gitCommitOid, {
         mode: options.mode,
         expectedCurrentTreeOid: expected?.gitTreeOid,
@@ -2788,6 +2940,7 @@ var Config = Schema.object({
   retentionMaxAgeMs: Schema.number().default(0),
   workspaceLockTimeoutMs: Schema.number().default(3e4),
   maxQuarantineBytes: Schema.number().default(0),
+  quarantineEncryptionKeyEnv: Schema.string().default(""),
   restorePlanTtlMs: Schema.number().default(9e5),
   maxSnapshotFileBytes: Schema.number().default(0),
   maxSnapshotBytes: Schema.number().default(0)
@@ -2943,6 +3096,7 @@ export {
   DAGStateManager,
   FallbackSnapshotEngine,
   GitPlumbingEngine,
+  QuarantineKeyError,
   QuarantineQuotaError,
   ReflectionAdvisor,
   RestorePlanError,

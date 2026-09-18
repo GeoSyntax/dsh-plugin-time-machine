@@ -28,6 +28,7 @@ export const Config: Schema<Config> = Schema.object({
   retentionMaxAgeMs: Schema.number().default(0),
   workspaceLockTimeoutMs: Schema.number().default(30000),
   maxQuarantineBytes: Schema.number().default(0),
+  quarantineEncryptionKeyEnv: Schema.string().default(''),
   restorePlanTtlMs: Schema.number().default(900000),
   maxSnapshotFileBytes: Schema.number().default(0),
   maxSnapshotBytes: Schema.number().default(0),

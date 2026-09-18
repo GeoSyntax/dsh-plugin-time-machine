@@ -11,7 +11,8 @@ supported only when it is covered by the current implementation and tests.
 | Ignored-file safety | Preserve by default; quarantine on explicit delete | Configurable | Conflict-aware | Usually left untouched |
 | Preview before restore | `tm-preview`, Web API, Web confirmation, conflict paths, single-use session-bound plan | Yes | Yes; expiring plan and stale-plan fences | Limited |
 | Non-conflicting drift merge | Explicit `/tm-rewind --merge` for Git workspaces; path-level conflicts fail closed | Product-specific | Three-way / selective conflict handling | Varies |
-| Runtime capability discovery | `GET /api/capabilities` exposes Git/fallback, merge, shadow-store, unsupported-state, and shared-lock isolation flags | Product-specific | Host/UI-dependent | Varies |
+| Runtime capability discovery | `GET /api/capabilities` exposes Git/fallback, merge, shadow-store, quarantine encryption, unsupported-state, and shared-lock isolation flags | Product-specific | Host/UI-dependent | Varies |
+| Quarantine at-rest encryption | Opt-in AES-256-GCM via environment-backed key; missing/wrong key fails closed | Product-specific | Varies | Varies |
 | Selective file restore | `tm-restore-files`, Web API | Yes | Yes | Varies |
 | Conversation/session alignment | DSH `sessionController` fork | Product-specific | Product-specific | Usually undo/redo or same window |
 | DAG branches | Yes, persistent | No user-facing DAG | Ledger history | Usually linear |
@@ -71,8 +72,8 @@ the workspace snapshot. Quota-driven compaction is opt-in via `autoPrune`;
 restore journals are durable and replayed on startup; pruning and history
 compaction do not run repository-wide Git GC. Manual age filtering is available
 through `/tm-prune --older-than=...` and `olderThanMs` in the Web API, but
-automatic time-based expiration and shadow-store encryption are not implemented
-yet.
+automatic time-based expiration and shadow-object encryption are not implemented
+yet. Ignored-file quarantine can be encrypted with `quarantineEncryptionKeyEnv`.
 
 Further reading:
 

@@ -8,10 +8,12 @@ documented in [PROBLEM.md](./PROBLEM.md) and [COMPARISON.md](./COMPARISON.md).
 
 ### Encrypted sensitive-state storage
 
-Protect ignored-file quarantine and optional shadow objects at rest using an
-operator-provided key (prefer an environment-backed key reference; never write
-the secret into the DAG). Migration must be explicit, and a missing/invalid key
-must fail closed without deleting plaintext backups.
+Protect optional shadow objects and the remaining sensitive metadata at rest.
+Ignored-file quarantine is now covered by `quarantineEncryptionKeyEnv`; shadow
+object encryption and explicit migration of existing plaintext quarantine remain.
+Use an operator-provided key (prefer an environment-backed key reference; never
+write the secret into the DAG). Migration must be explicit, and a missing/invalid
+key must fail closed without deleting plaintext backups.
 
 **Acceptance:** restore works after restart with the key; wrong keys cannot
 read content; quota/prune accounting remains correct; no key material appears

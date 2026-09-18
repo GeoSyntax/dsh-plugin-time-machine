@@ -65,7 +65,7 @@ The shadow store is opt-in. Loose unreachable objects are reclaimed after plugin
 
 ### Accepted risks
 
-- Quarantine is local plaintext storage; its directory needs the same OS permissions as the workspace. Orphaned backups are removed when their DAG references are pruned. Optional `maxQuarantineBytes` rejects a deletion that would exceed the hard limit; encryption and age-based policies are not implemented yet.
+- Quarantine is local storage; by default it is plaintext and needs the same OS permissions as the workspace. `quarantineEncryptionKeyEnv` enables AES-256-GCM at-rest encryption without persisting key material. Orphaned backups are removed when their DAG references are pruned. Optional `maxQuarantineBytes` rejects a deletion that would exceed the hard limit.
 - A read-only preview issues a one-shot, session/checkpoint-bound restore plan. Web clients must submit that plan to mutate; the service rechecks its TTL, active checkpoint, workspace signature, and Git HEAD/branch/in-progress-operation state under the workspace lock, then consumes the token before restore. Direct service/CLI restores remain available without a plan for automation, while reviewed Web restores fail closed on stale plans.
 - Optional `maxSnapshotFileBytes` and `maxSnapshotBytes` are checked before Git staging or fallback copying. The policy intentionally fails the checkpoint rather than silently omitting content; this preserves the invariant that a successful checkpoint describes the complete eligible workspace.
 - A process or machine crash during the small interval between workspace restore and DAG cursor publication is recovered from the durable restore journal on next startup; filesystem restore itself remains compensating rather than ACID.

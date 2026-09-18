@@ -103,6 +103,7 @@ describe('TimeMachineWebServer', () => {
     const body = await response.json();
     expect(body.sessionId).toBe('ledger-web-session');
     expect(body.checkpointId).toBe(checkpoint.id);
+    expect(body.enabled).toBe(true);
     expect(body.writes).toEqual([expect.objectContaining({ path: 'ledger.txt', operation: 'create', sha256: expect.any(String) })]);
   });
 

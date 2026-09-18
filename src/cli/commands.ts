@@ -44,6 +44,7 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
       handler: async ({ agent, rawInput }: CommandInvocationLike): Promise<CommandResult> => {
         const checkpointId = rawInput.trim().split(/\s+/).filter(Boolean)[0];
         if (!checkpointId) return { kind: 'error', text: 'Usage: /tm-agent-writes <checkpoint>' };
+        if (!service.config.enableAgentWriteLedger) return { kind: 'error', text: 'Agent-write ledger is disabled; set enableAgentWriteLedger: true.' };
         const writes = await service.getAgentWriteLedger(agent.session.id, checkpointId);
         if (writes.length === 0) return { kind: 'success', text: `No verified Agent writes recorded for ${checkpointId}.` };
         const lines = writes.map(item => `${item.operation ?? 'modify'} ${item.path} sha256=${item.sha256} (${new Date(item.recordedAt).toISOString()})`);

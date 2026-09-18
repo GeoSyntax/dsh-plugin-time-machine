@@ -49,13 +49,18 @@ describe('registered DSH time-machine commands', () => {
   });
 
   it('exposes a read-only Agent-write ledger view', async () => {
+    (service.config as any).enableAgentWriteLedger = true;
     const checkpoint = await service.createTurnCheckpoint({
       sessionId: 'ledger-cli-session', turnIndex: 1, prompt: 'ledger', sessionState: { sessionId: 'ledger-cli-session', messages: [] },
     });
+    await fs.writeFile(path.join(root, 'ledger.txt'), 'agent\n', 'utf8');
+    await service.recordAgentWrite('ledger-cli-session', checkpoint.id, { path: 'ledger.txt', operation: 'create' });
     const result = await handlers['tm-agent-writes']({
       agent: { session: { id: 'ledger-cli-session' } }, rawInput: checkpoint.id,
     });
-    expect(result).toEqual({ kind: 'success', text: `No verified Agent writes recorded for ${checkpoint.id}.` });
+    expect(result.kind).toBe('success');
+    expect(result.text).toContain('Verified Agent writes');
+    expect(result.text).toContain('create ledger.txt');
   });
 
   it('runs tm-tree and tm-fork through the real service and session controller contract', async () => {

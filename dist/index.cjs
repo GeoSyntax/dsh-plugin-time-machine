@@ -3038,7 +3038,7 @@ var TimeMachineWebServer = class {
       if (!checkpointId) throw Object.assign(new Error("Missing checkpoint query parameter"), { code: "BAD_REQUEST" });
       const writes = await this.service.getAgentWriteLedger(sessionId, checkpointId);
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ sessionId, checkpointId, writes }));
+      res.end(JSON.stringify({ sessionId, checkpointId, enabled: this.service.config.enableAgentWriteLedger === true, writes }));
       return;
     }
     if (pathname === "/api/diff" && req.method === "GET") {
@@ -3301,6 +3301,7 @@ function registerCliCommands(ctx, service) {
       handler: async ({ agent, rawInput }) => {
         const checkpointId = rawInput.trim().split(/\s+/).filter(Boolean)[0];
         if (!checkpointId) return { kind: "error", text: "Usage: /tm-agent-writes <checkpoint>" };
+        if (!service.config.enableAgentWriteLedger) return { kind: "error", text: "Agent-write ledger is disabled; set enableAgentWriteLedger: true." };
         const writes = await service.getAgentWriteLedger(agent.session.id, checkpointId);
         if (writes.length === 0) return { kind: "success", text: `No verified Agent writes recorded for ${checkpointId}.` };
         const lines = writes.map((item) => `${item.operation ?? "modify"} ${item.path} sha256=${item.sha256} (${new Date(item.recordedAt).toISOString()})`);

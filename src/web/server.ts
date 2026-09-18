@@ -126,7 +126,7 @@ export class TimeMachineWebServer {
       if (!checkpointId) throw Object.assign(new Error('Missing checkpoint query parameter'), { code: 'BAD_REQUEST' });
       const writes = await this.service.getAgentWriteLedger(sessionId, checkpointId);
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ sessionId, checkpointId, writes }));
+      res.end(JSON.stringify({ sessionId, checkpointId, enabled: this.service.config.enableAgentWriteLedger === true, writes }));
       return;
     }
 

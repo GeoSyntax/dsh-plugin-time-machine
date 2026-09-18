@@ -765,6 +765,7 @@ export class TimeMachineService {
     mergeRestore: boolean;
     selectiveRestore: boolean;
     shadowStore: boolean;
+    shadowStoreEncryption: false;
     quarantineEncryption: boolean;
     quarantineMigration: boolean;
     partialSnapshots: boolean;
@@ -800,6 +801,7 @@ export class TimeMachineService {
       mergeRestore: usable,
       selectiveRestore: usable || !git,
       shadowStore: git && this.config.shadowStore,
+      shadowStoreEncryption: false,
       quarantineEncryption: Boolean(this.config.quarantineEncryptionKeyEnv && process.env[this.config.quarantineEncryptionKeyEnv]),
       quarantineMigration: git && Boolean(this.config.quarantineEncryptionKeyEnv),
       partialSnapshots: git && this.config.allowPartialSnapshots && (this.config.maxSnapshotFileBytes > 0 || this.config.maxSnapshotBytes > 0),

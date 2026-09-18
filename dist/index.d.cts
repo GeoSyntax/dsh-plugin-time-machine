@@ -443,6 +443,7 @@ declare class TimeMachineService {
         mergeRestore: boolean;
         selectiveRestore: boolean;
         shadowStore: boolean;
+        shadowStoreEncryption: false;
         quarantineEncryption: boolean;
         quarantineMigration: boolean;
         partialSnapshots: boolean;

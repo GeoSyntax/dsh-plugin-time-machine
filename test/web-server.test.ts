@@ -61,6 +61,7 @@ describe('TimeMachineWebServer', () => {
     expect(capabilities.workspaceIsolation).toBe('shared-lock');
     expect(capabilities.incrementalCapture).toBe(false);
     expect(capabilities.handEditPolicy).toBe('reject-drift');
+    expect(capabilities.shadowStoreEncryption).toBe(false);
     expect(capabilities.policies).toMatchObject({
       restoreMode: 'safe',
       maxSnapshots: 0,
@@ -238,6 +239,7 @@ describe('TimeMachineWebServer', () => {
     expect(capabilities.workspaceIsolation).toBe('shared-lock');
     expect(capabilities.incrementalCapture).toBe(true);
     expect(capabilities.handEditPolicy).toBe('reject-drift');
+    expect(capabilities.shadowStoreEncryption).toBe(false);
   });
 
   it('exposes a read-only rewind preview endpoint', async () => {

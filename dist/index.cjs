@@ -264,13 +264,20 @@ Reason: ${errorMsg}`);
             await this.runGit(["read-tree", "--empty"], env, root);
           }
           const protectedPaths = this.protectedRepoPaths(root);
-          const excludeFile = import_node_path.default.join(await this.getGitDir(), `dsh-tm-exclude-${(0, import_node_crypto.randomUUID)()}`);
-          await import_promises.default.writeFile(excludeFile, protectedPaths.flatMap((relative) => [relative, `${relative}/**`]).join("\n") + "\n");
-          const addArgs = ["add", "-A", "--", "."];
-          try {
-            await this.runGit(["-c", `core.excludesFile=${excludeFile}`, ...addArgs], env, root);
-          } finally {
-            await import_promises.default.rm(excludeFile, { force: true }).catch(() => void 0);
+          const { stdout: candidates } = await this.runGit([
+            "ls-files",
+            "-z",
+            "--cached",
+            "--modified",
+            "--deleted",
+            "--others",
+            "--exclude-standard"
+          ], {}, root);
+          const candidateFiles = candidates.split("\0").filter(Boolean).map(normalizeGitPath).filter((file) => !protectedPaths.some(
+            (relative) => file === relative || file.startsWith(`${relative}/`)
+          ));
+          for (let offset = 0; offset < candidateFiles.length; offset += 128) {
+            await this.runGit(["add", "-A", "--", ...candidateFiles.slice(offset, offset + 128)], env, root);
           }
           const { stdout: indexedFiles } = await this.runGit(["ls-files", "-z"], env, root);
           const indexedEntries = indexedFiles.split("\0").filter(Boolean);

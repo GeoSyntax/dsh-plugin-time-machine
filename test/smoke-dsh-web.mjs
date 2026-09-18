@@ -56,7 +56,14 @@ async function rpc(method, payload) {
 async function dagFiles() {
   const result = [];
   async function visit(directory) {
-    for (const entry of await readdir(directory, { withFileTypes: true })) {
+    let entries;
+    try {
+      entries = await readdir(directory, { withFileTypes: true });
+    } catch (error) {
+      if (error?.code === 'ENOENT') return;
+      throw error;
+    }
+    for (const entry of entries) {
       const absolute = path.join(directory, entry.name);
       if (entry.isDirectory()) await visit(absolute);
       else if (entry.name.startsWith('dag_') && entry.name.endsWith('.json')) result.push(absolute);
@@ -120,7 +127,11 @@ try {
   child.stdout.on('data', (chunk) => { logs += chunk.toString(); });
   child.stderr.on('data', (chunk) => { logs += chunk.toString(); });
   await waitFor(`http://127.0.0.1:${dshPort}/`, 30_000, () => `\nHost logs:\n${logs}`);
-  dshToken = logs.match(/token=([^\s]+)/)?.[1] ?? '';
+  const tokenStarted = Date.now();
+  while (Date.now() - tokenStarted < 30_000 && !dshToken) {
+    dshToken = logs.match(/token=([^\s]+)/)?.[1] ?? '';
+    if (!dshToken) await new Promise((resolve) => setTimeout(resolve, 250));
+  }
   if (!dshToken) throw new Error(`DSH web did not publish an API token.\n${logs}`);
   const tokenExchange = await fetch(`http://127.0.0.1:${dshPort}/?token=${encodeURIComponent(dshToken)}`, { redirect: 'manual' });
   dshCookie = tokenExchange.headers.get('set-cookie')?.split(';', 1)[0] ?? '';
@@ -162,6 +173,26 @@ try {
   const file = path.join(workspace, 'web-smoke.txt');
   if ((await readFile(file, 'utf8')).trim() !== 'WEB-SMOKE-OK') throw new Error('Real web host did not create expected file.');
 
+  await rpc('session/prompt', {
+    requestId: `tm-failure-prompt-${Date.now()}`,
+    sessionId,
+    mode: 'queue',
+    content: [{ type: 'text', text: 'Use the shell tool to run exactly `node -e "process.exit(7)"`. Do not skip the command; after it fails, briefly report the failure.' }],
+  });
+  const failureStarted = Date.now();
+  let failureNode;
+  while (Date.now() - failureStarted < 90_000) {
+    const currentFiles = await dagFiles();
+    for (const currentFile of currentFiles) {
+      const state = JSON.parse(await readFile(currentFile, 'utf8'));
+      failureNode = Object.values(state.nodes ?? {}).find((node) => (node.failedTools?.length ?? 0) > 0);
+      if (failureNode) break;
+    }
+    if (failureNode) break;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  if (!failureNode) throw new Error('Real web host did not persist failedTools evidence for the failed command.');
+
   const fork = await fetch(`http://127.0.0.1:${pluginPort}/api/fork`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ sessionId, checkpointId: checkpoint.id, branchName: 'web-smoke-alt' }),
@@ -169,6 +200,10 @@ try {
   const forkBody = await fork.json();
   if (!fork.ok || typeof forkBody.conversation?.sessionId !== 'string') {
     throw new Error(`Real-host fork failed: ${fork.status} ${JSON.stringify(forkBody)}`);
+  }
+  if (forkBody.result?.reflectionAdvisory?.hasPastFailures !== true
+    || !String(forkBody.result?.reflectionAdvisory?.suggestedPromptPrefix ?? '').includes('Failed tool')) {
+    throw new Error(`Real-host fork did not expose failed-tool reflection: ${JSON.stringify(forkBody.result?.reflectionAdvisory)}`);
   }
   await new Promise((resolve) => setTimeout(resolve, 500));
   try { await readFile(file, 'utf8'); throw new Error('Fork left the generated file behind.'); } catch (error) { if (error.code !== 'ENOENT') throw error; }

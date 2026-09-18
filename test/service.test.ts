@@ -169,6 +169,29 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
     expect(loaded?.failedTools?.[0]?.toolName).toBe('write');
   });
 
+  it('includes failures recorded on the fork point in the reflection advisory', async () => {
+    const sessionId = 'failed-fork-point';
+    const file = path.join(tmpDir, 'failed-fork-point.txt');
+    await fs.writeFile(file, 'failed-at-boundary\n', 'utf8');
+    const checkpoint = await service.createTurnCheckpoint({
+      sessionId,
+      turnIndex: 1,
+      prompt: 'run the risky command',
+      sessionState: { sessionId, messages: [] },
+      status: 'success',
+      failedTools: [{ toolName: 'shell', input: { command: 'exit 7' }, error: 'exit code 7' }],
+    });
+
+    const result = await service.forkNewBranch({
+      sessionId,
+      fromCheckpointId: checkpoint.id,
+      newBranchName: 'failed-point-retry',
+    });
+
+    expect(result.reflectionAdvisory.hasPastFailures).toBe(true);
+    expect(result.reflectionAdvisory.suggestedPromptPrefix).toContain('Failed tool [shell]');
+  });
+
   it('verifies the restored workspace digest for the fallback engine', async () => {
     const fallbackRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-fallback-service-'));
     try {

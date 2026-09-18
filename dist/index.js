@@ -1079,7 +1079,11 @@ var TimeMachineService = class {
       };
       if (this.config.enableReflectionAdvisor) {
         const abandonedNodes = dag.getAbandonedSubtrees(params.fromCheckpointId, params.newBranchName);
-        reflectionAdvisory = this.advisor.generateReflectionNote(abandonedNodes);
+        const forkPoint = dag.getNode(params.fromCheckpointId);
+        const forkPointHasFailure = forkPoint !== null && (forkPoint.status === "failed" || forkPoint.errorMessage !== void 0 || (forkPoint.failedTools?.length ?? 0) > 0);
+        reflectionAdvisory = this.advisor.generateReflectionNote(
+          forkPointHasFailure && forkPoint !== void 0 ? [forkPoint, ...abandonedNodes] : abandonedNodes
+        );
       }
       return {
         forkedNode: cloneJson2(forkedNode),

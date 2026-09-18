@@ -275,6 +275,7 @@ artifacts/<run-id>/
 - 真实本地模型请求、文件创建、turn 结束后的 finalized checkpoint 落盘通过。
 - 使用同一 `DSH_HOME` 与 workspace 的 live restart 测试通过，第二次运行保留并新增 DAG checkpoint。
 - 真实 DSH Web 宿主通过 `session/create`、`session/prompt` 驱动 turn，并完成真实 `/api/fork` 与 `/api/rewind`。
+- 同一真实 Web session 中，失败工具证据会在从失败 checkpoint 分叉时进入 `reflectionAdvisory`。
 - 真实 DSH 不可达模型端点会产生并持久化 `failed` checkpoint，且保留错误证据。
 - 真实 DSH 强制执行退出码非零的 shell 命令后，checkpoint 持久化了 `failedTools` 证据。
 - Web UI 在 fork/rewind 后采用服务端返回的新 conversation sessionId，后续 DAG 查询不再使用旧会话。
@@ -285,11 +286,10 @@ artifacts/<run-id>/
 
 仍需补齐的 P0/P1 证据：
 
-1. 同一个持久 Web session 中真实执行 `/tm-tree`、`/tm-rewind`、`/tm-fork`。
+1. 原生交互式 TUI 中真实执行 `/tm-tree`、`/tm-rewind`、`/tm-fork`（当前源码宿主未提供 shipped `tui` profile）。
 2. 真实 Session fork 失败后的补偿验收。
-3. 在真实 DSH fork 后验证上一失败工具事件进入反思提示（当前已验证 `failedTools` 持久化，fork 反思仍由 service/CLI 自动化覆盖）。
-4. 重启后从同一 DSH_HOME 恢复 DAG 和 session 边界。
-5. Windows Git 新版本临时索引兼容性专项测试。
+3. 重启后从同一 DSH_HOME 恢复 DAG 和 session 边界。
+4. Windows Git 新版本临时索引兼容性专项测试。
 
 注：真实 Web smoke 已覆盖插件 REST API 的 fork/rewind 与宿主 SessionController；CLI 内置命令 `/tm-*` 仍需要在交互式 TUI 中人工验收，不能由 headless/Web API 结果替代。
 

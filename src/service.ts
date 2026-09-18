@@ -258,7 +258,14 @@ export class TimeMachineService {
 
       if (this.config.enableReflectionAdvisor) {
         const abandonedNodes = dag.getAbandonedSubtrees(params.fromCheckpointId, params.newBranchName);
-        reflectionAdvisory = this.advisor.generateReflectionNote(abandonedNodes);
+        const forkPoint = dag.getNode(params.fromCheckpointId);
+        const forkPointHasFailure = forkPoint !== null
+          && (forkPoint.status === 'failed'
+            || forkPoint.errorMessage !== undefined
+            || (forkPoint.failedTools?.length ?? 0) > 0);
+        reflectionAdvisory = this.advisor.generateReflectionNote(
+          forkPointHasFailure && forkPoint !== undefined ? [forkPoint, ...abandonedNodes] : abandonedNodes,
+        );
       }
 
       return {

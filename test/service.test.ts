@@ -711,7 +711,7 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
     });
     expect(dryRun.note).toContain('not-installed');
     await expect(service.compensateExternalEffect(sessionId, checkpoint.id, effectId, { execute: true }))
-      .rejects.toThrow("No external effect adapter 'not-installed' is registered.");
+      .rejects.toMatchObject({ code: 'EXTERNAL_ADAPTER_UNAVAILABLE' });
   });
 
   it('verifies the restored workspace digest for the fallback engine', async () => {

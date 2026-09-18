@@ -121,6 +121,24 @@ describe('TimeMachineWebServer', () => {
     expect(calls).toBe(1);
   });
 
+  it('returns a conflict instead of a server error when explicit compensation lacks an adapter', async () => {
+    const sessionId = 'web-missing-adapter';
+    const checkpoint = await service.createTurnCheckpoint({
+      sessionId, turnIndex: 1, prompt: 'missing adapter', sessionState: { sessionId, messages: [] },
+    });
+    const updated = await service.recordExternalEffect(sessionId, checkpoint.id, {
+      adapter: 'not-loaded', operation: 'create remote', reversible: true,
+      failureSemantics: 'unknown', status: 'unresolved',
+    });
+    const effectId = updated.externalEffects![0]!.id;
+    const response = await fetch(`http://localhost:${testPort}/api/external-effects/compensate`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId, checkpointId: checkpoint.id, effectId, execute: true }),
+    });
+    expect(response.status).toBe(409);
+    expect((await response.json()).code).toBe('EXTERNAL_ADAPTER_UNAVAILABLE');
+  });
+
   it('should rewind and fork through the API while returning a new conversation', async () => {
     const file = path.join(tmpDir, 'app.txt');
     await fs.writeFile(file, 'v1\n', 'utf8');

@@ -2192,7 +2192,11 @@ var TimeMachineService = class {
           note: !adapter ? `No external effect adapter '${effect.adapter}' is registered; dry-run only.` : effect.status === "compensated" ? "Effect is already marked compensated." : "Dry run; no external mutation was requested."
         };
       }
-      if (!adapter) throw new Error(`No external effect adapter '${effect.adapter}' is registered.`);
+      if (!adapter) {
+        throw Object.assign(new Error(`No external effect adapter '${effect.adapter}' is registered.`), {
+          code: "EXTERNAL_ADAPTER_UNAVAILABLE"
+        });
+      }
       if (!effect.reversible) throw new Error(`External effect '${effectId}' is declared irreversible.`);
       if (effect.compensationIdempotencyKey && effect.compensationIdempotencyKey !== idempotencyKey) {
         throw new Error(`External effect '${effectId}' already has a different compensation idempotency key.`);
@@ -2894,7 +2898,7 @@ var TimeMachineWebServer = class {
           }
           await this.handleStatic(res, pathname);
         } catch (err) {
-          const status = err?.code === "BAD_REQUEST" ? 400 : err?.code === "RESTORE_PLAN_INVALID" || err?.code === "RESTORE_MERGE_CONFLICT" || err?.code === "QUARANTINE_KEY_INVALID" || err?.code === "EXTERNAL_COMPENSATION_UNKNOWN" ? 409 : err?.code === "UNSUPPORTED_WORKSPACE_STATE" ? 422 : err?.code === "SNAPSHOT_SIZE_LIMIT" ? 413 : 500;
+          const status = err?.code === "BAD_REQUEST" ? 400 : err?.code === "RESTORE_PLAN_INVALID" || err?.code === "RESTORE_MERGE_CONFLICT" || err?.code === "QUARANTINE_KEY_INVALID" || err?.code === "EXTERNAL_COMPENSATION_UNKNOWN" || err?.code === "EXTERNAL_ADAPTER_UNAVAILABLE" ? 409 : err?.code === "UNSUPPORTED_WORKSPACE_STATE" ? 422 : err?.code === "SNAPSHOT_SIZE_LIMIT" ? 413 : 500;
           res.writeHead(status, { "Content-Type": "application/json" });
           res.end(JSON.stringify({
             error: err.message || "Internal Server Error",

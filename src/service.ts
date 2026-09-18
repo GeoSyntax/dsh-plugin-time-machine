@@ -385,7 +385,11 @@ export class TimeMachineService {
               : 'Dry run; no external mutation was requested.',
         };
       }
-      if (!adapter) throw new Error(`No external effect adapter '${effect.adapter}' is registered.`);
+      if (!adapter) {
+        throw Object.assign(new Error(`No external effect adapter '${effect.adapter}' is registered.`), {
+          code: 'EXTERNAL_ADAPTER_UNAVAILABLE',
+        });
+      }
       if (!effect.reversible) throw new Error(`External effect '${effectId}' is declared irreversible.`);
       if (effect.compensationIdempotencyKey && effect.compensationIdempotencyKey !== idempotencyKey) {
         throw new Error(`External effect '${effectId}' already has a different compensation idempotency key.`);

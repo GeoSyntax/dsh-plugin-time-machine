@@ -156,6 +156,7 @@ export interface PruneResult {
   removedCheckpointIds: string[];
   reclaimedBytes: number;
   gitRefsRemoved: number;
+  quarantineReclaimedBytes?: number;
   shadowObjectsReclaimedBytes?: number;
   shadowRepackSkippedReason?: string;
   note: string;

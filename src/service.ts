@@ -516,6 +516,7 @@ export class TimeMachineService {
         removedCheckpointIds: removed.map(node => node.id),
         reclaimedBytes: reclaimed.reclaimedBytes,
         gitRefsRemoved: reclaimed.gitRefsRemoved,
+        quarantineReclaimedBytes: reclaimed.quarantineReclaimedBytes,
         shadowObjectsReclaimedBytes: shadowRepack?.reclaimedBytes,
         shadowRepackSkippedReason: shadowRepack?.skippedReason,
         note: reclaimed.gitRefsRemoved > 0
@@ -546,15 +547,38 @@ export class TimeMachineService {
     await this.reclaimNodes(dag.tree.sessionId, removed);
   }
 
-  private async reclaimNodes(sessionId: string, nodes: CheckpointNode[]): Promise<{ reclaimedBytes: number; gitRefsRemoved: number }> {
+  private async reclaimNodes(sessionId: string, nodes: CheckpointNode[]): Promise<{ reclaimedBytes: number; gitRefsRemoved: number; quarantineReclaimedBytes: number }> {
     let reclaimedBytes = 0;
     let gitRefsRemoved = 0;
+    let quarantineReclaimedBytes = 0;
     for (const node of nodes) {
       if (node.gitCommitOid.startsWith('fallback_')) reclaimedBytes += await this.fallbackEngine.removeSnapshot(sessionId, node.id);
       else if (await this.gitEngine.isGitRepo() && await this.gitEngine.deleteCheckpointRef(sessionId, node.id)) gitRefsRemoved += 1;
     }
+    const referencedBackups = await this.referencedIgnoredBackupKeys();
+    for (const key of new Set(nodes.map(node => node.ignoredBackupKey).filter((item): item is string => Boolean(item)))) {
+      if (!referencedBackups.has(key)) quarantineReclaimedBytes += await this.gitEngine.removeIgnoredBackup(key);
+    }
     if (this.config.shadowStore) await this.gitEngine.pruneShadowObjects();
-    return { reclaimedBytes, gitRefsRemoved };
+    return { reclaimedBytes, gitRefsRemoved, quarantineReclaimedBytes };
+  }
+
+  private async referencedIgnoredBackupKeys(): Promise<Set<string>> {
+    const keys = new Set<string>();
+    const collect = (raw: any): void => {
+      for (const node of Object.values(raw?.nodes ?? {}) as Array<CheckpointNode>) {
+        if (node.ignoredBackupKey) keys.add(node.ignoredBackupKey);
+      }
+    };
+    for (const manager of this.dagManagers.values()) collect(manager.tree);
+    for (const entry of await fs.readdir(this.storageDir, { withFileTypes: true }).catch(() => [] as import('node:fs').Dirent[])) {
+      if (!entry.isFile() || !entry.name.startsWith('dag_') || !entry.name.endsWith('.json')) continue;
+      const raw = await fs.readFile(path.join(this.storageDir, entry.name), 'utf8')
+        .then(value => JSON.parse(value))
+        .catch(() => undefined);
+      if (raw) collect(raw);
+    }
+    return keys;
   }
 
   private pruneCandidates(dag: DAGStateManager): CheckpointNode[] {

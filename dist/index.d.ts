@@ -151,6 +151,7 @@ interface PruneResult {
     removedCheckpointIds: string[];
     reclaimedBytes: number;
     gitRefsRemoved: number;
+    quarantineReclaimedBytes?: number;
     shadowObjectsReclaimedBytes?: number;
     shadowRepackSkippedReason?: string;
     note: string;
@@ -329,6 +330,7 @@ declare class TimeMachineService {
     }): Promise<PruneResult>;
     private autoPruneForQuota;
     private reclaimNodes;
+    private referencedIgnoredBackupKeys;
     private pruneCandidates;
     private listStoredSessions;
     private enforceStorageQuota;
@@ -426,6 +428,8 @@ declare class GitPlumbingEngine {
     restoreSelectedPaths(commitOrTreeOid: string, paths: string[], options?: GitSelectiveRestoreOptions): Promise<string[]>;
     /** Restore quarantined ignored content without ever writing it into Git objects. */
     restoreIgnoredBackup(key: string): Promise<void>;
+    /** Remove a quarantine backup only after the DAG no longer references its key. */
+    removeIgnoredBackup(key: string): Promise<number>;
     getDiffBetween(baseOid: string, targetOid: string): Promise<DiffResult[]>;
     private runGitBuffer;
     private readShadowBlob;

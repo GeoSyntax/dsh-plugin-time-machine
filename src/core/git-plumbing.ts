@@ -335,6 +335,15 @@ export class GitPlumbingEngine {
     }
   }
 
+  /** Remove a quarantine backup only after the DAG no longer references its key. */
+  async removeIgnoredBackup(key: string): Promise<number> {
+    if (!this.quarantineDir) return 0;
+    const backupRoot = path.join(this.quarantineDir, encodeRefPart(key));
+    const reclaimed = await directoryBytes(backupRoot);
+    await fs.rm(backupRoot, { recursive: true, force: true });
+    return reclaimed;
+  }
+
   async getDiffBetween(baseOid: string, targetOid: string): Promise<DiffResult[]> {
     try {
       // Git accepts both commit-ish and tree-ish objects here. Keeping the
@@ -670,6 +679,16 @@ export class GitPlumbingEngine {
 async function sumFileSizes(files: string[]): Promise<number> {
   let total = 0;
   for (const file of files) total += (await fs.stat(file).catch(() => ({ size: 0 }))).size;
+  return total;
+}
+
+async function directoryBytes(root: string): Promise<number> {
+  let total = 0;
+  for (const entry of await fs.readdir(root, { withFileTypes: true }).catch(() => [] as import('node:fs').Dirent[])) {
+    const absolute = path.join(root, entry.name);
+    if (entry.isDirectory()) total += await directoryBytes(absolute);
+    else total += (await fs.stat(absolute).catch(() => ({ size: 0 }))).size;
+  }
   return total;
 }
 

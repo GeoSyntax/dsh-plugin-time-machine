@@ -52,6 +52,15 @@ async function sumFileSizes(files) {
   for (const file of files) total += (await import_promises.default.stat(file).catch(() => ({ size: 0 }))).size;
   return total;
 }
+async function directoryBytes(root) {
+  let total = 0;
+  for (const entry of await import_promises.default.readdir(root, { withFileTypes: true }).catch(() => [])) {
+    const absolute = import_node_path.default.join(root, entry.name);
+    if (entry.isDirectory()) total += await directoryBytes(absolute);
+    else total += (await import_promises.default.stat(absolute).catch(() => ({ size: 0 }))).size;
+  }
+  return total;
+}
 function encodeRefPart(value) {
   return Buffer.from(value, "utf8").toString("base64url") || "_";
 }
@@ -320,6 +329,14 @@ Reason: ${errorMsg}`);
           const destination = import_node_path.default.join(root, entry.name);
           await import_promises.default.cp(source, destination, { recursive: true, force: true, verbatimSymlinks: true });
         }
+      }
+      /** Remove a quarantine backup only after the DAG no longer references its key. */
+      async removeIgnoredBackup(key) {
+        if (!this.quarantineDir) return 0;
+        const backupRoot = import_node_path.default.join(this.quarantineDir, encodeRefPart(key));
+        const reclaimed = await directoryBytes(backupRoot);
+        await import_promises.default.rm(backupRoot, { recursive: true, force: true });
+        return reclaimed;
       }
       async getDiffBetween(baseOid, targetOid) {
         try {
@@ -1743,7 +1760,7 @@ var TimeMachineService = class {
     const checkpoints = managers.reduce((sum, manager) => sum + Object.keys(manager.tree.nodes).length, 0);
     const leaves = managers.reduce((sum, manager) => sum + this.pruneCandidates(manager).length, 0);
     const files = await countFiles(this.storageDir);
-    const bytes = await directoryBytes(this.storageDir);
+    const bytes = await directoryBytes2(this.storageDir);
     return {
       storageDir: this.storageDir,
       bytes,
@@ -1778,6 +1795,7 @@ var TimeMachineService = class {
         removedCheckpointIds: removed.map((node) => node.id),
         reclaimedBytes: reclaimed.reclaimedBytes,
         gitRefsRemoved: reclaimed.gitRefsRemoved,
+        quarantineReclaimedBytes: reclaimed.quarantineReclaimedBytes,
         shadowObjectsReclaimedBytes: shadowRepack?.reclaimedBytes,
         shadowRepackSkippedReason: shadowRepack?.skippedReason,
         note: reclaimed.gitRefsRemoved > 0 ? this.config.shadowStore ? "Plugin refs and shadow objects were pruned; the user repository was not garbage-collected." : "Git objects are shared; run repository maintenance only if you understand its impact." : "Fallback snapshot bytes were removed from plugin storage."
@@ -1795,7 +1813,7 @@ var TimeMachineService = class {
       const removeCount = Math.max(0, nodes.length - this.config.maxSnapshots + 1);
       candidates = candidates.slice(0, removeCount);
     }
-    if (this.config.maxStorageBytes > 0 && await directoryBytes(this.storageDir) >= this.config.maxStorageBytes) {
+    if (this.config.maxStorageBytes > 0 && await directoryBytes2(this.storageDir) >= this.config.maxStorageBytes) {
       candidates = candidates.length ? candidates : nodes.filter((node) => !protectedIds.has(node.id));
     }
     if (candidates.length === 0) return;
@@ -1805,12 +1823,32 @@ var TimeMachineService = class {
   async reclaimNodes(sessionId, nodes) {
     let reclaimedBytes = 0;
     let gitRefsRemoved = 0;
+    let quarantineReclaimedBytes = 0;
     for (const node of nodes) {
       if (node.gitCommitOid.startsWith("fallback_")) reclaimedBytes += await this.fallbackEngine.removeSnapshot(sessionId, node.id);
       else if (await this.gitEngine.isGitRepo() && await this.gitEngine.deleteCheckpointRef(sessionId, node.id)) gitRefsRemoved += 1;
     }
+    const referencedBackups = await this.referencedIgnoredBackupKeys();
+    for (const key of new Set(nodes.map((node) => node.ignoredBackupKey).filter((item) => Boolean(item)))) {
+      if (!referencedBackups.has(key)) quarantineReclaimedBytes += await this.gitEngine.removeIgnoredBackup(key);
+    }
     if (this.config.shadowStore) await this.gitEngine.pruneShadowObjects();
-    return { reclaimedBytes, gitRefsRemoved };
+    return { reclaimedBytes, gitRefsRemoved, quarantineReclaimedBytes };
+  }
+  async referencedIgnoredBackupKeys() {
+    const keys = /* @__PURE__ */ new Set();
+    const collect = (raw) => {
+      for (const node of Object.values(raw?.nodes ?? {})) {
+        if (node.ignoredBackupKey) keys.add(node.ignoredBackupKey);
+      }
+    };
+    for (const manager of this.dagManagers.values()) collect(manager.tree);
+    for (const entry of await import_promises5.default.readdir(this.storageDir, { withFileTypes: true }).catch(() => [])) {
+      if (!entry.isFile() || !entry.name.startsWith("dag_") || !entry.name.endsWith(".json")) continue;
+      const raw = await import_promises5.default.readFile(import_node_path5.default.join(this.storageDir, entry.name), "utf8").then((value) => JSON.parse(value)).catch(() => void 0);
+      if (raw) collect(raw);
+    }
+    return keys;
   }
   pruneCandidates(dag) {
     const protectedIds = /* @__PURE__ */ new Set([
@@ -1840,7 +1878,7 @@ var TimeMachineService = class {
       );
     }
     if (this.config.maxStorageBytes > 0) {
-      const bytes = await directoryBytes(this.storageDir);
+      const bytes = await directoryBytes2(this.storageDir);
       if (bytes >= this.config.maxStorageBytes) {
         throw new StorageQuotaError(
           `Time Machine storage reached maxStorageBytes=${this.config.maxStorageBytes}. Run /tm-prune or increase the limit.`
@@ -1995,7 +2033,7 @@ function symmetricDifference2(left, right) {
   const leftSet = new Set(left);
   return [...left.filter((item) => !rightSet.has(item)), ...right.filter((item) => !leftSet.has(item))];
 }
-async function directoryBytes(root) {
+async function directoryBytes2(root) {
   let total = 0;
   const visit = async (directory) => {
     for (const entry of await import_promises5.default.readdir(directory, { withFileTypes: true }).catch(() => [])) {
@@ -2343,9 +2381,10 @@ function registerCliCommands(ctx, service) {
           compactHistory: args.includes("--compact-history"),
           repackShadowObjects: args.includes("--repack-shadow")
         });
+        const quarantine = result.quarantineReclaimedBytes ? ` Quarantine reclaimed ${formatBytes(result.quarantineReclaimedBytes)}.` : "";
         const shadow = result.shadowObjectsReclaimedBytes ? ` Shadow packs reclaimed ${formatBytes(result.shadowObjectsReclaimedBytes)}.` : "";
         const warning = result.shadowRepackSkippedReason ? ` Shadow repack skipped: ${result.shadowRepackSkippedReason}.` : "";
-        return { kind: "success", text: `Pruned ${result.removedCheckpointIds.length} checkpoint(s), reclaimed ${formatBytes(result.reclaimedBytes)}.${shadow}${warning} ${result.note}` };
+        return { kind: "success", text: `Pruned ${result.removedCheckpointIds.length} checkpoint(s), reclaimed ${formatBytes(result.reclaimedBytes)}.${quarantine}${shadow}${warning} ${result.note}` };
       }
     });
     scope.commands.register({

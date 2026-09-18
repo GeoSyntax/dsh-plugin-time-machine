@@ -133,6 +133,14 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
       createRescuePoint: false,
     });
     expect(await fs.readFile(path.join(tmpDir, 'secret.env'), 'utf8')).toBe('token=do-not-persist\n');
+
+    await fs.writeFile(path.join(tmpDir, 'app.ts'), 'post-rescue\n', 'utf8');
+    await service.createTurnCheckpoint({
+      sessionId, turnIndex: 3, prompt: 'post rescue', sessionState: { sessionId, messages: [] },
+    });
+    const prune = await service.prune(sessionId, { keepLatest: 1, compactHistory: true });
+    expect(prune.quarantineReclaimedBytes).toBeGreaterThan(0);
+    expect(await fs.readdir(path.join(tmpDir, '.dsh-tm', 'ignored-quarantine')).catch(() => [])).toHaveLength(0);
   });
 
   it('previews rewind impact without mutating files or DAG state', async () => {

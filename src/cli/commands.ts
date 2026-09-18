@@ -52,9 +52,10 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
           compactHistory: args.includes('--compact-history'),
           repackShadowObjects: args.includes('--repack-shadow'),
         });
+        const quarantine = result.quarantineReclaimedBytes ? ` Quarantine reclaimed ${formatBytes(result.quarantineReclaimedBytes)}.` : '';
         const shadow = result.shadowObjectsReclaimedBytes ? ` Shadow packs reclaimed ${formatBytes(result.shadowObjectsReclaimedBytes)}.` : '';
         const warning = result.shadowRepackSkippedReason ? ` Shadow repack skipped: ${result.shadowRepackSkippedReason}.` : '';
-        return { kind: 'success', text: `Pruned ${result.removedCheckpointIds.length} checkpoint(s), reclaimed ${formatBytes(result.reclaimedBytes)}.${shadow}${warning} ${result.note}` };
+        return { kind: 'success', text: `Pruned ${result.removedCheckpointIds.length} checkpoint(s), reclaimed ${formatBytes(result.reclaimedBytes)}.${quarantine}${shadow}${warning} ${result.note}` };
       },
     });
 

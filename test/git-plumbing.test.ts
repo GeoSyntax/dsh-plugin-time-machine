@@ -143,6 +143,23 @@ describe('GitPlumbingEngine', () => {
     expect(second.changedFiles).toEqual([]);
   });
 
+  it('fails closed when encryption is enabled for a legacy plaintext quarantine', async () => {
+    const quarantineDir = path.join(tmpDir, '.quarantine');
+    const key = 'legacy-backup';
+    const backupRoot = path.join(quarantineDir, Buffer.from(key, 'utf8').toString('base64url'));
+    await fs.mkdir(backupRoot, { recursive: true });
+    await fs.writeFile(path.join(backupRoot, 'secret.env'), 'token=plaintext\n', 'utf8');
+    const encrypted = new GitPlumbingEngine({
+      workDir: tmpDir,
+      quarantineDir,
+      quarantineEncryptionKey: 'operator-key',
+    });
+
+    await expect(encrypted.validateIgnoredBackup(key)).rejects.toMatchObject({ code: 'QUARANTINE_KEY_INVALID' });
+    await expect(encrypted.restoreIgnoredBackup(key)).rejects.toMatchObject({ code: 'QUARANTINE_KEY_INVALID' });
+    expect(await fs.readFile(path.join(backupRoot, 'secret.env'), 'utf8')).toBe('token=plaintext\n');
+  });
+
   it('merge-restores non-conflicting live edits while applying the target snapshot', async () => {
     const left = path.join(tmpDir, 'left.txt');
     const right = path.join(tmpDir, 'right.txt');

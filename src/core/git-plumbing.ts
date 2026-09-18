@@ -543,6 +543,15 @@ export class GitPlumbingEngine {
       }
       return;
     }
+    if (this.quarantineKey) {
+      const plaintextEntries = await fs.readdir(backupRoot).catch((error: any) => {
+        if (error?.code === 'ENOENT') return [] as string[];
+        throw error;
+      });
+      if (plaintextEntries.length) {
+        throw new QuarantineKeyError('Plaintext quarantine exists; explicit encryption migration is required.');
+      }
+    }
     const root = await this.getRepoRoot();
     const entries = await fs.readdir(backupRoot, { withFileTypes: true }).catch((error: any) => {
       if (error?.code === 'ENOENT') return [];
@@ -563,7 +572,18 @@ export class GitPlumbingEngine {
       if (error?.code === 'ENOENT') return undefined;
       throw new QuarantineKeyError(`Encrypted quarantine manifest is invalid: ${error?.message ?? 'unknown error'}`);
     });
-    if (!manifest) return;
+    if (!manifest) {
+      if (this.quarantineKey) {
+        const plaintextEntries = await fs.readdir(backupRoot).catch((error: any) => {
+          if (error?.code === 'ENOENT') return [] as string[];
+          throw error;
+        });
+        if (plaintextEntries.length) {
+          throw new QuarantineKeyError('Plaintext quarantine exists; explicit encryption migration is required.');
+        }
+      }
+      return;
+    }
     if (!this.quarantineKey) throw new QuarantineKeyError('Encrypted quarantine requires the configured key.');
     if (manifest.version !== 1 || !Array.isArray(manifest.entries)) throw new QuarantineKeyError('Encrypted quarantine manifest version is unsupported.');
     for (const entry of manifest.entries.filter(item => item.type === 'file')) {

@@ -243,7 +243,8 @@ export class GitPlumbingEngine {
     }
     await this.assertSupportedWorkspace();
 
-    const { treeOid, indexFile } = await this.writeWorkspaceTree(true);
+    const enforceSnapshotLimits = this.maxSnapshotFileBytes > 0 || this.maxSnapshotBytes > 0;
+    const { treeOid, indexFile } = await this.writeWorkspaceTree(enforceSnapshotLimits);
     try {
       const commitMsg = params.message || `DSH Checkpoint [${params.sessionId}:${params.checkpointId}]`;
       const commitArgs = ['commit-tree', treeOid, '-m', commitMsg];
@@ -643,7 +644,7 @@ export class GitPlumbingEngine {
         await this.runGit(['read-tree', '--empty'], env, root);
       }
       const protectedPaths = this.protectedRepoPaths(root);
-      if (enforceSnapshotLimits || protectedPaths.length === 0) {
+      if (enforceSnapshotLimits) {
         const { stdout: candidates } = await this.runGit([
           'ls-files', '-z', '--cached', '--modified', '--deleted', '--others', '--exclude-standard',
         ], {}, root);
@@ -654,6 +655,10 @@ export class GitPlumbingEngine {
         for (let offset = 0; offset < candidateFiles.length; offset += 128) {
           await this.runGit(['add', '-A', '--', ...candidateFiles.slice(offset, offset + 128)], env, root);
         }
+      } else if (protectedPaths.length === 0) {
+        // Fast path for ordinary snapshots: avoid a full candidate enumeration
+        // and let Git's pathspec scanner perform one index update.
+        await this.runGit(['add', '-A', '--', '.'], env, root);
       } else {
         // One pathspec keeps the common path fast while excluding plugin-owned
         // storage and user-preserved directories from the temporary index.

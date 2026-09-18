@@ -125,6 +125,22 @@ TM_DSH_SOURCE=/path/to/deepseek-harness pnpm smoke:dsh:source
 - `maxSnapshotFileBytes` 和 `maxSnapshotBytes` 在捕获前限制单文件与单 checkpoint 的 regular-file 总大小；超过限制返回 `SNAPSHOT_SIZE_LIMIT`，不会创建半成品 checkpoint。默认均为 0（不限制），而存储目录总量仍由 `maxStorageBytes` 控制。
 - `/tm-prune --older-than=7d` 提供显式的时间保留策略；它只让超过阈值且不受 DAG head/ancestor 保护的节点进入清理候选，不会自动运行，也不会删除当前分支所需的历史。
 - 如需自动生命周期治理，可设置 `retentionMaxAgeMs`；它只在创建普通 checkpoint 前运行，并沿用 DAG 保护规则。自动策略默认关闭，避免用户在未察觉时丢失探索历史。
+
+### 性能边界（合成基准）
+
+`pnpm benchmark` 默认使用 100 个文件，也可以通过
+`TM_BENCH_FILE_COUNT` 和 `TM_BENCH_TURNS` 放大 fixture。当前本机结果为：
+
+| 文件数 | Git 快照延迟（相对传统复制） | Git 对象存储（相对传统复制） |
+| ---: | ---: | ---: |
+| 100 | 约 6.4× | 约 0.1× |
+| 1,000 | 约 2.1× | 约 0.2× |
+| 10,000 | 约 3.6× | 约 0.4× |
+
+这是可重复的合成 TypeScript 文件基准，不代表所有真实仓库。Git 方案用延迟
+换取不可变历史、分支安全和更低的增量存储；10k+ 文件的全量工作区扫描仍是
+已知 P1 瓶颈，后续增量缓存必须以 HEAD、index、ignored 集合和 protected paths
+变化为失效条件，不能牺牲快照完整性。
 - `/tm-preview` 和 Web 预览会签发一次性、会话绑定的 restore plan；Web rewind 会把 plan 一并提交，若预览后工作区、活动 checkpoint、Git HEAD/branch/进行中操作或 plan TTL 发生变化，服务返回 `RESTORE_PLAN_INVALID`（HTTP 409）并要求重新预览。`restorePlanTtlMs: 0` 可关闭过期时间，但 plan 仍只能消费一次。
 - 多文件恢复提供 rescue/compensation 和崩溃后 journal 恢复，但文件系统本身没有跨文件 ACID 事务。
 - Git sparse checkout、submodule 和 merge/rebase/cherry-pick 进行中状态会被明确识别并拒绝创建/预览/恢复 checkpoint（`UNSUPPORTED_WORKSPACE_STATE`），避免把不完整工作区误报为可回滚快照；请先完成操作或使用普通 worktree。

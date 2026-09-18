@@ -56,7 +56,7 @@ dsh --profile web
 
 ## Safety model
 
-默认使用 safe restore。若 checkpoint 之后出现用户手改、staged 变化或 ignored 路径漂移，插件会拒绝覆盖并报告 `WORKSPACE_DRIFT`。只有显式 `--force` 才允许覆盖受管文件。
+默认使用 safe restore。若 checkpoint 之后出现用户手改、staged 变化或 ignored 路径漂移，插件会拒绝覆盖并报告 `WORKSPACE_DRIFT`。显式 `--merge` 仅在 Git 工作区尝试保留非冲突修改；只有显式 `--force` 才允许无条件覆盖受管文件。
 
 每次 rewind/fork 前都会建立 rescue checkpoint。如果物理恢复成功但 DSH 会话 fork 失败，插件会恢复 rescue 状态，不执行 workspace-only 的“假回滚”。插件不会修改 DSH 的 append-only session log，也不会静默删除 ignored 文件。
 

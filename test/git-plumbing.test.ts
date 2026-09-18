@@ -107,6 +107,23 @@ describe('GitPlumbingEngine', () => {
     expect(second.treeOid).toBe(first.treeOid);
   });
 
+  it('protects storage when the workspace is reached through a symlink', async () => {
+    if (process.platform === 'win32') return;
+    const alias = path.join(os.tmpdir(), `dsh-tm-alias-${Math.random().toString(16).slice(2)}`);
+    await fs.symlink(tmpDir, alias, 'dir');
+    try {
+      const storageDir = path.join(alias, '.dsh-tm');
+      await fs.mkdir(storageDir, { recursive: true });
+      await fs.writeFile(path.join(alias, 'app.ts'), 'v1\n', 'utf8');
+      engine = new GitPlumbingEngine({ workDir: alias, preservePaths: [storageDir] });
+      const first = await engine.createSnapshot({ sessionId: 'symlink', checkpointId: 'first' });
+      await fs.writeFile(path.join(storageDir, 'dag.json'), '{"mutated":true}\n', 'utf8');
+      expect((await engine.inspectWorkspace()).treeOid).toBe(first.treeOid);
+    } finally {
+      await fs.rm(alias, { recursive: true, force: true });
+    }
+  });
+
   it('can store plugin-created Git objects in an isolated shadow object directory', async () => {
     const shadowObjectDir = path.join(tmpDir, '.dsh-tm', 'git-shadow', 'objects');
     engine = new GitPlumbingEngine({ workDir: tmpDir, shadowObjectDir });

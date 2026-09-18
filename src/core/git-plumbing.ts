@@ -84,7 +84,7 @@ export class QuarantineQuotaError extends Error {
 export class GitPlumbingEngine {
   public readonly workDir: string;
   public readonly refPrefix: string;
-  private readonly preservePaths: string[];
+  private preservePaths: string[];
   private readonly quarantineDir?: string;
   private isRepoCached: boolean | null = null;
   private repoRootCached: string | null = null;
@@ -120,7 +120,10 @@ export class GitPlumbingEngine {
   async getRepoRoot(): Promise<string> {
     if (this.repoRootCached) return this.repoRootCached;
     const { stdout } = await this.runGit(['rev-parse', '--show-toplevel']);
-    this.repoRootCached = path.resolve(stdout.trim());
+    this.repoRootCached = await fs.realpath(path.resolve(stdout.trim())).catch(() => path.resolve(stdout.trim()));
+    this.preservePaths = await Promise.all(this.preservePaths.map(async absolute => (
+      await fs.realpath(absolute).catch(() => absolute)
+    )));
     return this.repoRootCached;
   }
 

@@ -37,8 +37,9 @@ candidate design is a cache keyed by `(repo HEAD, index stat data, preserve
 paths)` with invalidation on control-plane changes. It must never reuse a tree
 after a file, ignored-path set, or staged index changed.
 
-**Acceptance:** benchmark reports latency and storage for 100, 1k, and 10k-file
-fixtures; staged-index isolation and orphan cleanup tests remain green.
+**Acceptance:** `TM_BENCH_FILE_COUNT` benchmark runs report latency and storage
+for 100, 1k, and 10k-file fixtures; staged-index isolation and orphan cleanup
+tests remain green.
 
 ### Native DSH timeline action
 

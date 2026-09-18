@@ -24,8 +24,8 @@ async function runBenchmark() {
   await execAsync('git', ['config', 'user.name', 'BenchBot'], { cwd: repoDir });
   await execAsync('git', ['config', 'user.email', 'bot@bench.com'], { cwd: repoDir });
 
-  // 创建模拟工程：100 个代码文件
-  const FILE_COUNT = 100;
+  // Override these for scale testing, e.g. TM_BENCH_FILE_COUNT=1000.
+  const FILE_COUNT = positiveInteger(process.env.TM_BENCH_FILE_COUNT, 100);
   console.log(pc.white(`Creating mock project with ${FILE_COUNT} files...`));
   for (let i = 0; i < FILE_COUNT; i++) {
     const code = `// Module ${i}\nexport function compute_${i}() { return ${i} * 42; }\n`;
@@ -35,7 +35,7 @@ async function runBenchmark() {
   const gitEngine = new GitPlumbingEngine({ workDir: repoDir });
   const fallbackEngine = new FallbackSnapshotEngine({ workDir: repoDir, storageDir: backupStorageDir });
 
-  const TURNS = 5;
+  const TURNS = positiveInteger(process.env.TM_BENCH_TURNS, 5);
   console.log(pc.white(`Simulating ${TURNS} agent turns of incremental file changes...\n`));
 
   // 1. 测试传统物理 Copy 备份方案
@@ -96,7 +96,7 @@ async function runBenchmark() {
   const copyDiskSize = await getDirSize(backupStorageDir);
   const gitObjectsSize = await getDirSize(path.join(repoDir, '.git', 'objects'));
 
-  console.log(pc.bold('📊 BENCHMARK RESULTS (Average of 5 Turns):'));
+  console.log(pc.bold(`📊 BENCHMARK RESULTS (${FILE_COUNT} files, average of ${TURNS} turns):`));
   console.log('───────────────────────────────────────────────────────────────────');
   console.log(`⏱️  Snapshot Latency:`);
   const latencyRatio = avgGitTime / avgCopyTime;
@@ -115,3 +115,8 @@ async function runBenchmark() {
 }
 
 runBenchmark().catch(console.error);
+
+function positiveInteger(raw: string | undefined, fallback: number): number {
+  const value = raw === undefined ? fallback : Number(raw);
+  return Number.isSafeInteger(value) && value > 0 ? value : fallback;
+}

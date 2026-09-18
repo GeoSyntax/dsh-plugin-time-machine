@@ -102,6 +102,8 @@ Web dashboard 只绑定 loopback，并拒绝非本机 Host 和跨 origin 请求�
 pnpm test
 pnpm test:release
 pnpm benchmark
+# Scale the fixture for larger repositories:
+TM_BENCH_FILE_COUNT=1000 TM_BENCH_TURNS=5 pnpm benchmark
 ```
 
 如果本地有从源码构建的 DSH，可验证真实宿主加载（不会调用模型）：

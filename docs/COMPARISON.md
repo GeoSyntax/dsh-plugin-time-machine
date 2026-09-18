@@ -18,6 +18,7 @@ supported only when it is covered by the current implementation and tests.
 | Rescue/compensation | Yes | Snapshot-oriented | Journal-oriented | Varies |
 | Storage quotas and pruning | Explicit status, conservative prune, explicit history compaction, explicit age/abandoned-branch prune, opt-in hard guards | Yes | Yes; per-file/aggregate capture budgets and retention | Varies |
 | Automatic age retention | Opt-in `retentionMaxAgeMs`; runs before ordinary checkpoints and protects current/branch heads | Product-specific | Retention policies | Varies |
+| Oversized-file policy | Default fail-closed with `SNAPSHOT_SIZE_LIMIT` before capture; no silent partial checkpoint | Product-specific | Can skip/report unsupported files | Varies |
 | Durable interrupted-restore journal | Yes; startup restores rescue checkpoint | Store recovery | Yes | Varies |
 | Independent shadow store | Opt-in `shadowStore: true`; loose GC plus explicit private-pack repack | Yes | Yes | Usually local backups |
 | Cross-process workspace lock | Yes; bounded wait with stale-owner recovery | Product-specific | Change Ledger documents active-session blocking and Git-operation fences | Usually unavailable |
@@ -50,6 +51,14 @@ message-anchored rewind action. We should adopt those ideas where they fit
 without copying their storage format. It also offers an explicit Git-only
 three-way merge restore for non-conflicting workspace drift; safe mode remains
 the default and still fails closed on any drift.
+
+Time Machine intentionally does not copy the Change Ledger's permissive
+"skip oversized file and continue" behavior. A successful checkpoint is
+defined as a complete snapshot of all eligible workspace content; silently
+omitting a file would make later restore and orphan cleanup ambiguous. A future
+opt-in partial-capture mode would need to persist omitted paths in the DAG,
+preserve them during restore, and surface them in every CLI/Web/API result
+before it could be safe for community use.
 
 Time Machine's remaining boundaries are also important: the cross-process lock
 prevents concurrent mutation but does not create separate worktrees or

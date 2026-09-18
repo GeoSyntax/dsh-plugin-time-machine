@@ -307,6 +307,11 @@ export class TimeMachineService {
     });
   }
 
+  /** Explicitly migrate a legacy plaintext ignored-file quarantine to AES-GCM. */
+  async migrateIgnoredBackup(key: string): Promise<{ migrated: boolean; bytesRewritten: number; entryCount: number }> {
+    return this.runWorkspaceOperation(() => this.gitEngine.migrateIgnoredBackup(key));
+  }
+
   /**
    * 核心：回滚物理工作区与会话状态至指定快照
    */

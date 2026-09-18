@@ -335,6 +335,12 @@ declare class TimeMachineService {
     recordExternalEffect(sessionId: string, checkpointId: string, effect: Omit<ExternalEffectRecord, 'id' | 'recordedAt'> & {
         id?: string;
     }): Promise<CheckpointNode>;
+    /** Explicitly migrate a legacy plaintext ignored-file quarantine to AES-GCM. */
+    migrateIgnoredBackup(key: string): Promise<{
+        migrated: boolean;
+        bytesRewritten: number;
+        entryCount: number;
+    }>;
     /**
      * 核心：回滚物理工作区与会话状态至指定快照
      */
@@ -462,6 +468,11 @@ interface ShadowRepackResult {
     reclaimedBytes: number;
     reachableRefs: number;
     skippedReason?: string;
+}
+interface QuarantineMigrationResult {
+    migrated: boolean;
+    bytesRewritten: number;
+    entryCount: number;
 }
 interface GitRestoreOptions {
     expectedCurrentTreeOid?: string;
@@ -604,6 +615,8 @@ declare class GitPlumbingEngine {
     private safeWorkspacePath;
     private backupIgnoredPath;
     private backupIgnoredPathEncrypted;
+    /** Explicitly convert one legacy plaintext quarantine into encrypted form. */
+    migrateIgnoredBackup(key: string): Promise<QuarantineMigrationResult>;
     private collectEncryptedQuarantineEntries;
     private parseUnifiedDiff;
     cleanupSession(sessionId: string): Promise<void>;
@@ -728,4 +741,4 @@ declare class TimeMachinePlugin {
     constructor(ctx: Context, config?: Config);
 }
 
-export { type CheckpointNode, Config, type DAGManagerOptions, DAGStateManager, type DAGTree, type DiffResult, type ExternalEffectRecord, type FallbackOptions, FallbackSnapshotEngine, type FileChange, GitPlumbingEngine, type GitPlumbingOptions, type GitRestoreOptions, type GitSelectiveRestoreOptions, type GitSnapshot, type PruneResult, QuarantineKeyError, QuarantineQuotaError, ReflectionAdvisor, type ReflectionSummary, type RestoreOptions, RestorePlanError, type RestorePreview, type RestoreResult, type SelectiveRestoreResult, type SessionMessage, type SessionState, type ShadowGcResult, type ShadowRepackResult, SnapshotSizeError, StorageQuotaError, type StorageStatus, type TimeMachineConfig, TimeMachinePlugin, TimeMachineService, type TimeMachineServiceOptions, UnsupportedWorkspaceStateError, type WorkspaceCapabilities, WorkspaceDriftError, WorkspaceMergeConflictError, WorkspaceRestoreConflictError, apply, collectFailedTools, TimeMachinePlugin as default, name };
+export { type CheckpointNode, Config, type DAGManagerOptions, DAGStateManager, type DAGTree, type DiffResult, type ExternalEffectRecord, type FallbackOptions, FallbackSnapshotEngine, type FileChange, GitPlumbingEngine, type GitPlumbingOptions, type GitRestoreOptions, type GitSelectiveRestoreOptions, type GitSnapshot, type PruneResult, QuarantineKeyError, type QuarantineMigrationResult, QuarantineQuotaError, ReflectionAdvisor, type ReflectionSummary, type RestoreOptions, RestorePlanError, type RestorePreview, type RestoreResult, type SelectiveRestoreResult, type SessionMessage, type SessionState, type ShadowGcResult, type ShadowRepackResult, SnapshotSizeError, StorageQuotaError, type StorageStatus, type TimeMachineConfig, TimeMachinePlugin, TimeMachineService, type TimeMachineServiceOptions, UnsupportedWorkspaceStateError, type WorkspaceCapabilities, WorkspaceDriftError, WorkspaceMergeConflictError, WorkspaceRestoreConflictError, apply, collectFailedTools, TimeMachinePlugin as default, name };

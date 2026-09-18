@@ -160,6 +160,26 @@ describe('GitPlumbingEngine', () => {
     expect(await fs.readFile(path.join(backupRoot, 'secret.env'), 'utf8')).toBe('token=plaintext\n');
   });
 
+  it('explicitly migrates a legacy quarantine before encrypted restore', async () => {
+    const quarantineDir = path.join(tmpDir, '.quarantine-migrate');
+    const key = 'legacy-migrate';
+    const backupRoot = path.join(quarantineDir, Buffer.from(key, 'utf8').toString('base64url'));
+    await fs.mkdir(backupRoot, { recursive: true });
+    await fs.writeFile(path.join(backupRoot, 'secret.env'), 'token=migrated\n', 'utf8');
+    const encrypted = new GitPlumbingEngine({
+      workDir: tmpDir,
+      quarantineDir,
+      quarantineEncryptionKey: 'operator-key',
+    });
+
+    const result = await encrypted.migrateIgnoredBackup(key);
+    expect(result.migrated).toBe(true);
+    expect(result.entryCount).toBe(1);
+    expect(await fs.access(path.join(backupRoot, '.manifest.json'))).toBeUndefined();
+    await encrypted.restoreIgnoredBackup(key);
+    expect(await fs.readFile(path.join(tmpDir, 'secret.env'), 'utf8')).toBe('token=migrated\n');
+  });
+
   it('merge-restores non-conflicting live edits while applying the target snapshot', async () => {
     const left = path.join(tmpDir, 'left.txt');
     const right = path.join(tmpDir, 'right.txt');

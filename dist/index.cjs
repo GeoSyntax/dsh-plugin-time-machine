@@ -827,6 +827,66 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
           throw error;
         }
       }
+      /** Explicitly convert one legacy plaintext quarantine into encrypted form. */
+      async migrateIgnoredBackup(key) {
+        if (!this.quarantineDir) throw new Error("Ignored-path migration requires a quarantineDir.");
+        if (!this.quarantineKey) throw new QuarantineKeyError("Encrypted quarantine migration requires the configured key.");
+        const root = import_node_path.default.join(this.quarantineDir, encodeRefPart(key));
+        const manifestPath = import_node_path.default.join(root, ".manifest.json");
+        const existingManifest = await import_promises.default.readFile(manifestPath, "utf8").then((raw) => JSON.parse(raw)).catch((error) => {
+          if (error?.code === "ENOENT") return void 0;
+          throw new QuarantineKeyError(`Encrypted quarantine manifest is invalid: ${error?.message ?? "unknown error"}`);
+        });
+        if (existingManifest) {
+          if (existingManifest.version !== 1 || !Array.isArray(existingManifest.entries)) {
+            throw new QuarantineKeyError("Encrypted quarantine manifest version is unsupported.");
+          }
+          return { migrated: false, bytesRewritten: 0, entryCount: existingManifest.entries.length };
+        }
+        const entries = await import_promises.default.readdir(root, { withFileTypes: true }).catch((error) => {
+          if (error?.code === "ENOENT") return [];
+          throw error;
+        });
+        if (entries.length === 0) return { migrated: false, bytesRewritten: 0, entryCount: 0 };
+        const legacyRoot = `${root}.legacy-${(0, import_node_crypto.randomUUID)()}`;
+        const stagingRoot = import_node_path.default.join(import_node_path.default.dirname(root), `.migration-${(0, import_node_crypto.randomUUID)()}`);
+        const payloadDir = import_node_path.default.join(stagingRoot, "payload");
+        await import_promises.default.rename(root, legacyRoot);
+        try {
+          await import_promises.default.mkdir(payloadDir, { recursive: true });
+          const encryptedEntries = [];
+          for (const entry of entries) {
+            await this.collectEncryptedQuarantineEntries(import_node_path.default.join(legacyRoot, entry.name), entry.name, payloadDir, encryptedEntries);
+          }
+          const manifest = { version: 1, entries: encryptedEntries };
+          const manifestBytes = Buffer.byteLength(JSON.stringify(manifest));
+          const stagedBytes = await directoryBytes(stagingRoot);
+          const legacyBytes = await directoryBytes(legacyRoot);
+          const currentBytes = await directoryBytes(this.quarantineDir);
+          const requiredBytes = currentBytes - legacyBytes + stagedBytes + manifestBytes;
+          if (this.maxQuarantineBytes > 0 && requiredBytes > this.maxQuarantineBytes) {
+            throw new QuarantineQuotaError(this.maxQuarantineBytes, requiredBytes);
+          }
+          await import_promises.default.mkdir(import_node_path.default.join(root, "payload"), { recursive: true });
+          for (const entry of encryptedEntries) {
+            const source = import_node_path.default.join(payloadDir, entry.payload);
+            const destination = import_node_path.default.join(root, "payload", entry.payload);
+            await import_promises.default.rename(source, destination);
+            entry.payload = import_node_path.default.posix.join("payload", entry.payload);
+          }
+          await import_promises.default.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}
+`, "utf8");
+          const rewrittenBytes = await directoryBytes(root);
+          await import_promises.default.rm(stagingRoot, { recursive: true, force: true });
+          await import_promises.default.rm(legacyRoot, { recursive: true, force: true });
+          return { migrated: true, bytesRewritten: rewrittenBytes, entryCount: encryptedEntries.length };
+        } catch (error) {
+          await import_promises.default.rm(root, { recursive: true, force: true }).catch(() => void 0);
+          await import_promises.default.rm(stagingRoot, { recursive: true, force: true }).catch(() => void 0);
+          await import_promises.default.rename(legacyRoot, root).catch(() => void 0);
+          throw error;
+        }
+      }
       async collectEncryptedQuarantineEntries(source, relative, payloadDir, output) {
         const stat = await import_promises.default.lstat(source);
         if (stat.isDirectory()) {
@@ -1989,6 +2049,10 @@ var TimeMachineService = class {
       });
     });
   }
+  /** Explicitly migrate a legacy plaintext ignored-file quarantine to AES-GCM. */
+  async migrateIgnoredBackup(key) {
+    return this.runWorkspaceOperation(() => this.gitEngine.migrateIgnoredBackup(key));
+  }
   /**
    * 核心：回滚物理工作区与会话状态至指定快照
    */
@@ -2953,6 +3017,20 @@ function registerCliCommands(ctx, service) {
         const shadow = result.shadowObjectsReclaimedBytes ? ` Shadow packs reclaimed ${formatBytes(result.shadowObjectsReclaimedBytes)}.` : "";
         const warning = result.shadowRepackSkippedReason ? ` Shadow repack skipped: ${result.shadowRepackSkippedReason}.` : "";
         return { kind: "success", text: `Pruned ${result.removedCheckpointIds.length} checkpoint(s), reclaimed ${formatBytes(result.reclaimedBytes)}.${quarantine}${shadow}${warning} ${result.note}` };
+      }
+    });
+    scope.commands.register({
+      name: "tm-quarantine-migrate",
+      description: "Encrypt one legacy plaintext ignored-file quarantine backup",
+      input: { hint: "<backup-key>" },
+      handler: async ({ rawInput }) => {
+        const key = rawInput.trim();
+        if (!key || /\s/.test(key)) return { kind: "error", text: "Usage: /tm-quarantine-migrate <backup-key>" };
+        const result = await service.migrateIgnoredBackup(key);
+        return {
+          kind: "success",
+          text: result.migrated ? `Encrypted quarantine backup ${key}: ${result.entryCount} ${result.entryCount === 1 ? "entry" : "entries"} rewritten (${formatBytes(result.bytesRewritten)}).` : `Quarantine backup ${key} is already encrypted or empty.`
+        };
       }
     });
     scope.commands.register({

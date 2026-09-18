@@ -9,15 +9,17 @@ documented in [PROBLEM.md](./PROBLEM.md) and [COMPARISON.md](./COMPARISON.md).
 ### Encrypted sensitive-state storage
 
 Protect optional shadow objects and the remaining sensitive metadata at rest.
-Ignored-file quarantine is now covered by `quarantineEncryptionKeyEnv`; shadow
-object encryption and explicit migration of existing plaintext quarantine remain.
+Ignored-file quarantine is now covered by `quarantineEncryptionKeyEnv`; an
+explicit `/tm-quarantine-migrate` path converts legacy plaintext backups while
+preserving fail-closed behavior. Shadow object encryption remains.
 Use an operator-provided key (prefer an environment-backed key reference; never
 write the secret into the DAG). Migration must be explicit, and a missing/invalid
 key must fail closed without deleting plaintext backups.
 
 **Acceptance:** restore works after restart with the key; wrong keys cannot
-read content; quota/prune accounting remains correct; no key material appears
-in logs, manifests, or Git refs.
+read content; explicit migration preserves the legacy backup on failure;
+quota/prune accounting remains correct; no key material appears in logs,
+manifests, or Git refs.
 
 ### Host capability contract
 

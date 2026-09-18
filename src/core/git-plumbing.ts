@@ -66,6 +66,12 @@ export interface ShadowRepackResult {
   skippedReason?: string;
 }
 
+export interface QuarantineMigrationResult {
+  migrated: boolean;
+  bytesRewritten: number;
+  entryCount: number;
+}
+
 export interface GitRestoreOptions {
   expectedCurrentTreeOid?: string;
   expectedCurrentIgnoredPaths?: string[];
@@ -889,6 +895,67 @@ export class GitPlumbingEngine {
       await fs.rename(temporaryManifest, manifestPath);
     } catch (error) {
       await fs.rm(staging, { recursive: true, force: true }).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  /** Explicitly convert one legacy plaintext quarantine into encrypted form. */
+  async migrateIgnoredBackup(key: string): Promise<QuarantineMigrationResult> {
+    if (!this.quarantineDir) throw new Error('Ignored-path migration requires a quarantineDir.');
+    if (!this.quarantineKey) throw new QuarantineKeyError('Encrypted quarantine migration requires the configured key.');
+    const root = path.join(this.quarantineDir, encodeRefPart(key));
+    const manifestPath = path.join(root, '.manifest.json');
+    const existingManifest = await fs.readFile(manifestPath, 'utf8').then(raw => JSON.parse(raw) as EncryptedQuarantineManifest).catch((error: any) => {
+      if (error?.code === 'ENOENT') return undefined;
+      throw new QuarantineKeyError(`Encrypted quarantine manifest is invalid: ${error?.message ?? 'unknown error'}`);
+    });
+    if (existingManifest) {
+      if (existingManifest.version !== 1 || !Array.isArray(existingManifest.entries)) {
+        throw new QuarantineKeyError('Encrypted quarantine manifest version is unsupported.');
+      }
+      return { migrated: false, bytesRewritten: 0, entryCount: existingManifest.entries.length };
+    }
+    const entries = await fs.readdir(root, { withFileTypes: true }).catch((error: any) => {
+      if (error?.code === 'ENOENT') return [] as import('node:fs').Dirent[];
+      throw error;
+    });
+    if (entries.length === 0) return { migrated: false, bytesRewritten: 0, entryCount: 0 };
+
+    const legacyRoot = `${root}.legacy-${randomUUID()}`;
+    const stagingRoot = path.join(path.dirname(root), `.migration-${randomUUID()}`);
+    const payloadDir = path.join(stagingRoot, 'payload');
+    await fs.rename(root, legacyRoot);
+    try {
+      await fs.mkdir(payloadDir, { recursive: true });
+      const encryptedEntries: EncryptedQuarantineEntry[] = [];
+      for (const entry of entries) {
+        await this.collectEncryptedQuarantineEntries(path.join(legacyRoot, entry.name), entry.name, payloadDir, encryptedEntries);
+      }
+      const manifest = { version: 1 as const, entries: encryptedEntries };
+      const manifestBytes = Buffer.byteLength(JSON.stringify(manifest));
+      const stagedBytes = await directoryBytes(stagingRoot);
+      const legacyBytes = await directoryBytes(legacyRoot);
+      const currentBytes = await directoryBytes(this.quarantineDir);
+      const requiredBytes = currentBytes - legacyBytes + stagedBytes + manifestBytes;
+      if (this.maxQuarantineBytes > 0 && requiredBytes > this.maxQuarantineBytes) {
+        throw new QuarantineQuotaError(this.maxQuarantineBytes, requiredBytes);
+      }
+      await fs.mkdir(path.join(root, 'payload'), { recursive: true });
+      for (const entry of encryptedEntries) {
+        const source = path.join(payloadDir, entry.payload!);
+        const destination = path.join(root, 'payload', entry.payload!);
+        await fs.rename(source, destination);
+        entry.payload = path.posix.join('payload', entry.payload!);
+      }
+      await fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+      const rewrittenBytes = await directoryBytes(root);
+      await fs.rm(stagingRoot, { recursive: true, force: true });
+      await fs.rm(legacyRoot, { recursive: true, force: true });
+      return { migrated: true, bytesRewritten: rewrittenBytes, entryCount: encryptedEntries.length };
+    } catch (error) {
+      await fs.rm(root, { recursive: true, force: true }).catch(() => undefined);
+      await fs.rm(stagingRoot, { recursive: true, force: true }).catch(() => undefined);
+      await fs.rename(legacyRoot, root).catch(() => undefined);
       throw error;
     }
   }

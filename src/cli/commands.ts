@@ -64,6 +64,23 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
     });
 
     scope.commands.register({
+      name: 'tm-quarantine-migrate',
+      description: 'Encrypt one legacy plaintext ignored-file quarantine backup',
+      input: { hint: '<backup-key>' },
+      handler: async ({ rawInput }: CommandInvocationLike): Promise<CommandResult> => {
+        const key = rawInput.trim();
+        if (!key || /\s/.test(key)) return { kind: 'error', text: 'Usage: /tm-quarantine-migrate <backup-key>' };
+        const result = await service.migrateIgnoredBackup(key);
+        return {
+          kind: 'success',
+          text: result.migrated
+            ? `Encrypted quarantine backup ${key}: ${result.entryCount} ${result.entryCount === 1 ? 'entry' : 'entries'} rewritten (${formatBytes(result.bytesRewritten)}).`
+            : `Quarantine backup ${key} is already encrypted or empty.`,
+        };
+      },
+    });
+
+    scope.commands.register({
       name: 'tm-rewind',
       description: 'Restore workspace and fork conversation at a checkpoint',
       input: { hint: '<checkpoint> [--merge|--force] [--delete-new-ignored] [--plan=<id>]' },

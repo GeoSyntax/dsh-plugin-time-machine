@@ -80,6 +80,7 @@
 - `service`：checkpoint prune 后仅清理无 DAG 引用的 quarantine，仍被 rescue 节点引用的备份必须保留。
 - `git-plumbing`：quarantine 达到 `maxQuarantineBytes` 时拒绝删除并保留原文件。
 - `service` / `git-plumbing`：启用 `quarantineEncryptionKeyEnv` 后，密文备份可恢复；错误/缺失密钥在任何受管文件变更前返回 `QUARANTINE_KEY_INVALID`，且备份仍保留。
+- `git-plumbing`：启用加密后发现旧明文 quarantine 必须 fail-closed；只有显式 `migrateIgnoredBackup`（CLI `/tm-quarantine-migrate`）成功后才允许恢复，迁移失败保留原目录。
 - `git-plumbing` / `fallback-engine`：`maxSnapshotFileBytes` 与 `maxSnapshotBytes` 在复制/写入前拒绝超限文件或 checkpoint，不能留下半成品。
 - `service`：显式 `olderThanMs` 只清理超过时间阈值且不受 DAG head/ancestor 保护的节点；未提供阈值时行为与旧版本一致。
 - `service`：preview plan 必须绑定 session/checkpoint、在工作区漂移或重复消费时 fail closed，并覆盖 TTL 配置。

@@ -108,10 +108,21 @@ export class FallbackSnapshotEngine {
     }
   }
 
-  async restoreSelectedPaths(sessionId: string, checkpointId: string, paths: string[]): Promise<string[]> {
+  async restoreSelectedPaths(
+    sessionId: string,
+    checkpointId: string,
+    paths: string[],
+    options: { expectedCurrentTreeOid?: string; mode?: 'safe' | 'force' } = {},
+  ): Promise<string[]> {
     const normalized = [...new Set(paths.map(normalizeFallbackPath).filter(Boolean))];
     if (normalized.length === 0) throw new Error('At least one workspace path is required.');
     const snapshotDir = this.getCheckpointDir(sessionId, checkpointId);
+    if ((options.mode ?? 'safe') === 'safe' && options.expectedCurrentTreeOid) {
+      const currentTree = await this.inspectWorkspace();
+      if (currentTree !== options.expectedCurrentTreeOid) {
+        throw new Error(`Workspace changed after the latest checkpoint: expected ${options.expectedCurrentTreeOid}, observed ${currentTree}`);
+      }
+    }
     const raw = await fs.readFile(path.join(snapshotDir, 'manifest.json'), 'utf8');
     const manifest = parseManifest(raw);
     const filesDir = path.join(snapshotDir, 'files');

@@ -509,10 +509,16 @@ var FallbackSnapshotEngine = class {
       }
     }
   }
-  async restoreSelectedPaths(sessionId, checkpointId, paths) {
+  async restoreSelectedPaths(sessionId, checkpointId, paths, options = {}) {
     const normalized = [...new Set(paths.map(normalizeFallbackPath).filter(Boolean))];
     if (normalized.length === 0) throw new Error("At least one workspace path is required.");
     const snapshotDir = this.getCheckpointDir(sessionId, checkpointId);
+    if ((options.mode ?? "safe") === "safe" && options.expectedCurrentTreeOid) {
+      const currentTree = await this.inspectWorkspace();
+      if (currentTree !== options.expectedCurrentTreeOid) {
+        throw new Error(`Workspace changed after the latest checkpoint: expected ${options.expectedCurrentTreeOid}, observed ${currentTree}`);
+      }
+    }
     const raw = await fs2.readFile(path3.join(snapshotDir, "manifest.json"), "utf8");
     const manifest = parseManifest(raw);
     const filesDir = path3.join(snapshotDir, "files");
@@ -1167,7 +1173,10 @@ var TimeMachineService = class {
             expectedCurrentTreeOid: rescue?.gitTreeOid ?? current?.gitTreeOid
           });
         } else {
-          await this.fallbackEngine.restoreSelectedPaths(target.sessionState.sessionId, target.id, paths);
+          await this.fallbackEngine.restoreSelectedPaths(target.sessionState.sessionId, target.id, paths, {
+            mode: options.mode ?? this.config.restoreMode,
+            expectedCurrentTreeOid: rescue?.gitTreeOid ?? current?.gitTreeOid
+          });
         }
         const resultNode = await this.createTurnCheckpointUnlocked({
           sessionId,

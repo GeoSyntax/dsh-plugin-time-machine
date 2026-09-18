@@ -248,7 +248,10 @@ export class TimeMachineService {
             expectedCurrentTreeOid: rescue?.gitTreeOid ?? current?.gitTreeOid,
           });
         } else {
-          await this.fallbackEngine.restoreSelectedPaths(target.sessionState.sessionId, target.id, paths);
+          await this.fallbackEngine.restoreSelectedPaths(target.sessionState.sessionId, target.id, paths, {
+            mode: options.mode ?? this.config.restoreMode,
+            expectedCurrentTreeOid: rescue?.gitTreeOid ?? current?.gitTreeOid,
+          });
         }
         const resultNode = await this.createTurnCheckpointUnlocked({
           sessionId, turnIndex: current?.turnIndex ?? target.turnIndex,

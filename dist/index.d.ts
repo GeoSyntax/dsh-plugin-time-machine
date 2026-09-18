@@ -383,7 +383,10 @@ declare class FallbackSnapshotEngine {
     }>;
     inspectWorkspace(): Promise<string>;
     restoreSnapshot(sessionId: string, checkpointId: string): Promise<void>;
-    restoreSelectedPaths(sessionId: string, checkpointId: string, paths: string[]): Promise<string[]>;
+    restoreSelectedPaths(sessionId: string, checkpointId: string, paths: string[], options?: {
+        expectedCurrentTreeOid?: string;
+        mode?: 'safe' | 'force';
+    }): Promise<string[]>;
     private captureTree;
     private scanTree;
     private isPreserved;

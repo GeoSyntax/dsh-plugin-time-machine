@@ -91,6 +91,21 @@ describe('TimeMachineWebServer', () => {
     expect(blocked.status).toBe(403);
   });
 
+  it('exposes a read-only Agent-write ledger endpoint', async () => {
+    (service.config as any).enableAgentWriteLedger = true;
+    const checkpoint = await service.createTurnCheckpoint({
+      sessionId: 'ledger-web-session', turnIndex: 1, prompt: 'ledger', sessionState: { sessionId: 'ledger-web-session', messages: [] },
+    });
+    await fs.writeFile(path.join(tmpDir, 'ledger.txt'), 'agent\n', 'utf8');
+    await service.recordAgentWrite('ledger-web-session', checkpoint.id, { path: 'ledger.txt', operation: 'create' });
+    const response = await fetch(`http://localhost:${testPort}/api/agent-writes?sessionId=ledger-web-session&checkpoint=${encodeURIComponent(checkpoint.id)}`);
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.sessionId).toBe('ledger-web-session');
+    expect(body.checkpointId).toBe(checkpoint.id);
+    expect(body.writes).toEqual([expect.objectContaining({ path: 'ledger.txt', operation: 'create', sha256: expect.any(String) })]);
+  });
+
   it('exposes external compensation as a dry-run first and an explicit idempotent action', async () => {
     const sessionId = 'web-effects';
     const checkpoint = await service.createTurnCheckpoint({

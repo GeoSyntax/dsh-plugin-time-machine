@@ -38,6 +38,20 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
     });
 
     scope.commands.register({
+      name: 'tm-agent-writes',
+      description: 'Show verified Agent writes recorded for a checkpoint',
+      input: { hint: '<checkpoint>' },
+      handler: async ({ agent, rawInput }: CommandInvocationLike): Promise<CommandResult> => {
+        const checkpointId = rawInput.trim().split(/\s+/).filter(Boolean)[0];
+        if (!checkpointId) return { kind: 'error', text: 'Usage: /tm-agent-writes <checkpoint>' };
+        const writes = await service.getAgentWriteLedger(agent.session.id, checkpointId);
+        if (writes.length === 0) return { kind: 'success', text: `No verified Agent writes recorded for ${checkpointId}.` };
+        const lines = writes.map(item => `${item.operation ?? 'modify'} ${item.path} sha256=${item.sha256} (${new Date(item.recordedAt).toISOString()})`);
+        return { kind: 'success', text: `Verified Agent writes for ${checkpointId}:\n${lines.join('\n')}` };
+      },
+    });
+
+    scope.commands.register({
       name: 'tm-prune',
       description: 'Prune old non-head Time Machine checkpoints',
       input: { hint: '[keep-latest] [--older-than=<duration>] [--abandoned-branches] [--compact-history] [--repack-shadow]' },

@@ -45,7 +45,17 @@ describe('registered DSH time-machine commands', () => {
   });
 
   it('registers tm-tree, tm-fork, and tm-rewind handlers', () => {
-    expect(Object.keys(handlers)).toEqual(expect.arrayContaining(['tm-tree', 'tm-fork', 'tm-rewind', 'tm-quarantine-migrate', 'tm-external-compensate']));
+    expect(Object.keys(handlers)).toEqual(expect.arrayContaining(['tm-tree', 'tm-fork', 'tm-rewind', 'tm-agent-writes', 'tm-quarantine-migrate', 'tm-external-compensate']));
+  });
+
+  it('exposes a read-only Agent-write ledger view', async () => {
+    const checkpoint = await service.createTurnCheckpoint({
+      sessionId: 'ledger-cli-session', turnIndex: 1, prompt: 'ledger', sessionState: { sessionId: 'ledger-cli-session', messages: [] },
+    });
+    const result = await handlers['tm-agent-writes']({
+      agent: { session: { id: 'ledger-cli-session' } }, rawInput: checkpoint.id,
+    });
+    expect(result).toEqual({ kind: 'success', text: `No verified Agent writes recorded for ${checkpoint.id}.` });
   });
 
   it('runs tm-tree and tm-fork through the real service and session controller contract', async () => {

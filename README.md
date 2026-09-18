@@ -53,6 +53,7 @@ dsh plugin --profile web list --depth 0
 ```text
 /tm-tree
 /tm-storage
+/tm-agent-writes <checkpoint>
 /tm-prune [keep-latest] [--older-than=<7d|12h|30m>]
 /tm-prune [keep-latest] --repack-shadow
 /tm-quarantine-migrate <backup-key>
@@ -80,6 +81,7 @@ dsh plugin --profile web list --depth 0
 - **Shadow pack 维护:** `shadowStore: true` 时，显式传入 `--repack-shadow`（或 Web API `repackShadowObjects: true`）会仅根据 `refs/dsh-tm/*` 重建 shadow pack，并删除旧的不可达 pack；不会运行用户仓库的全局 GC。
 - **崩溃恢复:** rewind/fork/选择性恢复会写入 durable restore journal；插件下次启动时如果发现未完成操作，会先恢复 rescue checkpoint，再清理 journal。
 - **可验证的人工修改保留（显式 opt-in）:** 开启 `enableAgentWriteLedger` 后，插件会从 DSH 原生 `fs/observed` + `tools/result` 事件自动登记 `write`、`edit`、`str_replace_editor` 的成功写入；其他集成也可调用 `recordAgentWrite()` 登记路径和 SHA-256。`/tm-rewind --preserve-hand-edits` 只保留登记哈希已经变化的路径。未登记路径不会被猜测为人工修改，哈希缺失或账本损坏仍然 fail-closed。
+- **账本可审计:** CLI `/tm-agent-writes <checkpoint>` 与只读 `GET /api/agent-writes?sessionId=...&checkpoint=...` 暴露已验证的路径、操作、SHA-256 和时间戳，便于 UI 或审查工具在回滚前解释哪些内容由 Agent 写入。
 - **硬配额:** `maxSnapshots` 和 `maxStorageBytes` 默认关闭；启用后达到上限会安全拒绝新 checkpoint，不会静默删除历史。
 - **自动配额清理:** `autoPrune: true` 才会在普通 checkpoint 前尝试压缩旧节点；无法安全腾出空间时仍然拒绝 checkpoint，不会强行删除 current 或 branch head。
 - **自动年龄保留:** `retentionMaxAgeMs` 大于 0 时，普通 checkpoint 前会自动压缩超过该年龄的非 current、非 branch head 节点；默认关闭，内部 rescue checkpoint 不触发清理。

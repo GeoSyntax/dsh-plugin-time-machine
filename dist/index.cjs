@@ -3032,6 +3032,15 @@ var TimeMachineWebServer = class {
       res.end(JSON.stringify({ capabilities: await this.service.getCapabilities() }));
       return;
     }
+    if (pathname === "/api/agent-writes" && req.method === "GET") {
+      const sessionId = query.get("sessionId") || "default";
+      const checkpointId = query.get("checkpoint") || "";
+      if (!checkpointId) throw Object.assign(new Error("Missing checkpoint query parameter"), { code: "BAD_REQUEST" });
+      const writes = await this.service.getAgentWriteLedger(sessionId, checkpointId);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ sessionId, checkpointId, writes }));
+      return;
+    }
     if (pathname === "/api/diff" && req.method === "GET") {
       const sessionId = query.get("sessionId") || "default";
       const baseId = query.get("base") || "";
@@ -3283,6 +3292,20 @@ function registerCliCommands(ctx, service) {
       handler: async ({ agent }) => {
         const status = await service.getStorageStatus(agent.session.id);
         return { kind: "success", text: `Time Machine storage: ${formatBytes(status.bytes)} in ${status.files} files; ${status.checkpoints} checkpoints; ${status.pruneCandidates} safe leaf candidate(s).` };
+      }
+    });
+    scope.commands.register({
+      name: "tm-agent-writes",
+      description: "Show verified Agent writes recorded for a checkpoint",
+      input: { hint: "<checkpoint>" },
+      handler: async ({ agent, rawInput }) => {
+        const checkpointId = rawInput.trim().split(/\s+/).filter(Boolean)[0];
+        if (!checkpointId) return { kind: "error", text: "Usage: /tm-agent-writes <checkpoint>" };
+        const writes = await service.getAgentWriteLedger(agent.session.id, checkpointId);
+        if (writes.length === 0) return { kind: "success", text: `No verified Agent writes recorded for ${checkpointId}.` };
+        const lines = writes.map((item) => `${item.operation ?? "modify"} ${item.path} sha256=${item.sha256} (${new Date(item.recordedAt).toISOString()})`);
+        return { kind: "success", text: `Verified Agent writes for ${checkpointId}:
+${lines.join("\n")}` };
       }
     });
     scope.commands.register({

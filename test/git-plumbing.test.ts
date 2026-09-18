@@ -203,6 +203,24 @@ describe('GitPlumbingEngine', () => {
     expect(addCommands.some(([args]) => args.includes('.'))).toBe(true);
   });
 
+  it('keeps incremental capture enabled when protected paths are configured', async () => {
+    const protectedDir = path.join(tmpDir, '.protected');
+    await fs.mkdir(protectedDir, { recursive: true });
+    await fs.writeFile(path.join(tmpDir, 'tracked.txt'), 'v1\n', 'utf8');
+    await execAsync('git', ['add', '.'], { cwd: tmpDir });
+    await execAsync('git', ['commit', '-m', 'protected-path fixture'], { cwd: tmpDir });
+    const protectedEngine = new GitPlumbingEngine({ workDir: tmpDir, preservePaths: [protectedDir] });
+    const first = await protectedEngine.createSnapshot({ sessionId: 'protected-cache', checkpointId: 'one' });
+    await fs.writeFile(path.join(tmpDir, 'tracked.txt'), 'v2\n', 'utf8');
+    await fs.writeFile(path.join(protectedDir, 'runtime.json'), '{}\n', 'utf8');
+    const runGit = vi.spyOn(protectedEngine, 'runGit');
+    const second = await protectedEngine.createSnapshot({ sessionId: 'protected-cache', checkpointId: 'two', parentCommitOid: first.commitOid });
+
+    expect(second.treeOid).not.toBe(first.treeOid);
+    expect(runGit.mock.calls.filter(([args]) => args[0] === 'add').some(([args]) => args.includes('tracked.txt'))).toBe(true);
+    expect(second.changedFiles.map(item => item.path)).toContain('tracked.txt');
+  });
+
   it('fails closed when encryption is enabled for a legacy plaintext quarantine', async () => {
     const quarantineDir = path.join(tmpDir, '.quarantine');
     const key = 'legacy-backup';

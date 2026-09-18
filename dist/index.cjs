@@ -241,7 +241,7 @@ Reason: ${errorMsg}`);
         const root = await this.getRepoRoot();
         const status = await this.workspaceStatusSignature(root);
         const cached = status.cacheable && this.workspaceTreeCache?.signature === status.signature ? this.workspaceTreeCache.treeOid : void 0;
-        const incrementalBase = !cached && !enforceSnapshotLimits && this.preservePaths.length === 0 && this.workspaceTreeCache?.treeOid && this.workspaceTreeCache.controlSignature === status.controlSignature && status.changedPaths.length > 0 ? this.workspaceTreeCache.treeOid : void 0;
+        const incrementalBase = !cached && !enforceSnapshotLimits && this.workspaceTreeCache?.treeOid && this.workspaceTreeCache.controlSignature === status.controlSignature && status.changedPaths.length > 0 ? this.workspaceTreeCache.treeOid : void 0;
         const treeResult = cached ? { treeOid: cached, indexFile: void 0, omittedPaths: [] } : await this.writeWorkspaceTree(enforceSnapshotLimits, [], incrementalBase, incrementalBase ? status.changedPaths : []);
         const { treeOid, indexFile } = treeResult;
         try {
@@ -675,8 +675,10 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
             for (let offset = 0; offset < filesToIndex.length; offset += 128) {
               await this.runGit(["add", "-A", "--", ...filesToIndex.slice(offset, offset + 128)], env, root);
             }
-          } else if (changedPaths.length > 0 && protectedPaths.length === 0) {
-            const paths = changedPaths.map(normalizeGitPath).filter(Boolean);
+          } else if (changedPaths.length > 0) {
+            const paths = changedPaths.map(normalizeGitPath).filter(Boolean).filter((file) => !protectedPaths.some(
+              (protectedPath) => file === protectedPath || file.startsWith(`${protectedPath}/`)
+            ));
             for (let offset = 0; offset < paths.length; offset += 128) {
               await this.runGit(["add", "-A", "--", ...paths.slice(offset, offset + 128)], env, root);
             }

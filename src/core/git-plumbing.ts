@@ -264,7 +264,7 @@ export class GitPlumbingEngine {
     const cached = status.cacheable && this.workspaceTreeCache?.signature === status.signature
       ? this.workspaceTreeCache.treeOid
       : undefined;
-    const incrementalBase = !cached && !enforceSnapshotLimits && this.preservePaths.length === 0 && this.workspaceTreeCache?.treeOid
+    const incrementalBase = !cached && !enforceSnapshotLimits && this.workspaceTreeCache?.treeOid
       && this.workspaceTreeCache.controlSignature === status.controlSignature && status.changedPaths.length > 0
       ? this.workspaceTreeCache.treeOid
       : undefined;
@@ -760,12 +760,14 @@ export class GitPlumbingEngine {
         for (let offset = 0; offset < filesToIndex.length; offset += 128) {
           await this.runGit(['add', '-A', '--', ...filesToIndex.slice(offset, offset + 128)], env, root);
         }
-      } else if (changedPaths.length > 0 && protectedPaths.length === 0) {
+      } else if (changedPaths.length > 0) {
         // Incremental safe path: start from the last complete managed tree and
         // stage only paths Git reported as changed. Porcelain status still
         // enumerates every changed path, so unchanged tree entries are never
         // guessed or silently omitted.
-        const paths = changedPaths.map(normalizeGitPath).filter(Boolean);
+        const paths = changedPaths.map(normalizeGitPath).filter(Boolean).filter(file => !protectedPaths.some(
+          protectedPath => file === protectedPath || file.startsWith(`${protectedPath}/`),
+        ));
         for (let offset = 0; offset < paths.length; offset += 128) {
           await this.runGit(['add', '-A', '--', ...paths.slice(offset, offset + 128)], env, root);
         }

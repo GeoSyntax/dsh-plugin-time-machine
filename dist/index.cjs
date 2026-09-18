@@ -3500,7 +3500,7 @@ var Config = import_schemastery.default.object({
 });
 function apply(ctx, config = {}) {
   const workDir = import_node_path7.default.resolve(process.cwd());
-  const service = new TimeMachineService({ workDir, config });
+  const service = new TimeMachineService({ workDir, storageDir: config.storageDir, config });
   ctx.provide("timeMachine", service);
   registerCliCommands(ctx, service);
   if (config.enableWebUI !== false) {
@@ -3524,39 +3524,63 @@ function apply(ctx, config = {}) {
   const checkpoints = /* @__PURE__ */ new Map();
   const observedWrites = /* @__PURE__ */ new Map();
   const pendingLedgerWrites = /* @__PURE__ */ new Map();
+  if (service.config.enableAgentWriteLedger) {
+    ctx.on("fs/observed", (target, _observation, actor) => {
+      const execution = actor;
+      const session = execution?.agent?.session;
+      const sessionId = session?.id;
+      const turn = session ? currentSessionTurn(session) : void 0;
+      if (!sessionId || !Number.isSafeInteger(turn) || !execution?.callId || !target?.displayPath) return;
+      if (!isNativeWriteTool(execution.name)) return;
+      const key = `${sessionId}\0${execution.callId}`;
+      const existing = observedWrites.get(key) ?? { sessionId, turn, paths: /* @__PURE__ */ new Set() };
+      existing.paths.add(target.displayPath);
+      observedWrites.set(key, existing);
+    });
+    ctx.on("tools/result", (execution, result) => {
+      const key = `${execution.agent?.session?.id ?? ""}\0${execution.callId}`;
+      const observed = observedWrites.get(key);
+      observedWrites.delete(key);
+      if (!observed || result?.isError === true) return;
+      const checkpointId = checkpoints.get(checkpointKey(observed.sessionId, observed.turn));
+      if (!checkpointId) return;
+      const turnKey = checkpointKey(observed.sessionId, observed.turn);
+      let chain = pendingLedgerWrites.get(turnKey) ?? Promise.resolve();
+      for (const displayPath of observed.paths) {
+        const relative = workspaceRelativePath(workDir, displayPath);
+        if (!relative) continue;
+        chain = chain.then(() => service.recordAgentWrite(observed.sessionId, checkpointId, { path: relative, operation: "modify" }).then(() => void 0).catch((error) => {
+          ctx.logger.warn(`[time-machine] could not record Agent write ${relative}: ${errorMessage(error)}`);
+        }));
+      }
+      pendingLedgerWrites.set(turnKey, chain);
+    });
+  }
+  ctx.on("session/event", (session, event) => {
+    if (event.type !== "turn/end") return;
+    const turn = event.data.turn;
+    if (!Number.isSafeInteger(turn)) return;
+    const key = checkpointKey(session.id, turn);
+    const checkpointId = checkpoints.get(key);
+    if (!checkpointId) return;
+    checkpoints.delete(key);
+    const reason = asRecord(event.data.reason);
+    const kind = typeof reason?.kind === "string" ? reason.kind : "error";
+    const failure = asRecord(reason?.error);
+    const failedTools = collectFailedTools(getEvents(session), turn);
+    const ledgerWrites = pendingLedgerWrites.get(key) ?? Promise.resolve();
+    pendingLedgerWrites.delete(key);
+    void ledgerWrites.then(() => service.finalizeTurnCheckpoint({
+      sessionId: session.id,
+      checkpointId,
+      status: kind === "completed" ? "success" : kind === "aborted" || kind === "interrupted" ? "aborted" : "failed",
+      errorMessage: typeof failure?.message === "string" ? failure.message : kind === "completed" ? void 0 : `Turn ended: ${kind}`,
+      failedTools: failedTools.length > 0 ? failedTools : void 0
+    })).catch((error) => {
+      ctx.logger.error(`[time-machine] could not finalize ${checkpointId}: ${errorMessage(error)}`);
+    });
+  });
   ctx.inject(["agents", "sessions"], (scope) => {
-    if (service.config.enableAgentWriteLedger) {
-      scope.on("fs/observed", (target, _observation, actor) => {
-        const execution = actor;
-        const session = execution?.agent?.session;
-        const sessionId = session?.id;
-        const turn = session ? currentSessionTurn(session) : void 0;
-        if (!sessionId || !Number.isSafeInteger(turn) || !execution?.callId || !target?.displayPath) return;
-        if (!isNativeWriteTool(execution.name)) return;
-        const key = `${sessionId}\0${execution.callId}`;
-        const existing = observedWrites.get(key) ?? { sessionId, turn, paths: /* @__PURE__ */ new Set() };
-        existing.paths.add(target.displayPath);
-        observedWrites.set(key, existing);
-      });
-      scope.on("tools/result", (execution, result) => {
-        const key = `${execution.agent?.session?.id ?? ""}\0${execution.callId}`;
-        const observed = observedWrites.get(key);
-        observedWrites.delete(key);
-        if (!observed || result?.isError === true) return;
-        const checkpointId = checkpoints.get(checkpointKey(observed.sessionId, observed.turn));
-        if (!checkpointId) return;
-        const turnKey = checkpointKey(observed.sessionId, observed.turn);
-        let chain = pendingLedgerWrites.get(turnKey) ?? Promise.resolve();
-        for (const displayPath of observed.paths) {
-          const relative = workspaceRelativePath(workDir, displayPath);
-          if (!relative) continue;
-          chain = chain.then(() => service.recordAgentWrite(observed.sessionId, checkpointId, { path: relative, operation: "modify" }).then(() => void 0).catch((error) => {
-            scope.logger.warn(`[time-machine] could not record Agent write ${relative}: ${errorMessage(error)}`);
-          }));
-        }
-        pendingLedgerWrites.set(turnKey, chain);
-      });
-    }
     scope.on("agent/pre-step", async ({ agent, turn, step }, next) => {
       if (!service.config.autoSnapshot || step !== 1) return next();
       const session = agent.session;
@@ -3591,30 +3615,6 @@ function apply(ctx, config = {}) {
       }
       return next();
     }, { prepend: true });
-    scope.on("session/event", (session, event) => {
-      if (event.type !== "turn/end") return;
-      const turn = event.data.turn;
-      if (!Number.isSafeInteger(turn)) return;
-      const key = checkpointKey(session.id, turn);
-      const checkpointId = checkpoints.get(key);
-      if (!checkpointId) return;
-      checkpoints.delete(key);
-      const reason = asRecord(event.data.reason);
-      const kind = typeof reason?.kind === "string" ? reason.kind : "error";
-      const failure = asRecord(reason?.error);
-      const failedTools = collectFailedTools(getEvents(session), turn);
-      const ledgerWrites = pendingLedgerWrites.get(key) ?? Promise.resolve();
-      pendingLedgerWrites.delete(key);
-      void ledgerWrites.then(() => service.finalizeTurnCheckpoint({
-        sessionId: session.id,
-        checkpointId,
-        status: kind === "completed" ? "success" : kind === "aborted" || kind === "interrupted" ? "aborted" : "failed",
-        errorMessage: typeof failure?.message === "string" ? failure.message : kind === "completed" ? void 0 : `Turn ended: ${kind}`,
-        failedTools: failedTools.length > 0 ? failedTools : void 0
-      })).catch((error) => {
-        scope.logger.error(`[time-machine] could not finalize ${checkpointId}: ${errorMessage(error)}`);
-      });
-    });
   });
   ctx.logger.info(import_picocolors2.default.green(`[${name}] active; restore mode=${service.config.restoreMode}`));
 }

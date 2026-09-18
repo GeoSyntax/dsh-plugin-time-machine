@@ -16,6 +16,7 @@ supported only when it is covered by the current implementation and tests.
 | External side-effect ledger | Adapter declarations persist reversibility, compensation and failure semantics; named adapters support dry-run, explicit execution and idempotency fences; missing adapters are surfaced as `adapterAvailable: false`; fork reflection still warns | Product-specific | Varies | Usually absent |
 | Selective file restore | `tm-restore-files`, Web API | Yes | Yes | Varies |
 | Conversation/session alignment | DSH `sessionController` fork | Product-specific | Product-specific | Usually undo/redo or same window |
+| Agent-write ledger / hand-edit preservation | No per-tool write ledger; safe mode refuses drift, merge is explicit and path-conflict based | Hermes records hashes of agent writes and keeps later hand-edits by default; `--all` opts into overwrite | Product-specific | Varies |
 | DAG branches | Yes, persistent | No user-facing DAG | Ledger history | Usually linear |
 | Failed-tool reflection | Yes | No equivalent | No equivalent | No equivalent |
 | Rescue/compensation | Yes | Snapshot-oriented | Journal-oriented | Varies |
@@ -54,6 +55,16 @@ message-anchored rewind action. We should adopt those ideas where they fit
 without copying their storage format. It also offers an explicit Git-only
 three-way merge restore for non-conflicting workspace drift; safe mode remains
 the default and still fails closed on any drift.
+
+Hermes currently offers a different hand-edit contract: its agent-write ledger
+records content hashes for successful file writes and skips files whose current
+contents no longer match, while `/rollback --all` opts into a full overwrite.
+Time Machine intentionally does not infer authorship from file contents; safe
+restore rejects drift and explicit Git merge reports path conflicts. This is
+more conservative for an untrusted multi-process workspace, but less convenient
+for users who expect automatic preservation of hand-edits. See the
+[Hermes checkpoint documentation](https://hermes-agent.nousresearch.com/docs/user-guide/checkpoints-and-rollback)
+for that behavior.
 
 Time Machine now offers a deliberately explicit partial-capture mode for
 compatibility with Change Ledger's oversized-file behavior. It is disabled by

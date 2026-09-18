@@ -66,6 +66,20 @@ The host slot and the companion-package boundary are documented in
 [DSH_NATIVE_UI.md](./DSH_NATIVE_UI.md); the service package intentionally does not
 claim this client surface until the separate Web package exists.
 
+### Agent-write ledger for hand-edit preservation
+
+Hermes now records hashes for successful agent writes and preserves later user
+edits during ordinary rollback. Time Machine currently uses drift rejection plus
+explicit Git merge instead, which is safer but requires the user to review
+conflicts. A future ledger must be attached to checkpoint boundaries, survive
+restart, distinguish external edits from Agent mutations, and never silently
+overwrite a path when the author is ambiguous.
+
+**Acceptance:** an opt-in mode can restore Agent-owned paths while preserving
+verified post-checkpoint hand-edits, reports skipped paths and hash evidence,
+supports an explicit full-overwrite escape hatch, and remains fail-closed when
+the ledger is missing or corrupted.
+
 ### Explicit partial-capture mode (opt-in only) — implemented
 
 Community users can opt into Change Ledger-style oversized-file skipping with

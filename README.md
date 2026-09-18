@@ -21,6 +21,27 @@ dsh --profile web --dump-config
 dsh --profile web
 ```
 
+如果使用仓库源码安装，请将以下内容保存为该 profile 的
+`cordis.patch.yml`（插件目录来自上面的 GitHub dependency）：
+
+```yaml
+plugins:
+  - id: time-machine
+    package: dsh-plugin-time-machine
+    config:
+      autoSnapshot: true
+      restoreMode: safe
+      enableWebUI: true
+```
+
+重启 DSH 后，可用下面的命令确认插件已加载：
+
+```bash
+dsh plugin --profile web list --depth 0
+```
+
+问题背景、威胁模型和明确的 non-goals 见 [`docs/PROBLEM.md`](docs/PROBLEM.md)。
+
 在 DSH 会话中使用：
 
 ```text

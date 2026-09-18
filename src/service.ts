@@ -770,6 +770,8 @@ export class TimeMachineService {
     partialSnapshots: boolean;
     /** Safe dirty-path overlay is available for normal Git workspaces. */
     incrementalCapture: boolean;
+    /** Current restore semantics; no automatic authorship inference is performed. */
+    handEditPolicy: 'reject-drift';
     externalEffectLedger: true;
     externalEffectAdapters: string[];
     workspaceIsolation: 'shared-lock';
@@ -802,6 +804,7 @@ export class TimeMachineService {
       quarantineMigration: git && Boolean(this.config.quarantineEncryptionKeyEnv),
       partialSnapshots: git && this.config.allowPartialSnapshots && (this.config.maxSnapshotFileBytes > 0 || this.config.maxSnapshotBytes > 0),
       incrementalCapture: usable && this.config.maxSnapshotFileBytes === 0 && this.config.maxSnapshotBytes === 0,
+      handEditPolicy: 'reject-drift',
       externalEffectLedger: true,
       externalEffectAdapters: this.listExternalEffectAdapters(),
       workspaceIsolation: 'shared-lock',

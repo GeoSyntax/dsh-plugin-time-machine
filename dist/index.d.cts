@@ -448,6 +448,8 @@ declare class TimeMachineService {
         partialSnapshots: boolean;
         /** Safe dirty-path overlay is available for normal Git workspaces. */
         incrementalCapture: boolean;
+        /** Current restore semantics; no automatic authorship inference is performed. */
+        handEditPolicy: 'reject-drift';
         externalEffectLedger: true;
         externalEffectAdapters: string[];
         workspaceIsolation: 'shared-lock';

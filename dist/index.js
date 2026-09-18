@@ -2483,6 +2483,7 @@ var TimeMachineService = class {
       quarantineMigration: git && Boolean(this.config.quarantineEncryptionKeyEnv),
       partialSnapshots: git && this.config.allowPartialSnapshots && (this.config.maxSnapshotFileBytes > 0 || this.config.maxSnapshotBytes > 0),
       incrementalCapture: usable && this.config.maxSnapshotFileBytes === 0 && this.config.maxSnapshotBytes === 0,
+      handEditPolicy: "reject-drift",
       externalEffectLedger: true,
       externalEffectAdapters: this.listExternalEffectAdapters(),
       workspaceIsolation: "shared-lock",

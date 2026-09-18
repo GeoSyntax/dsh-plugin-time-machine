@@ -102,7 +102,7 @@ dsh --profile web
 ```
 
 Web dashboard 只绑定 loopback，并拒绝非本机 Host 和跨 origin 请求。`/tm-rewind` 与 `/tm-fork` 需要宿主提供 `sessionController`，否则插件会拒绝只恢复文件的危险降级行为。
-集成方可读取带有 `version: 1` 的 `GET /api/capabilities`，提前判断当前工作区是否支持 Git 三方 merge、selective restore、shadow store、quarantine 加密/迁移、外部副作用账本、增量捕获和已注册的 compensation adapters，以及 sparse checkout/submodule/进行中操作限制；返回的 `policies` 还公开 restore 模式、快照/存储/quarantine 配额、自动保留年龄和锁等待上限，便于 UI 在操作前解释边界；`workspaceIsolation: shared-lock` 明确表示当前是共享工作区加锁，不是独立 worktree/container。
+集成方可读取带有 `version: 1` 的 `GET /api/capabilities`，提前判断当前工作区是否支持 Git 三方 merge、selective restore、shadow store、quarantine 加密/迁移、外部副作用账本、增量捕获和已注册的 compensation adapters，以及 sparse checkout/submodule/进行中操作限制；`handEditPolicy: reject-drift` 明确表示当前不会猜测文件作者，漂移默认拒绝，需显式 merge/force；返回的 `policies` 还公开 restore 模式、快照/存储/quarantine 配额、自动保留年龄和锁等待上限，便于 UI 在操作前解释边界；`workspaceIsolation: shared-lock` 明确表示当前是共享工作区加锁，不是独立 worktree/container。
 
 ## Verification
 

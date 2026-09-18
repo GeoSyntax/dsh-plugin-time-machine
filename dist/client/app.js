@@ -25,7 +25,13 @@ const diffModalClose = document.getElementById('diff-modal-close');
 async function requestJson(url, options) {
   const response = await fetch(url, options);
   const body = await response.json();
-  if (!response.ok || body.error) throw new Error(body.error || `HTTP ${response.status}`);
+  if (!response.ok || body.error) {
+    const error = new Error(body.error || `HTTP ${response.status}`);
+    if (body.code) error.code = body.code;
+    if (body.details) error.details = body.details;
+    if (body.capabilities) error.capabilities = body.capabilities;
+    throw error;
+  }
   return body;
 }
 

@@ -57,7 +57,13 @@ export class TimeMachineWebServer {
         } catch (err: any) {
           const status = err?.code === 'BAD_REQUEST' ? 400 : err?.code === 'RESTORE_PLAN_INVALID' ? 409 : err?.code === 'UNSUPPORTED_WORKSPACE_STATE' ? 422 : err?.code === 'SNAPSHOT_SIZE_LIMIT' ? 413 : 500;
           res.writeHead(status, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: err.message || 'Internal Server Error' }));
+          res.end(JSON.stringify({
+            error: err.message || 'Internal Server Error',
+            ...(typeof err.code === 'string' ? { code: err.code } : {}),
+            ...(err.details && typeof err.details === 'object' ? { details: err.details } : {}),
+            ...(Array.isArray(err.paths) ? { paths: err.paths } : {}),
+            ...(err.capabilities && typeof err.capabilities === 'object' ? { capabilities: err.capabilities } : {}),
+          }));
         }
       });
 

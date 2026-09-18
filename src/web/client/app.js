@@ -224,7 +224,11 @@ async function triggerRewind(nodeId, turnIndex) {
   }
   const files = (preview.diffs || []).slice(0, 12).map(diff => `${diff.status} ${diff.file}`).join('\n');
   const more = (preview.diffs || []).length > 12 ? `\n…and ${(preview.diffs || []).length - 12} more` : '';
-  const warning = preview.requiresForce ? '\n\n⚠ Workspace drift detected; safe restore will refuse to overwrite it.' : '';
+  const conflicts = (preview.conflictingPaths || []).slice(0, 12).join('\n');
+  const conflictMore = (preview.conflictingPaths || []).length > 12 ? `\n…and ${(preview.conflictingPaths || []).length - 12} more` : '';
+  const warning = preview.requiresForce
+    ? `\n\n⚠ Workspace drift detected; safe restore will refuse to overwrite it.\nConflicts:\n${conflicts || '(unavailable)'}${conflictMore}`
+    : '';
   const confirmed = confirm(
     `Rewind to Turn #${turnIndex}?\n\nPlanned file changes:\n${files || '(none)'}${more}${warning}\n\nA rescue point is created first.`,
   );

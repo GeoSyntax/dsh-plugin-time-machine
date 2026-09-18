@@ -118,6 +118,8 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
     });
 
     await fs.writeFile(path.join(tmpDir, 'manual.txt'), 'user edit\n', 'utf8');
+    const driftPreview = await service.previewRestore(sessionId, first.id);
+    expect(driftPreview.conflictingPaths).toContain('manual.txt');
     await expect(service.rewindToCheckpoint(sessionId, first.id)).rejects.toMatchObject({ code: 'WORKSPACE_DRIFT' });
     await fs.rm(path.join(tmpDir, 'manual.txt'));
 
@@ -149,6 +151,7 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
     expect(preview.currentCheckpointId).toBe(second.id);
     expect(preview.checkpointId).toBe(first.id);
     expect(preview.diffs.some(diff => diff.file === 'preview.txt')).toBe(true);
+    expect(preview.conflictingPaths).toEqual([]);
     expect(preview.requiresForce).toBe(false);
     expect(await fs.readFile(file, 'utf8')).toBe(before);
     expect((await service.getDAGManager(sessionId)).tree.currentCheckpointId).toBe(second.id);

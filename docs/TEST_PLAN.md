@@ -21,7 +21,7 @@
 
 ### P1 应通过
 
-- Web Dashboard 的 DAG、Diff、Rewind、Fork API 与 CLI 命令行为一致。
+- Web Dashboard 的 DAG、Diff、Rewind、Fork API 与 CLI 命令行为一致，并显示 safe restore 的冲突路径。
 - Git 与非 Git fallback 的核心语义一致。
 - Windows、Linux、Node 22、Node 24 的构建和核心行为一致。
 - 长会话、重复 checkpoint、并发操作和异常中断不会损坏 DAG 元数据。

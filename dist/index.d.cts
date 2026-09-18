@@ -125,6 +125,8 @@ interface RestorePreview {
     targetIgnoredPaths: string[];
     ignoredPathsToDelete: string[];
     diffs: DiffResult[];
+    /** Paths changed after the active checkpoint that make safe restore refuse overwrite. */
+    conflictingPaths: string[];
     workspaceDrifted: boolean;
     requiresForce: boolean;
 }

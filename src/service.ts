@@ -436,6 +436,13 @@ export class TimeMachineService {
         }));
       const expectedTree = current?.settledGitTreeOid ?? current?.gitTreeOid;
       const expectedIgnored = current?.settledIgnoredPaths ?? current?.ignoredPaths ?? [];
+      const driftDiffs = isGit && current && expectedTree && currentState.treeOid !== expectedTree
+        ? await this.gitEngine.getDiffBetween(expectedTree, currentState.treeOid)
+        : [];
+      const conflictingPaths = [...new Set([
+        ...driftDiffs.map(diff => diff.file),
+        ...symmetricDifference(expectedIgnored, currentState.ignoredPaths).map(item => `(ignored) ${item}`),
+      ])].sort();
       const workspaceDrifted = Boolean(current && (
         currentState.treeOid !== expectedTree || !sameStrings(currentState.ignoredPaths, expectedIgnored)
       ));
@@ -449,6 +456,7 @@ export class TimeMachineService {
         targetIgnoredPaths,
         ignoredPathsToDelete: currentState.ignoredPaths.filter(item => !targetIgnoredPaths.includes(item)),
         diffs,
+        conflictingPaths,
         workspaceDrifted,
         requiresForce: workspaceDrifted,
       };
@@ -749,6 +757,12 @@ function cloneJson<T>(value: T): T {
 
 function sameStrings(left: string[], right: string[]): boolean {
   return left.length === right.length && left.every((item, index) => item === right[index]);
+}
+
+function symmetricDifference(left: string[], right: string[]): string[] {
+  const rightSet = new Set(right);
+  const leftSet = new Set(left);
+  return [...left.filter(item => !rightSet.has(item)), ...right.filter(item => !leftSet.has(item))];
 }
 
 async function directoryBytes(root: string): Promise<number> {

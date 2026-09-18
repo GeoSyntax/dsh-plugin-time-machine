@@ -1,40 +1,34 @@
 # Changelog
 
-本项目遵循 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)；pre-1.0 版本可能包含存储格式调整。
-
-## [Unreleased]
+## 0.2.0 — 2026-09-19
 
 ### Added
 
-- GitHub 社区协作、CI、安全报告与贡献文档。
-- 可选 shadow object store、loose-object 回收、配额治理、历史压缩和 durable restore journal。
-- 显式 `--repack-shadow` 私有 pack 重建，避免 shadow packed objects 长期残留。
-- prune 时清理已不再被 DAG 引用的 ignored quarantine，避免 rescue 备份孤儿残留。
-- 可选 `maxQuarantineBytes` 硬上限，超过时以 `QUARANTINE_QUOTA_EXCEEDED` 拒绝 ignored 备份操作。
-- 跨进程工作区锁，避免多个 DSH 实例并发覆盖同一工作区。
+- Git plumbing snapshots with isolated indexes, DAG branches, rescue points,
+  interrupted-restore journals, and non-Git fallback snapshots.
+- Safe, merge, force, and selective restore flows with single-use preview plans.
+- Orphan-file cleanup, ignored-file quarantine, optional AES-GCM quarantine
+  encryption, and explicit legacy quarantine migration.
+- Snapshot/storage quotas, explicit and automatic retention, shadow object store
+  maintenance, and cross-process workspace locking.
+- Safe incremental dirty-path capture for large tracked workspaces, fenced by
+  Git branch/HEAD control-plane identity.
+- Partial snapshots as an explicit opt-in with persisted `omittedPaths`.
+- External-effect ledger with dry-run compensation adapters, idempotency fences,
+  unknown-outcome persistence, and structured unavailable-adapter errors.
+- Versioned runtime capability discovery through `GET /api/capabilities`.
+- CLI, Web API, Dashboard, DSH source smoke tests, cross-platform CI, and
+  machine-readable benchmark output.
 
-## [0.2.0] - 2026-09-18
+### Safety boundaries
 
-### Added
+- `handEditPolicy` is currently `reject-drift`: the core does not infer whether
+  a changed path belongs to the Agent or a user.
+- `workspaceIsolation` is `shared-lock`, not an independent worktree or
+  container.
+- `shadowStoreEncryption` and native DSH message-action UI are not implemented.
+- Database, network, process, and cloud side effects require explicit external
+  adapters; filesystem restore never claims to undo them.
 
-- DSH `agent/pre-step` / `session/event` 生命周期接入与官方 Session fork 协调。
-- Git plumbing 与普通目录双后端、DAG 分支、Reflection Advisor 和 loopback Web UI。
-- Safe restore、rescue compensation、ignored quarantine、FIFO mutation lock 与原子 DAG 发布。
-
-### Changed
-
-- 命令统一使用 `/tm-*` 前缀。
-- 文档修正 DSH、Hermes v2 与现有社区插件的真实能力边界。
-
-### Security
-
-- 隔离真实 Git index，校验 Host/Origin，限制 CSP，并避免动态 `innerHTML`。
-
-## [0.1.0] - 2026-09-17
-
-### Added
-
-- 初始概念验证。
-
-[Unreleased]: https://github.com/GeoSyntax/dsh-plugin-time-machine/compare/v0.2.0...HEAD
-[0.2.0]: https://github.com/GeoSyntax/dsh-plugin-time-machine/releases/tag/v0.2.0
+See [README.md](./README.md), [docs/COMPARISON.md](./docs/COMPARISON.md), and
+[docs/ROADMAP.md](./docs/ROADMAP.md) for configuration and upgrade guidance.

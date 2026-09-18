@@ -16,7 +16,8 @@
   "files": [
     "dist",
     "cordis.patch.yml",
-    "DESIGN.md"
+    "DESIGN.md",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build": "tsup && node -e \"const fs = require('fs'); fs.cpSync('src/web/client', 'dist/client', { recursive: true });\"",

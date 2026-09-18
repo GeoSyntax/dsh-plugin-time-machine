@@ -16,6 +16,11 @@ Each `CheckpointNode` records a parent, logical branch, pre-turn workspace objec
 - `gitTreeOid` / `ignoredPaths`: state to restore;
 - `settledGitTreeOid` / `settledIgnoredPaths`: state expected after the turn, used to detect later hand edits.
 
+Integrations may attach `externalEffects` declarations to a node through
+`recordExternalEffect()`. These records describe mutations in databases,
+networks, processes, or cloud systems; they are persisted and surfaced in fork
+reflection, but the core never executes compensation implicitly.
+
 DAG mutations and workspace mutations are serialized per configured workspace. DAG files are published by writing a unique temporary file and renaming it into place.
 
 ## Restore protocol
@@ -62,6 +67,7 @@ The shadow store is opt-in. Loose unreachable objects are reclaimed after plugin
 | DOM XSS from checkpoint metadata | Dashboard builds nodes with `textContent`; no dynamic `innerHTML` or inline event handlers. |
 | Workspace/session split-brain | Mutating UI/commands require `sessionController`; session-fork failure triggers rescue compensation. |
 | Concurrent restore/create races | Keyed FIFO mutex plus a cross-process workspace lock serializes state-changing operations. |
+| False belief that file restore undoes external mutations | External-effect records require adapter/failure semantics and generate fork warnings; no implicit compensation is attempted. |
 
 ### Accepted risks
 
@@ -72,6 +78,7 @@ The shadow store is opt-in. Loose unreachable objects are reclaimed after plugin
 - One plugin instance currently owns one configured workspace. Sessions with a different `cwd` are skipped rather than routed incorrectly.
 - Packed shadow objects are not repacked automatically; users must opt in to `--repack-shadow`, and shared-object mode still does not run repository-wide GC.
 - The lock prevents concurrent mutation but does not provide separate worktrees for multiple Agents.
+- External-effect declarations are an audit/reflection contract, not a transaction log: adapters still own authentication, idempotency, compensation execution, and verification.
 
 ## Change history
 

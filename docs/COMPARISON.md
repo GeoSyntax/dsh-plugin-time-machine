@@ -18,7 +18,7 @@ supported only when it is covered by the current implementation and tests.
 | Storage quotas and pruning | Explicit status, conservative prune, explicit history compaction, optional abandoned-branch prune, opt-in hard guards | Yes | Yes | Varies |
 | Durable interrupted-restore journal | Yes; startup restores rescue checkpoint | Store recovery | Yes | Varies |
 | Independent shadow store | Opt-in `shadowStore: true`; loose GC plus explicit private-pack repack | Yes | Yes | Usually local backups |
-| Cross-process workspace lock | Yes; bounded wait with stale-owner recovery | Product-specific | Usually process-local | Usually unavailable |
+| Cross-process workspace lock | Yes; bounded wait with stale-owner recovery | Product-specific | Change Ledger documents active-session blocking and Git-operation fences | Usually unavailable |
 
 ## Choosing the right tool
 
@@ -38,11 +38,23 @@ workspace-only; it restores selected paths, keeps the current conversation
 messages, and records rescue/result checkpoints instead of pretending the
 conversation was rewound.
 
-The remaining roadmap is safe migration tooling around shadow storage and true
-multi-agent worktree isolation. The cross-process lock prevents concurrent mutation, but it
-does not create separate workspaces. Quota-driven compaction is opt-in via `autoPrune`; restore
-journals are durable and replayed on startup. Pruning and history compaction do
-not run repository-wide Git GC.
+The comparison is deliberately not a claim that Time Machine is ahead of every
+peer. In particular, the current Change Ledger implementation has several
+production-hardening features that are still on our roadmap: expiring,
+session-bound restore plans; explicit Git HEAD/branch/in-progress-operation
+fences; sparse-checkout and submodule policy; unsupported-file and per-file size
+reporting; path-identity caches for large workspaces; and a host-native,
+message-anchored rewind action. We should adopt those ideas where they fit
+without copying their storage format.
+
+Time Machine's remaining boundaries are also important: the cross-process lock
+prevents concurrent mutation but does not create separate worktrees or
+containers; restore is snapshot replacement rather than a three-way merge; and
+database, network, process, cloud, and other external side effects are outside
+the workspace snapshot. Quota-driven compaction is opt-in via `autoPrune`;
+restore journals are durable and replayed on startup; pruning and history
+compaction do not run repository-wide Git GC. Shadow-store encryption and
+age-based expiration are not implemented yet.
 
 Further reading:
 

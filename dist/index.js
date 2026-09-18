@@ -1981,6 +1981,7 @@ var TimeMachineService = class {
       mergeRestore: usable,
       selectiveRestore: usable || !git,
       shadowStore: git && this.config.shadowStore,
+      workspaceIsolation: "shared-lock",
       workspace
     };
   }

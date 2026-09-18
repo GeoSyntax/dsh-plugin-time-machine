@@ -607,6 +607,7 @@ export class TimeMachineService {
     mergeRestore: boolean;
     selectiveRestore: boolean;
     shadowStore: boolean;
+    workspaceIsolation: 'shared-lock';
     workspace: { sparseCheckout: boolean; submodulePaths: string[]; inProgressOperation: string | null };
   }> {
     const git = await this.gitEngine.isGitRepo();
@@ -620,6 +621,7 @@ export class TimeMachineService {
       mergeRestore: usable,
       selectiveRestore: usable || !git,
       shadowStore: git && this.config.shadowStore,
+      workspaceIsolation: 'shared-lock',
       workspace,
     };
   }

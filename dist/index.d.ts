@@ -354,6 +354,7 @@ declare class TimeMachineService {
         mergeRestore: boolean;
         selectiveRestore: boolean;
         shadowStore: boolean;
+        workspaceIsolation: 'shared-lock';
         workspace: {
             sparseCheckout: boolean;
             submodulePaths: string[];

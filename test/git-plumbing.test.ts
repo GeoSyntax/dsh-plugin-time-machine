@@ -93,4 +93,17 @@ describe('GitPlumbingEngine', () => {
     }
     expect(file2Exists).toBe(false);
   });
+
+  it('should exclude plugin storage from every temporary tree', async () => {
+    const storageDir = path.join(tmpDir, '.dsh-tm');
+    await fs.mkdir(storageDir, { recursive: true });
+    await fs.writeFile(path.join(tmpDir, 'app.ts'), 'v1\n', 'utf-8');
+    engine = new GitPlumbingEngine({ workDir: tmpDir, preservePaths: [storageDir] });
+
+    const first = await engine.createSnapshot({ sessionId: 'storage', checkpointId: 'first' });
+    await fs.writeFile(path.join(storageDir, 'dag.json'), '{"mutated":true}\n', 'utf-8');
+    const second = await engine.inspectWorkspace();
+
+    expect(second.treeOid).toBe(first.treeOid);
+  });
 });

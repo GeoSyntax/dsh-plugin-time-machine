@@ -263,8 +263,13 @@ Reason: ${errorMsg}`);
           } catch {
             await this.runGit(["read-tree", "--empty"], env, root);
           }
-          await this.runGit(["add", "-A", "--", "."], env, root);
-          for (const relative of this.protectedRepoPaths(root)) {
+          const protectedPaths = this.protectedRepoPaths(root);
+          const addArgs = ["add", "-A", "--", "."];
+          for (const relative of protectedPaths) {
+            addArgs.push(`:(exclude)${relative}`, `:(exclude)${relative}/**`);
+          }
+          await this.runGit(addArgs, env, root);
+          for (const relative of protectedPaths) {
             await this.runGit(["rm", "-r", "--cached", "--ignore-unmatch", "--", relative], env, root);
           }
           const { stdout } = await this.runGit(["write-tree"], env, root);

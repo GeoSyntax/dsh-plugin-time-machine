@@ -252,8 +252,16 @@ export class GitPlumbingEngine {
       } catch {
         await this.runGit(['read-tree', '--empty'], env, root);
       }
-      await this.runGit(['add', '-A', '--', '.'], env, root);
-      for (const relative of this.protectedRepoPaths(root)) {
+      const protectedPaths = this.protectedRepoPaths(root);
+      const addArgs = ['add', '-A', '--', '.'];
+      for (const relative of protectedPaths) {
+        // Exclude untracked storage before it can enter the temporary index.
+        // Git 2.55 on Windows is stricter about removing an untracked directory
+        // with `git rm --cached` after `git add -A`.
+        addArgs.push(`:(exclude)${relative}`, `:(exclude)${relative}/**`);
+      }
+      await this.runGit(addArgs, env, root);
+      for (const relative of protectedPaths) {
         await this.runGit(['rm', '-r', '--cached', '--ignore-unmatch', '--', relative], env, root);
       }
       const { stdout } = await this.runGit(['write-tree'], env, root);

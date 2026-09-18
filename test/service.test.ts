@@ -292,6 +292,13 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
       await expect(wrongKey.rewindToCheckpoint(sessionId, result.rescueCheckpointId!, { mode: 'force', createRescuePoint: false }))
         .rejects.toMatchObject({ code: 'QUARANTINE_KEY_INVALID' });
       expect(await fs.readFile(path.join(tmpDir, 'app.ts'), 'utf8')).toBe('v1\n');
+      const missingKey = new TimeMachineService({
+        workDir: tmpDir,
+        storageDir: path.join(tmpDir, '.encrypted-quarantine'),
+      });
+      await expect(missingKey.rewindToCheckpoint(sessionId, result.rescueCheckpointId!, { mode: 'force', createRescuePoint: false }))
+        .rejects.toMatchObject({ code: 'QUARANTINE_KEY_INVALID' });
+      expect(await fs.readFile(path.join(tmpDir, 'app.ts'), 'utf8')).toBe('v1\n');
 
       process.env[envName] = 'correct-test-key';
       await encrypted.rewindToCheckpoint(sessionId, result.rescueCheckpointId!, { mode: 'force', createRescuePoint: false });

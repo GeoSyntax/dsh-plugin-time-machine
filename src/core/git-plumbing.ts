@@ -538,13 +538,14 @@ export class GitPlumbingEngine {
 
   /** Validate encrypted quarantine content before a restore mutates the workspace. */
   async validateIgnoredBackup(key: string): Promise<void> {
-    if (!this.quarantineDir || !this.quarantineKey) return;
+    if (!this.quarantineDir) return;
     const backupRoot = path.join(this.quarantineDir, encodeRefPart(key));
     const manifest = await fs.readFile(path.join(backupRoot, '.manifest.json'), 'utf8').then(raw => JSON.parse(raw) as EncryptedQuarantineManifest).catch((error: any) => {
       if (error?.code === 'ENOENT') return undefined;
       throw new QuarantineKeyError(`Encrypted quarantine manifest is invalid: ${error?.message ?? 'unknown error'}`);
     });
     if (!manifest) return;
+    if (!this.quarantineKey) throw new QuarantineKeyError('Encrypted quarantine requires the configured key.');
     if (manifest.version !== 1 || !Array.isArray(manifest.entries)) throw new QuarantineKeyError('Encrypted quarantine manifest version is unsupported.');
     for (const entry of manifest.entries.filter(item => item.type === 'file')) {
       if (!entry.payload || !entry.nonce) throw new QuarantineKeyError(`Encrypted quarantine entry '${entry.path}' is incomplete.`);

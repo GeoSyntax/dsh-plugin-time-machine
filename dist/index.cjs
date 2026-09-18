@@ -492,13 +492,14 @@ Reason: ${errorMsg}`);
       }
       /** Validate encrypted quarantine content before a restore mutates the workspace. */
       async validateIgnoredBackup(key) {
-        if (!this.quarantineDir || !this.quarantineKey) return;
+        if (!this.quarantineDir) return;
         const backupRoot = import_node_path.default.join(this.quarantineDir, encodeRefPart(key));
         const manifest = await import_promises.default.readFile(import_node_path.default.join(backupRoot, ".manifest.json"), "utf8").then((raw) => JSON.parse(raw)).catch((error) => {
           if (error?.code === "ENOENT") return void 0;
           throw new QuarantineKeyError(`Encrypted quarantine manifest is invalid: ${error?.message ?? "unknown error"}`);
         });
         if (!manifest) return;
+        if (!this.quarantineKey) throw new QuarantineKeyError("Encrypted quarantine requires the configured key.");
         if (manifest.version !== 1 || !Array.isArray(manifest.entries)) throw new QuarantineKeyError("Encrypted quarantine manifest version is unsupported.");
         for (const entry of manifest.entries.filter((item) => item.type === "file")) {
           if (!entry.payload || !entry.nonce) throw new QuarantineKeyError(`Encrypted quarantine entry '${entry.path}' is incomplete.`);

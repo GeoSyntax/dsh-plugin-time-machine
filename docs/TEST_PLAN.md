@@ -59,6 +59,7 @@
 | B-06 | DSH bundle 能发现插件 | `pnpm smoke:dsh` 或源码 DSH 等价命令 |
 | B-07 | 本地 DSH 源码宿主加载插件 | `TM_DSH_SOURCE=... pnpm smoke:dsh:source` |
 | B-08 | 本地 OpenAI-compatible 模型驱动真实 turn | `TM_DSH_LIVE=1 TM_GEMINI_API_KEY=... pnpm smoke:dsh:source` |
+| B-09 | 同一 DSH_HOME/workspace 重启并保留 DAG | `TM_DSH_LIVE=1 TM_DSH_LIVE_RESTART=1 TM_GEMINI_API_KEY=... pnpm smoke:dsh:source` |
 
 ### L1：纯逻辑单元测试
 
@@ -268,7 +269,8 @@ artifacts/<run-id>/
 - L1 核心测试 17/17 通过。
 - Git 与 fallback 恢复完成后均执行工作区摘要校验；持久化 DAG 加载会校验节点、父节点、分支和会话归属。
 - 真实 DSH 源码宿主加载插件通过。
-- 真实本地模型请求和文件创建通过。
+- 真实本地模型请求、文件创建、turn 结束后的 finalized checkpoint 落盘通过。
+- 使用同一 `DSH_HOME` 与 workspace 的 live restart 测试通过，第二次运行保留并新增 DAG checkpoint。
 - 真实 checkpoint DAG 和 Dashboard status/dag 通过。
 - Web API rewind/fork、Host/JSON 安全、Session fork 失败补偿和重启 DAG 持久化已有自动化覆盖。
 

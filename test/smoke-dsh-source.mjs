@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -36,6 +36,15 @@ function run(args, options = {}) {
       .filter(Boolean).join('\n'));
   }
   return `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
+}
+
+async function findFiles(root, predicate, result = []) {
+  for (const entry of await readdir(root, { withFileTypes: true })) {
+    const absolute = path.join(root, entry.name);
+    if (entry.isDirectory()) await findFiles(absolute, predicate, result);
+    else if (predicate(entry.name, absolute)) result.push(absolute);
+  }
+  return result;
 }
 
 try {
@@ -81,6 +90,36 @@ try {
     ], { timeout: 180_000 });
     const content = await readFile(path.join(workspace, 'hello.txt'), 'utf8');
     if (content.trim() !== 'DSH-TM-SOURCE-OK') throw new Error('Live DSH did not create the expected file.');
+    const dagFiles = await findFiles(workspace, (name) => name.startsWith('dag_') && name.endsWith('.json'));
+    if (dagFiles.length === 0) throw new Error('Live DSH did not persist a time-machine DAG checkpoint.');
+    const dag = JSON.parse(await readFile(dagFiles[0], 'utf8'));
+    const nodes = Object.values(dag.nodes ?? {});
+    if (nodes.length < 1) throw new Error('Live DSH persisted an empty time-machine DAG.');
+    if (!nodes.some((node) => ['success', 'failed', 'aborted'].includes(node.status))) {
+      throw new Error('Live DSH DAG has no finalized turn checkpoint.');
+    }
+    console.log(`Source DSH persisted ${nodes.length} finalized checkpoint(s).`);
+
+    if (process.env.TM_DSH_LIVE_RESTART === '1') {
+      run([
+        '--profile', profile,
+        '--patch', patchFile,
+        'Read hello.txt and append a second line containing DSH-TM-RESTART-OK, then confirm briefly.',
+      ], { timeout: 180_000 });
+      const restartedContent = await readFile(path.join(workspace, 'hello.txt'), 'utf8');
+      if (!restartedContent.includes('DSH-TM-RESTART-OK')) {
+        throw new Error('Restarted DSH did not continue in the same workspace.');
+      }
+      const restartedDagFiles = await findFiles(workspace, (name) => name.startsWith('dag_') && name.endsWith('.json'));
+      const restartedNodeCount = (await Promise.all(restartedDagFiles.map(async (file) => {
+        const state = JSON.parse(await readFile(file, 'utf8'));
+        return Object.keys(state.nodes ?? {}).length;
+      }))).reduce((total, count) => total + count, 0);
+      if (restartedNodeCount < nodes.length + 1) {
+        throw new Error(`Restarted DSH did not persist a new checkpoint (expected at least ${nodes.length + 1}, got ${restartedNodeCount}).`);
+      }
+      console.log(`Source DSH restart preserved DAG history (${restartedNodeCount} checkpoint(s)).`);
+    }
     console.log('Source DSH live model turn passed.');
   }
 

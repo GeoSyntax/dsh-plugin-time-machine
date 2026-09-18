@@ -256,12 +256,6 @@ export class GitPlumbingEngine {
       const excludeFile = path.join(await this.getGitDir(), `dsh-tm-exclude-${randomUUID()}`);
       await fs.writeFile(excludeFile, protectedPaths.flatMap(relative => [relative, `${relative}/**`]).join('\n') + '\n');
       const addArgs = ['add', '-A', '--', '.'];
-      for (const relative of protectedPaths) {
-        // Exclude untracked storage before it can enter the temporary index.
-        // Git 2.55 on Windows is stricter about removing an untracked directory
-        // with `git rm --cached` after `git add -A`.
-        addArgs.push(`:(top,exclude)${relative}`, `:(top,exclude)${relative}/**`);
-      }
       try {
         await this.runGit(['-c', `core.excludesFile=${excludeFile}`, ...addArgs], env, root);
       } finally {

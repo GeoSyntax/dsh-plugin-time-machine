@@ -38,7 +38,7 @@ This is compensating transaction semantics, not a filesystem-wide ACID transacti
 - `git clean` is not used. The temporary current-state index gives `read-tree --reset -u` the information needed to remove managed paths absent from the target.
 - Ignored contents are excluded from Git objects. Explicit ignored-path deletion copies content to a plugin quarantine first; rescue restoration copies it back.
 
-The shadow store is opt-in. Loose unreachable objects are reclaimed after plugin refs are deleted; packed objects are conservatively skipped until a future safe repack path exists. No repository-wide Git GC is invoked.
+The shadow store is opt-in. Loose unreachable objects are reclaimed after plugin refs are deleted. Explicit shadow repack rebuilds packs only from `refs/dsh-tm/*`; no repository-wide Git GC is invoked. Repack is never automatic.
 
 ## Threat model
 
@@ -68,7 +68,7 @@ The shadow store is opt-in. Loose unreachable objects are reclaimed after plugin
 - Quarantine is local plaintext storage; its directory needs the same OS permissions as the workspace. Encryption and retention limits are not implemented yet.
 - A process or machine crash during the small interval between workspace restore and DAG cursor publication is recovered from the durable restore journal on next startup; filesystem restore itself remains compensating rather than ACID.
 - One plugin instance currently owns one configured workspace. Sessions with a different `cwd` are skipped rather than routed incorrectly.
-- Packed shadow objects are not repacked automatically; shared-object mode still depends on explicit pruning and does not run repository-wide GC.
+- Packed shadow objects are not repacked automatically; users must opt in to `--repack-shadow`, and shared-object mode still does not run repository-wide GC.
 - The lock prevents concurrent mutation but does not provide separate worktrees for multiple Agents.
 
 ## Change history

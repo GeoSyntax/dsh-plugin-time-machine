@@ -481,7 +481,7 @@ export class TimeMachineService {
     };
   }
 
-  async prune(sessionId: string, options: { keepLatest?: number; abandonedBranches?: boolean; compactHistory?: boolean } = {}): Promise<PruneResult> {
+  async prune(sessionId: string, options: { keepLatest?: number; abandonedBranches?: boolean; compactHistory?: boolean; repackShadowObjects?: boolean } = {}): Promise<PruneResult> {
     return this.runWorkspaceOperation(async () => {
       const dag = await this.getDAGManager(sessionId);
       const keepLatest = Math.max(0, Math.floor(options.keepLatest ?? 20));
@@ -499,12 +499,21 @@ export class TimeMachineService {
         removed.push(...await dag.removeLeafNodes(candidates.map(node => node.id)));
       }
       const reclaimed = await this.reclaimNodes(sessionId, removed);
+      const shadowRepack = options.repackShadowObjects && this.config.shadowStore
+        ? await this.gitEngine.repackShadowObjects()
+        : undefined;
       return {
         sessionId,
         removedCheckpointIds: removed.map(node => node.id),
         reclaimedBytes: reclaimed.reclaimedBytes,
         gitRefsRemoved: reclaimed.gitRefsRemoved,
-        note: reclaimed.gitRefsRemoved > 0 ? 'Git objects are shared; run repository maintenance only if you understand its impact.' : 'Fallback snapshot bytes were removed from plugin storage.',
+        shadowObjectsReclaimedBytes: shadowRepack?.reclaimedBytes,
+        shadowRepackSkippedReason: shadowRepack?.skippedReason,
+        note: reclaimed.gitRefsRemoved > 0
+          ? (this.config.shadowStore
+            ? 'Plugin refs and shadow objects were pruned; the user repository was not garbage-collected.'
+            : 'Git objects are shared; run repository maintenance only if you understand its impact.')
+          : 'Fallback snapshot bytes were removed from plugin storage.',
       };
     });
   }

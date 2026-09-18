@@ -175,6 +175,7 @@ export class TimeMachineWebServer {
         keepLatest,
         abandonedBranches: body.abandonedBranches === true,
         compactHistory: body.compactHistory === true,
+        repackShadowObjects: body.repackShadowObjects === true,
       });
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, result }));

@@ -17,7 +17,7 @@ supported only when it is covered by the current implementation and tests.
 | Rescue/compensation | Yes | Snapshot-oriented | Journal-oriented | Varies |
 | Storage quotas and pruning | Explicit status, conservative prune, explicit history compaction, optional abandoned-branch prune, opt-in hard guards | Yes | Yes | Varies |
 | Durable interrupted-restore journal | Yes; startup restores rescue checkpoint | Store recovery | Yes | Varies |
-| Independent shadow store | Opt-in `shadowStore: true`; private loose-object GC, packed objects conservative | Yes | Yes | Usually local backups |
+| Independent shadow store | Opt-in `shadowStore: true`; loose GC plus explicit private-pack repack | Yes | Yes | Usually local backups |
 | Cross-process workspace lock | Yes; bounded wait with stale-owner recovery | Product-specific | Usually process-local | Usually unavailable |
 
 ## Choosing the right tool
@@ -38,8 +38,8 @@ workspace-only; it restores selected paths, keeps the current conversation
 messages, and records rescue/result checkpoints instead of pretending the
 conversation was rewound.
 
-The remaining roadmap is packed shadow-object repacking and true multi-agent
-worktree isolation. The cross-process lock prevents concurrent mutation, but it
+The remaining roadmap is safe migration tooling around shadow storage and true
+multi-agent worktree isolation. The cross-process lock prevents concurrent mutation, but it
 does not create separate workspaces. Quota-driven compaction is opt-in via `autoPrune`; restore
 journals are durable and replayed on startup. Pruning and history compaction do
 not run repository-wide Git GC.

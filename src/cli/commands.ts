@@ -40,7 +40,7 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
     scope.commands.register({
       name: 'tm-prune',
       description: 'Prune old non-head Time Machine checkpoints',
-      input: { hint: '[keep-latest] [--abandoned-branches] [--compact-history]' },
+      input: { hint: '[keep-latest] [--abandoned-branches] [--compact-history] [--repack-shadow]' },
       handler: async ({ agent, rawInput }: CommandInvocationLike): Promise<CommandResult> => {
         const args = rawInput.trim().split(/\s+/).filter(Boolean);
         const keepArg = args.find(arg => !arg.startsWith('--'));
@@ -50,8 +50,11 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
           keepLatest,
           abandonedBranches: args.includes('--abandoned-branches'),
           compactHistory: args.includes('--compact-history'),
+          repackShadowObjects: args.includes('--repack-shadow'),
         });
-        return { kind: 'success', text: `Pruned ${result.removedCheckpointIds.length} checkpoint(s), reclaimed ${formatBytes(result.reclaimedBytes)}. ${result.note}` };
+        const shadow = result.shadowObjectsReclaimedBytes ? ` Shadow packs reclaimed ${formatBytes(result.shadowObjectsReclaimedBytes)}.` : '';
+        const warning = result.shadowRepackSkippedReason ? ` Shadow repack skipped: ${result.shadowRepackSkippedReason}.` : '';
+        return { kind: 'success', text: `Pruned ${result.removedCheckpointIds.length} checkpoint(s), reclaimed ${formatBytes(result.reclaimedBytes)}.${shadow}${warning} ${result.note}` };
       },
     });
 

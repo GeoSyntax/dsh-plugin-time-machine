@@ -149,6 +149,8 @@ interface PruneResult {
     removedCheckpointIds: string[];
     reclaimedBytes: number;
     gitRefsRemoved: number;
+    shadowObjectsReclaimedBytes?: number;
+    shadowRepackSkippedReason?: string;
     note: string;
 }
 interface ReflectionSummary {
@@ -321,6 +323,7 @@ declare class TimeMachineService {
         keepLatest?: number;
         abandonedBranches?: boolean;
         compactHistory?: boolean;
+        repackShadowObjects?: boolean;
     }): Promise<PruneResult>;
     private autoPruneForQuota;
     private reclaimNodes;
@@ -353,6 +356,13 @@ interface ShadowGcResult {
     removedObjects: number;
     reclaimedBytes: number;
     packedObjectsSkipped: boolean;
+}
+interface ShadowRepackResult {
+    repacked: boolean;
+    removedPackFiles: number;
+    reclaimedBytes: number;
+    reachableRefs: number;
+    skippedReason?: string;
 }
 interface GitRestoreOptions {
     expectedCurrentTreeOid?: string;
@@ -434,7 +444,10 @@ declare class GitPlumbingEngine {
     deleteCheckpointRef(sessionId: string, checkpointId: string): Promise<boolean>;
     /** Remove unreachable loose objects from the opt-in shadow store only. */
     pruneShadowObjects(): Promise<ShadowGcResult>;
+    /** Rebuild only the opt-in shadow pack from the plugin's private refs. */
+    repackShadowObjects(): Promise<ShadowRepackResult>;
     private ensureShadowStore;
+    private runGitInput;
 }
 
 interface FallbackOptions {
@@ -544,4 +557,4 @@ declare class TimeMachinePlugin {
     constructor(ctx: Context, config?: Config);
 }
 
-export { type CheckpointNode, Config, type DAGManagerOptions, DAGStateManager, type DAGTree, type DiffResult, type FallbackOptions, FallbackSnapshotEngine, type FileChange, GitPlumbingEngine, type GitPlumbingOptions, type GitRestoreOptions, type GitSelectiveRestoreOptions, type GitSnapshot, type PruneResult, ReflectionAdvisor, type ReflectionSummary, type RestoreOptions, type RestorePreview, type RestoreResult, type SelectiveRestoreResult, type SessionMessage, type SessionState, type ShadowGcResult, StorageQuotaError, type StorageStatus, type TimeMachineConfig, TimeMachinePlugin, TimeMachineService, type TimeMachineServiceOptions, WorkspaceDriftError, WorkspaceRestoreConflictError, apply, collectFailedTools, TimeMachinePlugin as default, name };
+export { type CheckpointNode, Config, type DAGManagerOptions, DAGStateManager, type DAGTree, type DiffResult, type FallbackOptions, FallbackSnapshotEngine, type FileChange, GitPlumbingEngine, type GitPlumbingOptions, type GitRestoreOptions, type GitSelectiveRestoreOptions, type GitSnapshot, type PruneResult, ReflectionAdvisor, type ReflectionSummary, type RestoreOptions, type RestorePreview, type RestoreResult, type SelectiveRestoreResult, type SessionMessage, type SessionState, type ShadowGcResult, type ShadowRepackResult, StorageQuotaError, type StorageStatus, type TimeMachineConfig, TimeMachinePlugin, TimeMachineService, type TimeMachineServiceOptions, WorkspaceDriftError, WorkspaceRestoreConflictError, apply, collectFailedTools, TimeMachinePlugin as default, name };

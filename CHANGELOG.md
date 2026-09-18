@@ -8,6 +8,7 @@
 
 - GitHub 社区协作、CI、安全报告与贡献文档。
 - 可选 shadow object store、loose-object 回收、配额治理、历史压缩和 durable restore journal。
+- 显式 `--repack-shadow` 私有 pack 重建，避免 shadow packed objects 长期残留。
 - 跨进程工作区锁，避免多个 DSH 实例并发覆盖同一工作区。
 
 ## [0.2.0] - 2026-09-18

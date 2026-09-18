@@ -30,6 +30,11 @@ import { promisify } from "util";
 import path2 from "path";
 import fs from "fs/promises";
 import zlib from "zlib";
+async function sumFileSizes(files) {
+  let total = 0;
+  for (const file of files) total += (await fs.stat(file).catch(() => ({ size: 0 }))).size;
+  return total;
+}
 function encodeRefPart(value) {
   return Buffer.from(value, "utf8").toString("base64url") || "_";
 }
@@ -535,10 +540,80 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
         }
         return { removedObjects, reclaimedBytes, packedObjectsSkipped };
       }
+      /** Rebuild only the opt-in shadow pack from the plugin's private refs. */
+      async repackShadowObjects() {
+        if (!this.shadowObjectDir) return { repacked: false, removedPackFiles: 0, reclaimedBytes: 0, reachableRefs: 0 };
+        const { stdout: refsOutput } = await this.runGit(["for-each-ref", "--format=%(objectname)", this.refPrefix]).catch(() => ({ stdout: "", stderr: "" }));
+        const refs = refsOutput.split("\n").map((item) => item.trim()).filter((item) => /^[0-9a-f]{40}$/.test(item));
+        const packDir = path2.join(this.shadowObjectDir, "pack");
+        const existing = await fs.readdir(packDir, { withFileTypes: true }).catch(() => []);
+        const existingPackFiles = existing.filter((entry) => entry.isFile() && /^pack-[0-9a-f]{40}\.(pack|idx|bitmap|rev|mtimes)$/.test(entry.name));
+        const lockedPack = existing.some((entry) => entry.isFile() && /^pack-[0-9a-f]{40}\.keep$/.test(entry.name));
+        if (lockedPack) return { repacked: false, removedPackFiles: 0, reclaimedBytes: 0, reachableRefs: refs.length, skippedReason: "shadow pack contains a .keep file" };
+        const existingBytes = await sumFileSizes(existingPackFiles.map((entry) => path2.join(packDir, entry.name)));
+        const tempDir = path2.join(this.shadowObjectDir, `.repack-${randomUUID()}`);
+        await fs.mkdir(tempDir, { recursive: true });
+        let generatedFiles = [];
+        try {
+          if (refs.length) {
+            const prefix = path2.join(tempDir, "pack");
+            await this.runGitInput(["pack-objects", "--revs", "--no-reuse-object", "--delta-base-offset", prefix], `${refs.join("\n")}
+`);
+            generatedFiles = (await fs.readdir(tempDir, { withFileTypes: true })).filter((entry) => entry.isFile() && /^(pack-[0-9a-f]{40})\.(pack|idx)$/.test(entry.name)).map((entry) => entry.name);
+          }
+          await fs.mkdir(packDir, { recursive: true });
+          for (const file of generatedFiles) {
+            const destination = path2.join(packDir, file);
+            const source = path2.join(tempDir, file);
+            const alreadyPresent = await fs.access(destination).then(() => true).catch(() => false);
+            if (alreadyPresent) await fs.rm(source, { force: true });
+            else await fs.rename(source, destination);
+          }
+          const keep = new Set(generatedFiles);
+          let removedPackFiles = 0;
+          let reclaimedBytes = 0;
+          for (const entry of existingPackFiles) {
+            if (keep.has(entry.name)) continue;
+            const file = path2.join(packDir, entry.name);
+            reclaimedBytes += (await fs.stat(file).catch(() => ({ size: 0 }))).size;
+            await fs.rm(file, { force: true });
+            removedPackFiles += 1;
+          }
+          await fs.rm(path2.join(this.shadowObjectDir, "info", "packs"), { force: true }).catch(() => void 0);
+          return {
+            repacked: refs.length > 0 && generatedFiles.length > 0,
+            removedPackFiles,
+            reclaimedBytes: Math.max(reclaimedBytes, existingBytes - await sumFileSizes(generatedFiles.map((file) => path2.join(packDir, file)))),
+            reachableRefs: refs.length
+          };
+        } finally {
+          await fs.rm(tempDir, { recursive: true, force: true }).catch(() => void 0);
+        }
+      }
       async ensureShadowStore() {
         if (!this.shadowObjectDir) return;
         this.shadowReady ??= fs.mkdir(this.shadowObjectDir, { recursive: true }).then(() => void 0);
         await this.shadowReady;
+      }
+      async runGitInput(args, input, cwd = this.workDir) {
+        await this.ensureShadowStore();
+        const env = this.gitEnv({});
+        return await new Promise((resolve, reject) => {
+          const child = spawn("git", args, { cwd, env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+          const stdout = [];
+          const stderr = [];
+          child.stdout.on("data", (chunk) => stdout.push(Buffer.from(chunk)));
+          child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
+          child.once("error", reject);
+          child.once("close", (code) => {
+            const out = Buffer.concat(stdout).toString("utf8");
+            const err = Buffer.concat(stderr).toString("utf8");
+            if (code === 0) resolve({ stdout: out, stderr: err });
+            else reject(new Error(`Git plumbing command failed: git ${args.join(" ")}
+Reason: ${err || out || `exit ${code}`}`));
+          });
+          child.stdin.end(input, "utf8");
+        });
       }
     };
   }
@@ -1649,12 +1724,15 @@ var TimeMachineService = class {
         removed.push(...await dag.removeLeafNodes(candidates.map((node) => node.id)));
       }
       const reclaimed = await this.reclaimNodes(sessionId, removed);
+      const shadowRepack = options.repackShadowObjects && this.config.shadowStore ? await this.gitEngine.repackShadowObjects() : void 0;
       return {
         sessionId,
         removedCheckpointIds: removed.map((node) => node.id),
         reclaimedBytes: reclaimed.reclaimedBytes,
         gitRefsRemoved: reclaimed.gitRefsRemoved,
-        note: reclaimed.gitRefsRemoved > 0 ? "Git objects are shared; run repository maintenance only if you understand its impact." : "Fallback snapshot bytes were removed from plugin storage."
+        shadowObjectsReclaimedBytes: shadowRepack?.reclaimedBytes,
+        shadowRepackSkippedReason: shadowRepack?.skippedReason,
+        note: reclaimed.gitRefsRemoved > 0 ? this.config.shadowStore ? "Plugin refs and shadow objects were pruned; the user repository was not garbage-collected." : "Git objects are shared; run repository maintenance only if you understand its impact." : "Fallback snapshot bytes were removed from plugin storage."
       };
     });
   }
@@ -2040,7 +2118,8 @@ var TimeMachineWebServer = class {
       const result = await this.service.prune(sessionId, {
         keepLatest,
         abandonedBranches: body.abandonedBranches === true,
-        compactHistory: body.compactHistory === true
+        compactHistory: body.compactHistory === true,
+        repackShadowObjects: body.repackShadowObjects === true
       });
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ success: true, result }));
@@ -2199,7 +2278,7 @@ function registerCliCommands(ctx, service) {
     scope.commands.register({
       name: "tm-prune",
       description: "Prune old non-head Time Machine checkpoints",
-      input: { hint: "[keep-latest] [--abandoned-branches] [--compact-history]" },
+      input: { hint: "[keep-latest] [--abandoned-branches] [--compact-history] [--repack-shadow]" },
       handler: async ({ agent, rawInput }) => {
         const args = rawInput.trim().split(/\s+/).filter(Boolean);
         const keepArg = args.find((arg) => !arg.startsWith("--"));
@@ -2208,9 +2287,12 @@ function registerCliCommands(ctx, service) {
         const result = await service.prune(agent.session.id, {
           keepLatest,
           abandonedBranches: args.includes("--abandoned-branches"),
-          compactHistory: args.includes("--compact-history")
+          compactHistory: args.includes("--compact-history"),
+          repackShadowObjects: args.includes("--repack-shadow")
         });
-        return { kind: "success", text: `Pruned ${result.removedCheckpointIds.length} checkpoint(s), reclaimed ${formatBytes(result.reclaimedBytes)}. ${result.note}` };
+        const shadow = result.shadowObjectsReclaimedBytes ? ` Shadow packs reclaimed ${formatBytes(result.shadowObjectsReclaimedBytes)}.` : "";
+        const warning = result.shadowRepackSkippedReason ? ` Shadow repack skipped: ${result.shadowRepackSkippedReason}.` : "";
+        return { kind: "success", text: `Pruned ${result.removedCheckpointIds.length} checkpoint(s), reclaimed ${formatBytes(result.reclaimedBytes)}.${shadow}${warning} ${result.note}` };
       }
     });
     scope.commands.register({

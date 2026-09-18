@@ -30,6 +30,14 @@ export interface ShadowGcResult {
   packedObjectsSkipped: boolean;
 }
 
+export interface ShadowRepackResult {
+  repacked: boolean;
+  removedPackFiles: number;
+  reclaimedBytes: number;
+  reachableRefs: number;
+  skippedReason?: string;
+}
+
 export interface GitRestoreOptions {
   expectedCurrentTreeOid?: string;
   expectedCurrentIgnoredPaths?: string[];
@@ -580,11 +588,89 @@ export class GitPlumbingEngine {
     return { removedObjects, reclaimedBytes, packedObjectsSkipped };
   }
 
+  /** Rebuild only the opt-in shadow pack from the plugin's private refs. */
+  async repackShadowObjects(): Promise<ShadowRepackResult> {
+    if (!this.shadowObjectDir) return { repacked: false, removedPackFiles: 0, reclaimedBytes: 0, reachableRefs: 0 };
+    const { stdout: refsOutput } = await this.runGit(['for-each-ref', '--format=%(objectname)', this.refPrefix]).catch(() => ({ stdout: '', stderr: '' }));
+    const refs = refsOutput.split('\n').map(item => item.trim()).filter(item => /^[0-9a-f]{40}$/.test(item));
+    const packDir = path.join(this.shadowObjectDir, 'pack');
+    const existing = await fs.readdir(packDir, { withFileTypes: true }).catch(() => [] as import('node:fs').Dirent[]);
+    const existingPackFiles = existing.filter(entry => entry.isFile() && /^pack-[0-9a-f]{40}\.(pack|idx|bitmap|rev|mtimes)$/.test(entry.name));
+    const lockedPack = existing.some(entry => entry.isFile() && /^pack-[0-9a-f]{40}\.keep$/.test(entry.name));
+    if (lockedPack) return { repacked: false, removedPackFiles: 0, reclaimedBytes: 0, reachableRefs: refs.length, skippedReason: 'shadow pack contains a .keep file' };
+    const existingBytes = await sumFileSizes(existingPackFiles.map(entry => path.join(packDir, entry.name)));
+    const tempDir = path.join(this.shadowObjectDir, `.repack-${randomUUID()}`);
+    await fs.mkdir(tempDir, { recursive: true });
+    let generatedFiles: string[] = [];
+    try {
+      if (refs.length) {
+        const prefix = path.join(tempDir, 'pack');
+        await this.runGitInput(['pack-objects', '--revs', '--no-reuse-object', '--delta-base-offset', prefix], `${refs.join('\n')}\n`);
+        generatedFiles = (await fs.readdir(tempDir, { withFileTypes: true }))
+          .filter(entry => entry.isFile() && /^(pack-[0-9a-f]{40})\.(pack|idx)$/.test(entry.name))
+          .map(entry => entry.name);
+      }
+      await fs.mkdir(packDir, { recursive: true });
+      for (const file of generatedFiles) {
+        const destination = path.join(packDir, file);
+        const source = path.join(tempDir, file);
+        const alreadyPresent = await fs.access(destination).then(() => true).catch(() => false);
+        if (alreadyPresent) await fs.rm(source, { force: true });
+        else await fs.rename(source, destination);
+      }
+      const keep = new Set(generatedFiles);
+      let removedPackFiles = 0;
+      let reclaimedBytes = 0;
+      for (const entry of existingPackFiles) {
+        if (keep.has(entry.name)) continue;
+        const file = path.join(packDir, entry.name);
+        reclaimedBytes += (await fs.stat(file).catch(() => ({ size: 0 }))).size;
+        await fs.rm(file, { force: true });
+        removedPackFiles += 1;
+      }
+      await fs.rm(path.join(this.shadowObjectDir, 'info', 'packs'), { force: true }).catch(() => undefined);
+      return {
+        repacked: refs.length > 0 && generatedFiles.length > 0,
+        removedPackFiles,
+        reclaimedBytes: Math.max(reclaimedBytes, existingBytes - await sumFileSizes(generatedFiles.map(file => path.join(packDir, file)))),
+        reachableRefs: refs.length,
+      };
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+
   private async ensureShadowStore(): Promise<void> {
     if (!this.shadowObjectDir) return;
     this.shadowReady ??= fs.mkdir(this.shadowObjectDir, { recursive: true }).then(() => undefined);
     await this.shadowReady;
   }
+
+  private async runGitInput(args: string[], input: string, cwd = this.workDir): Promise<{ stdout: string; stderr: string }> {
+    await this.ensureShadowStore();
+    const env = this.gitEnv({});
+    return await new Promise((resolve, reject) => {
+      const child = spawn('git', args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+      const stdout: Buffer[] = [];
+      const stderr: Buffer[] = [];
+      child.stdout.on('data', chunk => stdout.push(Buffer.from(chunk)));
+      child.stderr.on('data', chunk => stderr.push(Buffer.from(chunk)));
+      child.once('error', reject);
+      child.once('close', code => {
+        const out = Buffer.concat(stdout).toString('utf8');
+        const err = Buffer.concat(stderr).toString('utf8');
+        if (code === 0) resolve({ stdout: out, stderr: err });
+        else reject(new Error(`Git plumbing command failed: git ${args.join(' ')}\nReason: ${err || out || `exit ${code}`}`));
+      });
+      child.stdin.end(input, 'utf8');
+    });
+  }
+}
+
+async function sumFileSizes(files: string[]): Promise<number> {
+  let total = 0;
+  for (const file of files) total += (await fs.stat(file).catch(() => ({ size: 0 }))).size;
+  return total;
 }
 
 function encodeRefPart(value: string): string {

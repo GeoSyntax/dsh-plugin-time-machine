@@ -77,7 +77,7 @@ Web dashboard 只绑定 loopback，并拒绝非本机 Host 和跨 origin 请求�
 - 当前 manifest 只声明 `web` profile；原生 TUI 不在兼容承诺范围内。
 - Hermes Agent v2 已有自己的 checkpoint/rollback；本插件适合需要 DSH Session fork、DAG 探索或失败反思的场景。
 
-问题定义、设计取舍和完整验收矩阵见 [docs/PROBLEM.md](docs/PROBLEM.md)、[DESIGN.md](DESIGN.md) 和 [docs/TEST_PLAN.md](docs/TEST_PLAN.md)。
+问题定义、设计取舍、同类能力对照和完整验收矩阵见 [docs/PROBLEM.md](docs/PROBLEM.md)、[docs/COMPARISON.md](docs/COMPARISON.md)、[DESIGN.md](DESIGN.md) 和 [docs/TEST_PLAN.md](docs/TEST_PLAN.md)。
 
 ## License
 

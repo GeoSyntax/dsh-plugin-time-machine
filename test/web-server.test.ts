@@ -127,6 +127,29 @@ describe('TimeMachineWebServer', () => {
     expect(await fs.readFile(file, 'utf8')).toBe('v2\n');
   });
 
+  it('restores only requested paths through the Web API', async () => {
+    const left = path.join(tmpDir, 'left.txt');
+    const right = path.join(tmpDir, 'right.txt');
+    await fs.writeFile(left, 'left-v1\n', 'utf8');
+    await fs.writeFile(right, 'right-v1\n', 'utf8');
+    const first = await service.createTurnCheckpoint({
+      sessionId: 'selective-web', turnIndex: 1, prompt: 'initial', sessionState: { sessionId: 'selective-web', messages: [] },
+    });
+    await fs.writeFile(left, 'left-v2\n', 'utf8');
+    await fs.writeFile(right, 'right-v2\n', 'utf8');
+    await service.createTurnCheckpoint({
+      sessionId: 'selective-web', turnIndex: 2, prompt: 'change', sessionState: { sessionId: 'selective-web', messages: [] },
+    });
+    const response = await fetch(`http://localhost:${testPort}/api/restore-files`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: 'selective-web', checkpointId: first.id, paths: ['left.txt'] }),
+    });
+    expect(response.status).toBe(200);
+    expect((await response.json()).result.restoredPaths).toEqual(['left.txt']);
+    expect(await fs.readFile(left, 'utf8')).toBe('left-v1\n');
+    expect(await fs.readFile(right, 'utf8')).toBe('right-v2\n');
+  });
+
   it('should compensate a physical rewind when conversation restart fails', async () => {
     const file = path.join(tmpDir, 'compensation.txt');
     await fs.writeFile(file, 'before\n', 'utf8');

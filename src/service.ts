@@ -600,6 +600,30 @@ export class TimeMachineService {
     };
   }
 
+  /** Report runtime capabilities so Web/CLI integrations can fail early. */
+  async getCapabilities(): Promise<{
+    git: boolean;
+    fallback: boolean;
+    mergeRestore: boolean;
+    selectiveRestore: boolean;
+    shadowStore: boolean;
+    workspace: { sparseCheckout: boolean; submodulePaths: string[]; inProgressOperation: string | null };
+  }> {
+    const git = await this.gitEngine.isGitRepo();
+    const workspace = git
+      ? await this.gitEngine.inspectWorkspaceCapabilities()
+      : { sparseCheckout: false, submodulePaths: [], inProgressOperation: null };
+    const usable = git && !workspace.sparseCheckout && workspace.submodulePaths.length === 0 && !workspace.inProgressOperation;
+    return {
+      git,
+      fallback: !git,
+      mergeRestore: usable,
+      selectiveRestore: usable || !git,
+      shadowStore: git && this.config.shadowStore,
+      workspace,
+    };
+  }
+
   async prune(sessionId: string, options: { keepLatest?: number; olderThanMs?: number; abandonedBranches?: boolean; compactHistory?: boolean; repackShadowObjects?: boolean } = {}): Promise<PruneResult> {
     return this.runWorkspaceOperation(async () => {
       const dag = await this.getDAGManager(sessionId);

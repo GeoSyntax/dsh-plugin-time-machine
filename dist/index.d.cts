@@ -347,6 +347,19 @@ declare class TimeMachineService {
      */
     renderTree(sessionId: string): Promise<string>;
     getStorageStatus(sessionId?: string): Promise<StorageStatus>;
+    /** Report runtime capabilities so Web/CLI integrations can fail early. */
+    getCapabilities(): Promise<{
+        git: boolean;
+        fallback: boolean;
+        mergeRestore: boolean;
+        selectiveRestore: boolean;
+        shadowStore: boolean;
+        workspace: {
+            sparseCheckout: boolean;
+            submodulePaths: string[];
+            inProgressOperation: string | null;
+        };
+    }>;
     prune(sessionId: string, options?: {
         keepLatest?: number;
         olderThanMs?: number;

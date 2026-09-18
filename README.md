@@ -92,6 +92,7 @@ dsh --profile web
 ```
 
 Web dashboard 只绑定 loopback，并拒绝非本机 Host 和跨 origin 请求。`/tm-rewind` 与 `/tm-fork` 需要宿主提供 `sessionController`，否则插件会拒绝只恢复文件的危险降级行为。
+集成方可读取 `GET /api/capabilities`，提前判断当前工作区是否支持 Git 三方 merge、selective restore、shadow store，以及 sparse checkout/submodule/进行中操作限制。
 
 ## Verification
 

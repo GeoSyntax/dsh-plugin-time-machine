@@ -1970,6 +1970,20 @@ var TimeMachineService = class {
       gitObjectsShared: await this.gitEngine.isGitRepo() && !this.config.shadowStore
     };
   }
+  /** Report runtime capabilities so Web/CLI integrations can fail early. */
+  async getCapabilities() {
+    const git = await this.gitEngine.isGitRepo();
+    const workspace = git ? await this.gitEngine.inspectWorkspaceCapabilities() : { sparseCheckout: false, submodulePaths: [], inProgressOperation: null };
+    const usable = git && !workspace.sparseCheckout && workspace.submodulePaths.length === 0 && !workspace.inProgressOperation;
+    return {
+      git,
+      fallback: !git,
+      mergeRestore: usable,
+      selectiveRestore: usable || !git,
+      shadowStore: git && this.config.shadowStore,
+      workspace
+    };
+  }
   async prune(sessionId, options = {}) {
     return this.runWorkspaceOperation(async () => {
       const dag = await this.getDAGManager(sessionId);
@@ -2368,6 +2382,11 @@ var TimeMachineWebServer = class {
       const status = await this.service.getStorageStatus(sessionId);
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ status }));
+      return;
+    }
+    if (pathname === "/api/capabilities" && req.method === "GET") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ capabilities: await this.service.getCapabilities() }));
       return;
     }
     if (pathname === "/api/diff" && req.method === "GET") {

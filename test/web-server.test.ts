@@ -47,6 +47,13 @@ describe('TimeMachineWebServer', () => {
     const dagData = await dagRes.json();
     expect(dagData.currentBranch).toBe('main');
 
+    const capabilitiesRes = await fetch(`http://localhost:${testPort}/api/capabilities`);
+    expect(capabilitiesRes.status).toBe(200);
+    const capabilities = (await capabilitiesRes.json()).capabilities;
+    expect(capabilities.fallback).toBe(true);
+    expect(capabilities.mergeRestore).toBe(false);
+    expect(capabilities.selectiveRestore).toBe(true);
+
     // 3. 测试静态网页托管
     const htmlRes = await fetch(`http://localhost:${testPort}/`);
     expect(htmlRes.status).toBe(200);

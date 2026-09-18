@@ -114,6 +114,12 @@ export class TimeMachineWebServer {
       return;
     }
 
+    if (pathname === '/api/capabilities' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ capabilities: await this.service.getCapabilities() }));
+      return;
+    }
+
     if (pathname === '/api/diff' && req.method === 'GET') {
       const sessionId = query.get('sessionId') || 'default';
       const baseId = query.get('base') || '';

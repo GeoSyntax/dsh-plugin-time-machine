@@ -65,6 +65,13 @@ describe('TimeMachineWebServer', () => {
       maxSnapshotBytes: 0,
     });
 
+    const migrationRes = await fetch(`http://localhost:${testPort}/api/quarantine-migrate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    expect(migrationRes.status).toBe(400);
+
     // 3. 测试静态网页托管
     const htmlRes = await fetch(`http://localhost:${testPort}/`);
     expect(htmlRes.status).toBe(200);

@@ -55,7 +55,7 @@ export class TimeMachineWebServer {
           // 静态资源处理
           await this.handleStatic(res, pathname);
         } catch (err: any) {
-          const status = err?.code === 'BAD_REQUEST' ? 400 : err?.code === 'RESTORE_PLAN_INVALID' || err?.code === 'RESTORE_MERGE_CONFLICT' ? 409 : err?.code === 'UNSUPPORTED_WORKSPACE_STATE' ? 422 : err?.code === 'SNAPSHOT_SIZE_LIMIT' ? 413 : 500;
+          const status = err?.code === 'BAD_REQUEST' ? 400 : err?.code === 'RESTORE_PLAN_INVALID' || err?.code === 'RESTORE_MERGE_CONFLICT' || err?.code === 'QUARANTINE_KEY_INVALID' ? 409 : err?.code === 'UNSUPPORTED_WORKSPACE_STATE' ? 422 : err?.code === 'SNAPSHOT_SIZE_LIMIT' ? 413 : 500;
           res.writeHead(status, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
             error: err.message || 'Internal Server Error',
@@ -173,6 +173,17 @@ export class TimeMachineWebServer {
         mode: body.force === true ? 'force' : body.merge === true ? 'merge' : undefined,
         restorePlanId: typeof body.restorePlanId === 'string' ? body.restorePlanId : undefined,
       });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, result }));
+      return;
+    }
+
+    if (pathname === '/api/quarantine-migrate' && req.method === 'POST') {
+      const body = await this.readJsonBody(req);
+      if (typeof body.backupKey !== 'string' || !body.backupKey.trim() || /\s/.test(body.backupKey)) {
+        throw Object.assign(new Error('backupKey is required and must not contain whitespace'), { code: 'BAD_REQUEST' });
+      }
+      const result = await this.service.migrateIgnoredBackup(body.backupKey);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, result }));
       return;

@@ -54,7 +54,7 @@ dsh --profile web
 - **硬配额:** `maxSnapshots` 和 `maxStorageBytes` 默认关闭；启用后达到上限会安全拒绝新 checkpoint，不会静默删除历史。
 - **自动配额清理:** `autoPrune: true` 才会在普通 checkpoint 前尝试压缩旧节点；无法安全腾出空间时仍然拒绝 checkpoint，不会强行删除 current 或 branch head。
 - **自动年龄保留:** `retentionMaxAgeMs` 大于 0 时，普通 checkpoint 前会自动压缩超过该年龄的非 current、非 branch head 节点；默认关闭，内部 rescue checkpoint 不触发清理。
-- **明文 quarantine 迁移:** 启用 `quarantineEncryptionKeyEnv` 后，`/tm-quarantine-migrate <backup-key>` 可显式把旧明文备份转换为 AES-256-GCM；迁移失败会保留原目录，插件不会自动混用明文。
+- **明文 quarantine 迁移:** 启用 `quarantineEncryptionKeyEnv` 后，`/tm-quarantine-migrate <backup-key>` 或 `POST /api/quarantine-migrate` 可显式把旧明文备份转换为 AES-256-GCM；迁移失败会保留原目录，插件不会自动混用明文。
 
 ## Safety model
 

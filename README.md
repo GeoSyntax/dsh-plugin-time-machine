@@ -21,7 +21,7 @@
 
 Time Machine 的定位是 **协调层**：使用 DSH 官方 Session fork 作为会话侧边界，在工作区侧提供可恢复快照，再用 rescue checkpoint 和补偿恢复把两侧尽量保持一致。它不改写 DSH 的 append-only 日志，也不取代日常 Git 提交。
 
-更完整的问题定义、失败模型与取舍见 [docs/PROBLEM.md](docs/PROBLEM.md)。
+更完整的问题定义、失败模型与取舍见 [docs/PROBLEM.md](docs/PROBLEM.md)；发布前验收矩阵见 [docs/TEST_PLAN.md](docs/TEST_PLAN.md)。
 
 ## 社区定位：补充，而不是替代
 
@@ -155,7 +155,7 @@ Standalone dashboard 只绑定 loopback，并拒绝跨域/非本机 Host。Web �
 - ignored 文件只有在显式删除时才会进入 quarantine；默认不会复制秘密、缓存或依赖目录。
 - 多文件恢复具备 rescue/compensation，但底层文件系统没有跨文件事务，不能宣传为严格 ACID。
 - Web UI 目前能展示 DAG 和 diff；成功 fork 后返回新 Session ID，尚未自动切换 DSH 前端路由。
-- 尚未在 CI 中覆盖真实 DSH CLI 的版本矩阵；当前测试验证 Cordis 生命周期契约和插件内部恢复语义。
+- CI 已覆盖声明宿主的 bundle smoke；真实交互式 `/tm-rewind`、`/tm-fork` 和故障补偿仍按 [docs/TEST_PLAN.md](docs/TEST_PLAN.md) 作为发布前专项验收。
 
 ## 卸载与数据保留
 

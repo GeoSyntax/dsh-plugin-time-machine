@@ -144,11 +144,13 @@ export function apply(ctx: Context, config: Config = {}): void {
       const reason = asRecord(event.data.reason);
       const kind = typeof reason?.kind === 'string' ? reason.kind : 'error';
       const failure = asRecord(reason?.error);
+      const failedTools = collectFailedTools(getEvents(session), turn as number);
       void service.finalizeTurnCheckpoint({
         sessionId: session.id,
         checkpointId,
         status: kind === 'completed' ? 'success' : kind === 'aborted' || kind === 'interrupted' ? 'aborted' : 'failed',
         errorMessage: typeof failure?.message === 'string' ? failure.message : kind === 'completed' ? undefined : `Turn ended: ${kind}`,
+        failedTools: failedTools.length > 0 ? failedTools : undefined,
       }).catch((error: unknown) => {
         scope.logger.error(`[time-machine] could not finalize ${checkpointId}: ${errorMessage(error)}`);
       });
@@ -156,6 +158,47 @@ export function apply(ctx: Context, config: Config = {}): void {
   });
 
   ctx.logger.info(pc.green(`[${name}] active; restore mode=${service.config.restoreMode}`));
+}
+
+/** Extract model-visible tool failures from DSH's durable event pair. */
+export function collectFailedTools(
+  events: readonly SessionEventLike[],
+  turn: number,
+): Array<{ toolName: string; input: unknown; error: string }> {
+  const calls = new Map<string, { name: string; input: unknown }>();
+  const failures: Array<{ toolName: string; input: unknown; error: string }> = [];
+  for (const event of events) {
+    if (event.data.turn !== turn) continue;
+    const data = event.data;
+    if (event.type === 'tool/call') {
+      const callId = typeof data.callId === 'string' ? data.callId : undefined;
+      if (!callId) continue;
+      calls.set(callId, { name: typeof data.name === 'string' ? data.name : 'unknown', input: parseToolArguments(data.arguments) });
+      continue;
+    }
+    if (event.type !== 'tool/result') continue;
+    const message = asRecord(data.message);
+    const error = asRecord(data.error);
+    const content = Array.isArray(message?.content) ? asRecord(message.content[0]) : undefined;
+    const isError = data.isError === true || message?.isError === true || content?.isError === true || error !== undefined;
+    if (!isError) continue;
+    const source = asRecord(message?.source);
+    const callId = typeof message?.callId === 'string'
+      ? message.callId
+      : typeof source?.callId === 'string'
+      ? source.callId
+      : typeof content?.callId === 'string'
+      ? content.callId
+      : undefined;
+    const call = callId ? calls.get(callId) : undefined;
+    const reason = typeof error?.reason === 'string'
+      ? error.reason
+      : typeof error?.code === 'string'
+      ? error.code
+      : 'Tool returned an error result';
+    failures.push({ toolName: call?.name ?? 'unknown', input: call?.input ?? {}, error: reason });
+  }
+  return failures;
 }
 
 function getEvents(session: SessionLike): readonly SessionEventLike[] {
@@ -183,6 +226,11 @@ function checkpointKey(sessionId: string, turn: number): string {
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
+
+function parseToolArguments(value: unknown): unknown {
+  if (typeof value !== 'string') return value ?? {};
+  try { return JSON.parse(value); } catch { return value; }
 }
 
 function errorMessage(error: unknown): string {

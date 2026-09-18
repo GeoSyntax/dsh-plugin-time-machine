@@ -1600,17 +1600,45 @@ function apply(ctx, config = {}) {
       const reason = asRecord(event.data.reason);
       const kind = typeof reason?.kind === "string" ? reason.kind : "error";
       const failure = asRecord(reason?.error);
+      const failedTools = collectFailedTools(getEvents(session), turn);
       void service.finalizeTurnCheckpoint({
         sessionId: session.id,
         checkpointId,
         status: kind === "completed" ? "success" : kind === "aborted" || kind === "interrupted" ? "aborted" : "failed",
-        errorMessage: typeof failure?.message === "string" ? failure.message : kind === "completed" ? void 0 : `Turn ended: ${kind}`
+        errorMessage: typeof failure?.message === "string" ? failure.message : kind === "completed" ? void 0 : `Turn ended: ${kind}`,
+        failedTools: failedTools.length > 0 ? failedTools : void 0
       }).catch((error) => {
         scope.logger.error(`[time-machine] could not finalize ${checkpointId}: ${errorMessage(error)}`);
       });
     });
   });
   ctx.logger.info(pc2.green(`[${name}] active; restore mode=${service.config.restoreMode}`));
+}
+function collectFailedTools(events, turn) {
+  const calls = /* @__PURE__ */ new Map();
+  const failures = [];
+  for (const event of events) {
+    if (event.data.turn !== turn) continue;
+    const data = event.data;
+    if (event.type === "tool/call") {
+      const callId2 = typeof data.callId === "string" ? data.callId : void 0;
+      if (!callId2) continue;
+      calls.set(callId2, { name: typeof data.name === "string" ? data.name : "unknown", input: parseToolArguments(data.arguments) });
+      continue;
+    }
+    if (event.type !== "tool/result") continue;
+    const message = asRecord(data.message);
+    const error = asRecord(data.error);
+    const content = Array.isArray(message?.content) ? asRecord(message.content[0]) : void 0;
+    const isError = data.isError === true || message?.isError === true || content?.isError === true || error !== void 0;
+    if (!isError) continue;
+    const source = asRecord(message?.source);
+    const callId = typeof message?.callId === "string" ? message.callId : typeof source?.callId === "string" ? source.callId : typeof content?.callId === "string" ? content.callId : void 0;
+    const call = callId ? calls.get(callId) : void 0;
+    const reason = typeof error?.reason === "string" ? error.reason : typeof error?.code === "string" ? error.code : "Tool returned an error result";
+    failures.push({ toolName: call?.name ?? "unknown", input: call?.input ?? {}, error: reason });
+  }
+  return failures;
 }
 function getEvents(session) {
   return typeof session.snapshotEvents === "function" ? session.snapshotEvents() : session.events ?? [];
@@ -1630,6 +1658,14 @@ function checkpointKey(sessionId, turn) {
 }
 function asRecord(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : void 0;
+}
+function parseToolArguments(value) {
+  if (typeof value !== "string") return value ?? {};
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
 }
 function errorMessage(error) {
   return error instanceof Error ? error.message : String(error);
@@ -1651,6 +1687,7 @@ export {
   WorkspaceDriftError,
   WorkspaceRestoreConflictError,
   apply,
+  collectFailedTools,
   index_default as default,
   name
 };

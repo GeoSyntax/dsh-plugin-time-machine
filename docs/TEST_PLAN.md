@@ -267,7 +267,7 @@ artifacts/<run-id>/
 
 当前已经有证据：
 
-- L1 核心测试 20/20 通过。
+- L1 核心测试 21/21 通过；新增 DSH durable `tool/call`/`tool/result` 失败配对与反思输入提取测试。
 - Git 与 fallback 恢复完成后均执行工作区摘要校验；持久化 DAG 加载会校验节点、父节点、分支和会话归属。
 - 真实 DSH 源码宿主加载插件通过。
 - 真实本地模型请求、文件创建、turn 结束后的 finalized checkpoint 落盘通过。
@@ -275,6 +275,7 @@ artifacts/<run-id>/
 - 真实 DSH Web 宿主通过 `session/create`、`session/prompt` 驱动 turn，并完成真实 `/api/fork` 与 `/api/rewind`。
 - Web UI 在 fork/rewind 后采用服务端返回的新 conversation sessionId，后续 DAG 查询不再使用旧会话。
 - CLI 命令注册层已自动化覆盖 `/tm-tree`、`/tm-fork`、`/tm-rewind`，包括 sessionController 返回的新会话身份和工作区恢复。
+- `turn/end` 生命周期会从 DSH 持久事件中提取失败工具、输入和错误原因，并传入 checkpoint 反思顾问；已用接近真实 DSH 消息结构的单元测试覆盖。
 - 真实 checkpoint DAG 和 Dashboard status/dag 通过。
 - Web API rewind/fork、Host/JSON 安全、Session fork 失败补偿和重启 DAG 持久化已有自动化覆盖。
 

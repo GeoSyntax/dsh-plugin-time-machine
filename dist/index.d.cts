@@ -419,9 +419,15 @@ declare module '@deepseek-ai/cordis' {
     }
 }
 declare function apply(ctx: Context, config?: Config): void;
+/** Extract model-visible tool failures from DSH's durable event pair. */
+declare function collectFailedTools(events: readonly SessionEventLike[], turn: number): Array<{
+    toolName: string;
+    input: unknown;
+    error: string;
+}>;
 /** Cordis loads profile-bundle defaults as constructable plugins. */
 declare class TimeMachinePlugin {
     constructor(ctx: Context, config?: Config);
 }
 
-export { type CheckpointNode, Config, type DAGManagerOptions, DAGStateManager, type DAGTree, type DiffResult, type FallbackOptions, FallbackSnapshotEngine, type FileChange, GitPlumbingEngine, type GitPlumbingOptions, type GitRestoreOptions, type GitSnapshot, ReflectionAdvisor, type ReflectionSummary, type RestoreOptions, type RestoreResult, type SessionMessage, type SessionState, type TimeMachineConfig, TimeMachinePlugin, TimeMachineService, type TimeMachineServiceOptions, WorkspaceDriftError, WorkspaceRestoreConflictError, apply, TimeMachinePlugin as default, name };
+export { type CheckpointNode, Config, type DAGManagerOptions, DAGStateManager, type DAGTree, type DiffResult, type FallbackOptions, FallbackSnapshotEngine, type FileChange, GitPlumbingEngine, type GitPlumbingOptions, type GitRestoreOptions, type GitSnapshot, ReflectionAdvisor, type ReflectionSummary, type RestoreOptions, type RestoreResult, type SessionMessage, type SessionState, type TimeMachineConfig, TimeMachinePlugin, TimeMachineService, type TimeMachineServiceOptions, WorkspaceDriftError, WorkspaceRestoreConflictError, apply, collectFailedTools, TimeMachinePlugin as default, name };

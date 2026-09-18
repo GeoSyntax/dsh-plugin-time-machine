@@ -67,6 +67,7 @@
 | B-12 | 真实 DSH 工具失败事件提取为 `failedTools` | `TM_DSH_LIVE_TOOL_FAILURE=1 TM_GEMINI_API_KEY=... pnpm smoke:dsh:source` |
 | B-13 | 本地发布门禁包含跨进程锁回归和 shadow loose/packed-object 回收 | `pnpm test:release` |
 | B-14 | Git 三方合并恢复保留非冲突漂移并报告冲突路径 | `pnpm test -- --run test/git-plumbing.test.ts test/service.test.ts test/web-server.test.ts` |
+| B-15 | DSH 原生 write/edit 事件自动进入 Agent-write ledger，并在 turn/end 前完成落盘 | 真实 DSH fixture：依次发出 `fs/observed`、`tools/result`、`turn/end`，再检查 checkpoint 的 `agentWrites` |
 
 ### L1：纯逻辑单元测试
 

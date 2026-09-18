@@ -3523,6 +3523,7 @@ function apply(ctx, config = {}) {
   }
   const checkpoints = /* @__PURE__ */ new Map();
   const observedWrites = /* @__PURE__ */ new Map();
+  const pendingLedgerWrites = /* @__PURE__ */ new Map();
   ctx.inject(["agents", "sessions"], (scope) => {
     if (service.config.enableAgentWriteLedger) {
       scope.on("fs/observed", (target, _observation, actor) => {
@@ -3544,11 +3545,16 @@ function apply(ctx, config = {}) {
         if (!observed || result?.isError === true) return;
         const checkpointId = checkpoints.get(checkpointKey(observed.sessionId, observed.turn));
         if (!checkpointId) return;
+        const turnKey = checkpointKey(observed.sessionId, observed.turn);
+        let chain = pendingLedgerWrites.get(turnKey) ?? Promise.resolve();
         for (const displayPath of observed.paths) {
           const relative = workspaceRelativePath(workDir, displayPath);
           if (!relative) continue;
-          void service.recordAgentWrite(observed.sessionId, checkpointId, { path: relative, operation: "modify" }).catch((error) => scope.logger.warn(`[time-machine] could not record Agent write ${relative}: ${errorMessage(error)}`));
+          chain = chain.then(() => service.recordAgentWrite(observed.sessionId, checkpointId, { path: relative, operation: "modify" }).then(() => void 0).catch((error) => {
+            scope.logger.warn(`[time-machine] could not record Agent write ${relative}: ${errorMessage(error)}`);
+          }));
         }
+        pendingLedgerWrites.set(turnKey, chain);
       });
     }
     scope.on("agent/pre-step", async ({ agent, turn, step }, next) => {
@@ -3597,13 +3603,15 @@ function apply(ctx, config = {}) {
       const kind = typeof reason?.kind === "string" ? reason.kind : "error";
       const failure = asRecord(reason?.error);
       const failedTools = collectFailedTools(getEvents(session), turn);
-      void service.finalizeTurnCheckpoint({
+      const ledgerWrites = pendingLedgerWrites.get(key) ?? Promise.resolve();
+      pendingLedgerWrites.delete(key);
+      void ledgerWrites.then(() => service.finalizeTurnCheckpoint({
         sessionId: session.id,
         checkpointId,
         status: kind === "completed" ? "success" : kind === "aborted" || kind === "interrupted" ? "aborted" : "failed",
         errorMessage: typeof failure?.message === "string" ? failure.message : kind === "completed" ? void 0 : `Turn ended: ${kind}`,
         failedTools: failedTools.length > 0 ? failedTools : void 0
-      }).catch((error) => {
+      })).catch((error) => {
         scope.logger.error(`[time-machine] could not finalize ${checkpointId}: ${errorMessage(error)}`);
       });
     });

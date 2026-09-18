@@ -131,6 +131,7 @@ export function apply(ctx: Context, config: Config = {}): void {
 
   const checkpoints = new Map<string, string>();
   const observedWrites = new Map<string, { sessionId: string; turn: number; paths: Set<string> }>();
+  const pendingLedgerWrites = new Map<string, Promise<void>>();
   ctx.inject(['agents', 'sessions'], (scope: Context) => {
     if (service.config.enableAgentWriteLedger) {
       scope.on('fs/observed', (target, _observation, actor) => {
@@ -153,12 +154,18 @@ export function apply(ctx: Context, config: Config = {}): void {
         if (!observed || result?.isError === true) return;
         const checkpointId = checkpoints.get(checkpointKey(observed.sessionId, observed.turn));
         if (!checkpointId) return;
+        const turnKey = checkpointKey(observed.sessionId, observed.turn);
+        let chain = pendingLedgerWrites.get(turnKey) ?? Promise.resolve();
         for (const displayPath of observed.paths) {
           const relative = workspaceRelativePath(workDir, displayPath);
           if (!relative) continue;
-          void service.recordAgentWrite(observed.sessionId, checkpointId, { path: relative, operation: 'modify' })
-            .catch((error: unknown) => scope.logger.warn(`[time-machine] could not record Agent write ${relative}: ${errorMessage(error)}`));
+          chain = chain.then(() => service.recordAgentWrite(observed.sessionId, checkpointId, { path: relative, operation: 'modify' })
+            .then(() => undefined)
+            .catch((error: unknown) => {
+              scope.logger.warn(`[time-machine] could not record Agent write ${relative}: ${errorMessage(error)}`);
+            }));
         }
+        pendingLedgerWrites.set(turnKey, chain);
       });
     }
 
@@ -211,15 +218,17 @@ export function apply(ctx: Context, config: Config = {}): void {
       const kind = typeof reason?.kind === 'string' ? reason.kind : 'error';
       const failure = asRecord(reason?.error);
       const failedTools = collectFailedTools(getEvents(session), turn as number);
-      void service.finalizeTurnCheckpoint({
-        sessionId: session.id,
-        checkpointId,
-        status: kind === 'completed' ? 'success' : kind === 'aborted' || kind === 'interrupted' ? 'aborted' : 'failed',
-        errorMessage: typeof failure?.message === 'string' ? failure.message : kind === 'completed' ? undefined : `Turn ended: ${kind}`,
-        failedTools: failedTools.length > 0 ? failedTools : undefined,
-      }).catch((error: unknown) => {
-        scope.logger.error(`[time-machine] could not finalize ${checkpointId}: ${errorMessage(error)}`);
-      });
+      const ledgerWrites = pendingLedgerWrites.get(key) ?? Promise.resolve();
+      pendingLedgerWrites.delete(key);
+      void ledgerWrites.then(() => service.finalizeTurnCheckpoint({
+          sessionId: session.id,
+          checkpointId,
+          status: kind === 'completed' ? 'success' : kind === 'aborted' || kind === 'interrupted' ? 'aborted' : 'failed',
+          errorMessage: typeof failure?.message === 'string' ? failure.message : kind === 'completed' ? undefined : `Turn ended: ${kind}`,
+          failedTools: failedTools.length > 0 ? failedTools : undefined,
+        })).catch((error: unknown) => {
+          scope.logger.error(`[time-machine] could not finalize ${checkpointId}: ${errorMessage(error)}`);
+        });
     });
   });
 

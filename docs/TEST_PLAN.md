@@ -276,6 +276,7 @@ artifacts/<run-id>/
 - 使用同一 `DSH_HOME` 与 workspace 的 live restart 测试通过，第二次运行保留并新增 DAG checkpoint。
 - 真实 DSH Web 宿主通过 `session/create`、`session/prompt` 驱动 turn，并完成真实 `/api/fork` 与 `/api/rewind`。
 - 真实 DSH 不可达模型端点会产生并持久化 `failed` checkpoint，且保留错误证据。
+- 真实 DSH 强制执行退出码非零的 shell 命令后，checkpoint 持久化了 `failedTools` 证据。
 - Web UI 在 fork/rewind 后采用服务端返回的新 conversation sessionId，后续 DAG 查询不再使用旧会话。
 - CLI 命令注册层已自动化覆盖 `/tm-tree`、`/tm-fork`、`/tm-rewind`，包括 sessionController 返回的新会话身份和工作区恢复。
 - `turn/end` 生命周期会从 DSH 持久事件中提取失败工具、输入和错误原因，并传入 checkpoint 反思顾问；已用接近真实 DSH 消息结构的单元测试覆盖。
@@ -286,7 +287,7 @@ artifacts/<run-id>/
 
 1. 同一个持久 Web session 中真实执行 `/tm-tree`、`/tm-rewind`、`/tm-fork`。
 2. 真实 Session fork 失败后的补偿验收。
-3. 真实模型工具调用失败后，`failedTools` 能在 failed checkpoint 中持久化，并在真实 fork 后进入反思提示。
+3. 在真实 DSH fork 后验证上一失败工具事件进入反思提示（当前已验证 `failedTools` 持久化，fork 反思仍由 service/CLI 自动化覆盖）。
 4. 重启后从同一 DSH_HOME 恢复 DAG 和 session 边界。
 5. Windows Git 新版本临时索引兼容性专项测试。
 

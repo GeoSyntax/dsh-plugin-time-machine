@@ -45,7 +45,7 @@ describe('registered DSH time-machine commands', () => {
   });
 
   it('registers tm-tree, tm-fork, and tm-rewind handlers', () => {
-    expect(Object.keys(handlers)).toEqual(expect.arrayContaining(['tm-tree', 'tm-fork', 'tm-rewind']));
+    expect(Object.keys(handlers)).toEqual(expect.arrayContaining(['tm-tree', 'tm-fork', 'tm-rewind', 'tm-quarantine-migrate']));
   });
 
   it('runs tm-tree and tm-fork through the real service and session controller contract', async () => {

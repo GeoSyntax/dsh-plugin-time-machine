@@ -20,8 +20,6 @@
 - Record a bounded, whitespace-normalized failure summary in tool mutation
   evidence without persisting raw tool arguments or full command output.
 
-## Unreleased
-
 - Add a documented host workspace-routing contract covering multi-root
   services, isolated fork requirements, capability states, and failure
   acceptance tests; keep the current single-root behavior fail-closed until
@@ -100,6 +98,33 @@
 - 收紧 `/api/storage?sessionId=...` 的宿主边界，未知 session 不再创建空 DAG。
 - 补充 100-turn 长会话基准，记录长期 checkpoint 存储密度与小仓库延迟边界。
 
+- Add finalized assistant-message checkpoint mapping and a native
+  `conversation.chat.assistant-actions` companion action. Messages without a
+  durable checkpoint remain hidden instead of offering an unsafe guess.
+- Expose `rewindSessionMode: fork` in capability discovery and surface the
+  shared-lock/new-session semantics in the native client companion, so users
+  cannot mistake this append-only-safe rewind for in-place context undo.
+- Add an optional `client-companion/` source package for DSH Web clients. It
+  contributes a session-header action with timeline warnings, preview-first
+  confirmation, and navigation to the forked session while keeping React and
+  DSH UI dependencies out of the core service package.
+- Add `/tm-undo [count]`, a relative-turn CLI shortcut that resolves the active
+  DAG lineage and reuses the same safe restore, rescue, and session-fork path as
+  `/tm-rewind`.
+- Add `/tm-list [limit]` so users can discover those relative active-lineage
+  numbers without copying opaque checkpoint IDs.
+- Resolve `/tm-undo N` by completed turn rather than raw checkpoint count;
+  internal pre-command, rescue, and selective-restore nodes no longer shift
+  the user-visible undo distance.
+- Exclude still-running checkpoints from the user-visible undo lineage.
+- Publish the dependency-free companion contract from the `./client` package
+  subpath, including `timeline()` and its shared safety-aware projection.
+- Add the shared `POST /api/undo` and `TimeMachineClient.undo()` relative-turn
+  contract for CLI-like companions; confirmation UIs should still use preview
+  plans before mutation.
+- Add a Dashboard `Undo latest turn` action wired to the same REST contract,
+  with explicit confirmation and new-session feedback.
+
 ## 0.2.0 — 2026-09-19
 
 ### Added
@@ -157,31 +182,3 @@
 
 See [README.md](./README.md), [docs/COMPARISON.md](./docs/COMPARISON.md), and
 [docs/ROADMAP.md](./docs/ROADMAP.md) for configuration and upgrade guidance.
-## Unreleased
-
-- Add finalized assistant-message checkpoint mapping and a native
-  `conversation.chat.assistant-actions` companion action. Messages without a
-  durable checkpoint remain hidden instead of offering an unsafe guess.
-- Expose `rewindSessionMode: fork` in capability discovery and surface the
-  shared-lock/new-session semantics in the native client companion, so users
-  cannot mistake this append-only-safe rewind for in-place context undo.
-- Add an optional `client-companion/` source package for DSH Web clients. It
-  contributes a session-header action with timeline warnings, preview-first
-  confirmation, and navigation to the forked session while keeping React and
-  DSH UI dependencies out of the core service package.
-- Add `/tm-undo [count]`, a relative-turn CLI shortcut that resolves the active
-  DAG lineage and reuses the same safe restore, rescue, and session-fork path as
-  `/tm-rewind`.
-- Add `/tm-list [limit]` so users can discover those relative active-lineage
-  numbers without copying opaque checkpoint IDs.
-- Resolve `/tm-undo N` by completed turn rather than raw checkpoint count;
-  internal pre-command, rescue, and selective-restore nodes no longer shift
-  the user-visible undo distance.
-- Exclude still-running checkpoints from the user-visible undo lineage.
-- Publish the dependency-free companion contract from the `./client` package
-  subpath, including `timeline()` and its shared safety-aware projection.
-- Add the shared `POST /api/undo` and `TimeMachineClient.undo()` relative-turn
-  contract for CLI-like companions; confirmation UIs should still use preview
-  plans before mutation.
-- Add a Dashboard `Undo latest turn` action wired to the same REST contract,
-  with explicit confirmation and new-session feedback.

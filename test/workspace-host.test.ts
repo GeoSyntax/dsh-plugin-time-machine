@@ -35,7 +35,7 @@ describe('workspace host adapter contract', () => {
         resolveSessionWorkspace: async () => ({ workspaceId: 'root', cwd: alias, isolation: 'shared-lock' }),
         forkSession: async request => { calls.push(request); return { sessionId: 'child', workspaceId: request.workspaceId, cwd: request.cwd }; },
       }, 'source', undefined, root)).resolves.toEqual({ sessionId: 'child' });
-      expect(calls[0]?.cwd).toBe(alias);
+      expect(calls[0]?.cwd).toBe(await fs.realpath(alias));
     } finally {
       await fs.rm(root, { recursive: true, force: true });
       await fs.rm(aliasParent, { recursive: true, force: true });

@@ -16,7 +16,14 @@ export async function forkThroughWorkspaceHost(
 ): Promise<{ sessionId: string }> {
   const route = await validateWorkspaceRoute(await host.resolveSessionWorkspace(sourceSessionId));
   const configured = path.resolve(await fs.realpath(configuredRoot).catch(() => configuredRoot));
-  const routed = path.resolve(await fs.realpath(route.cwd).catch(() => route.cwd));
+  let routed: string;
+  try {
+    // Resolve again immediately before the host call. This closes the
+    // symlink/junction replacement window between route validation and fork.
+    routed = path.resolve(await fs.realpath(route.cwd));
+  } catch {
+    throw Object.assign(new Error(`Workspace route '${route.workspaceId}' changed before fork.`), { code: 'WORKSPACE_ROUTE_CHANGED' });
+  }
   const sameRoot = process.platform === 'win32'
     ? configured.toLowerCase() === routed.toLowerCase()
     : configured === routed;
@@ -27,7 +34,7 @@ export async function forkThroughWorkspaceHost(
     sourceSessionId,
     ...(atSeq !== undefined ? { atSeq } : {}),
     workspaceId: route.workspaceId,
-    cwd: route.cwd,
+    cwd: routed,
   });
   if (!result || typeof result.sessionId !== 'string' || !result.sessionId.trim()) {
     throw Object.assign(new Error('Workspace host returned an invalid child session id.'), { code: 'WORKSPACE_HOST_INVALID_RESULT' });

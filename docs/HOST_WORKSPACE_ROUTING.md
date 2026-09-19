@@ -15,8 +15,10 @@ route. Without a host adapter the response is explicitly
 it is returned, including an existence/`realpath` check. Invalid relative or
 missing paths fail closed. The real path is authoritative for safety checks,
 but valid platform aliases such as macOS `/var` ↔ `/private/var`, Windows
-junctions, and case-insensitive spellings are accepted and preserved when the
-adapter is called.
+junctions, and case-insensitive spellings are accepted. Read-only route
+inspection preserves the host spelling; a mutating fork resolves the route
+again immediately before calling the adapter and passes the canonical cwd to
+close a symlink/junction replacement race.
 
 ## Required host surface
 

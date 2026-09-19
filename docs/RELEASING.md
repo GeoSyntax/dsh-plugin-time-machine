@@ -34,6 +34,7 @@ dependencies 一起安装。
    pnpm install --frozen-lockfile
    pnpm typecheck
    pnpm test:smoke
+   pnpm test:package
    pnpm pack --dry-run
    ```
 

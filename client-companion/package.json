@@ -5,8 +5,15 @@
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
-  "exports": { ".": { "types": "./lib/index.d.ts", "default": "./lib/index.js" } },
-  "files": ["lib"],
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    }
+  },
+  "files": [
+    "lib"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -14,9 +21,15 @@
     "directory": "client-companion"
   },
   "homepage": "https://github.com/GeoSyntax/dsh-plugin-time-machine#readme",
-  "bugs": { "url": "https://github.com/GeoSyntax/dsh-plugin-time-machine/issues" },
-  "publishConfig": { "access": "public" },
-  "engines": { "node": ">=22.19.0" },
+  "bugs": {
+    "url": "https://github.com/GeoSyntax/dsh-plugin-time-machine/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
   "peerDependencies": {
     "@deepseek-ai/cordis": ">=4.0.0",
     "@deepseek-ai/dsh-client-ui-session": ">=0.1.6-alpha.1",
@@ -35,6 +48,23 @@
     "tsdown": "^0.15.0",
     "typescript": "^5.7.0"
   },
-  "dsh": { "client": { "inject": ["@deepseek-ai/dsh-client-ui-session", "@deepseek-ai/dsh-client-ui-conversation", "@deepseek-ai/dsh-client-ui-chat", "@deepseek-ai/dsh-client-ui-slots", "@deepseek-ai/dsh-client-ui-workspace"], "platform": "web" } },
-  "scripts": { "build": "tsdown", "typecheck": "tsc --noEmit", "test:smoke": "pnpm build && node test/slot-smoke.mjs", "test:package": "pnpm build && node test/package-smoke.mjs", "prepack": "pnpm build" }
+  "dsh": {
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-session",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-chat",
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-ui-workspace"
+      ],
+      "platform": "web"
+    }
+  },
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit",
+    "test:smoke": "pnpm build && node test/slot-smoke.mjs",
+    "test:package": "pnpm build && node test/package-smoke.mjs",
+    "prepack": "pnpm build"
+  }
 }

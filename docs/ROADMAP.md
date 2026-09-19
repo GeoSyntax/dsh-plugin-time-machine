@@ -66,10 +66,11 @@ remain green.
 
 Latest Windows Node 22 synthetic measurements are recorded in the README,
 including P50/P95. The benchmark now commits a tracked baseline and exercises
-the incremental overlay path; the current 10k-file fixture measured about
-2.14s P50 versus 11.44s for traditional copying across two turns while
-retaining status-path validation. This is evidence for the narrow safe case,
-not a claim of parity with every path-identity cache in Change Ledger.
+the incremental overlay path; the current five-turn 10k-file fixture measured
+about 2.94s P50 versus 15.24s for traditional copying while retaining
+status-path validation. This is evidence for the narrow safe case, not a claim
+of parity with every path-identity cache in Change Ledger; absolute latency
+varies with machine load.
 
 ### Native DSH timeline action — companion package implemented; cross-version matrix pending
 

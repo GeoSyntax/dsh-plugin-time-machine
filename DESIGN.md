@@ -43,6 +43,19 @@ Integrations may attach `externalEffects` declarations to a node through
 networks, processes, or cloud systems; they are persisted and surfaced in fork
 reflection, but the core never executes compensation implicitly.
 
+When `autoPreCommandSnapshot` is enabled, high-risk tool boundaries append
+`toolMutations` evidence to the boundary node. Each record contains the tool,
+result status, path delta, optional call id, and a bounded sanitized failure
+summary; delayed `tools/result` events are matched for five minutes without
+persisting raw command input or output. The read-only CLI, Web API, Dashboard,
+and companion client all expose the same ledger.
+
+Workspace routing is intentionally explicit. `TimeMachineWorkspaceHost` and
+`GET /api/workspace-route` allow a host to report a canonical workspace id,
+cwd, and actual isolation mode. Without that adapter the service reports
+`configured-root`/`shared-lock`; route validation rejects relative or malformed
+paths rather than inferring multi-workspace support.
+
 DAG mutations and workspace mutations are serialized per configured workspace. DAG files are published by writing a unique temporary file and renaming it into place.
 
 ## Restore protocol

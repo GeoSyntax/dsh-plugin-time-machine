@@ -4215,7 +4215,10 @@ async function validateWorkspaceRoute(route) {
   }
   try {
     const canonical = await fs7.realpath(route.cwd);
-    if (path8.resolve(canonical) !== path8.resolve(route.cwd)) {
+    const canonicalPath = path8.resolve(canonical);
+    const requestedPath = path8.resolve(route.cwd);
+    const samePath = process.platform === "win32" ? canonicalPath.toLowerCase() === requestedPath.toLowerCase() : canonicalPath === requestedPath;
+    if (!samePath) {
       throw Object.assign(new Error("Workspace route cwd must be a canonical real path."), { code: "BAD_REQUEST" });
     }
   } catch (error) {

@@ -654,7 +654,12 @@ async function validateWorkspaceRoute(route: WorkspaceRoute): Promise<void> {
   }
   try {
     const canonical = await fs.realpath(route.cwd);
-    if (path.resolve(canonical) !== path.resolve(route.cwd)) {
+    const canonicalPath = path.resolve(canonical);
+    const requestedPath = path.resolve(route.cwd);
+    const samePath = process.platform === 'win32'
+      ? canonicalPath.toLowerCase() === requestedPath.toLowerCase()
+      : canonicalPath === requestedPath;
+    if (!samePath) {
       throw Object.assign(new Error('Workspace route cwd must be a canonical real path.'), { code: 'BAD_REQUEST' });
     }
   } catch (error: any) {

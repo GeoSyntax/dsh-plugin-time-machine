@@ -116,6 +116,10 @@ async function runBenchmark() {
     turns: TURNS,
     traditionalCopyMs: Number(avgCopyTime.toFixed(2)),
     gitPlumbingMs: Number(avgGitTime.toFixed(2)),
+    traditionalCopyP50Ms: Number(percentile(copyTimes, 0.50).toFixed(2)),
+    traditionalCopyP95Ms: Number(percentile(copyTimes, 0.95).toFixed(2)),
+    gitPlumbingP50Ms: Number(percentile(gitTimes, 0.50).toFixed(2)),
+    gitPlumbingP95Ms: Number(percentile(gitTimes, 0.95).toFixed(2)),
     latencyRatio: Number(latencyRatio.toFixed(3)),
     traditionalCopyBytes: copyDiskSize,
     gitPlumbingBytes: gitObjectsSize,
@@ -129,6 +133,8 @@ async function runBenchmark() {
     console.log(`⏱️  Snapshot Latency:`);
     console.log(`   Traditional Copy  : ${pc.red(avgCopyTime.toFixed(2) + ' ms')}`);
     console.log(`   Git Plumbing (Ours): ${pc.green(pc.bold(avgGitTime.toFixed(2) + ' ms'))}  -> ${pc.yellow(`${latencyRatio.toFixed(1)}x copy latency`)}`);
+    console.log(`   P50 / P95 (copy)  : ${percentile(copyTimes, 0.50).toFixed(2)} / ${percentile(copyTimes, 0.95).toFixed(2)} ms`);
+    console.log(`   P50 / P95 (Git)   : ${percentile(gitTimes, 0.50).toFixed(2)} / ${percentile(gitTimes, 0.95).toFixed(2)} ms`);
     console.log(pc.dim('   Note: Git plumbing trades small-workspace latency for immutable history, isolated indexes, and deduplicated storage.'));
     console.log('');
     console.log(`💾 Total Storage Footprint:`);
@@ -146,4 +152,14 @@ runBenchmark().catch(console.error);
 function positiveInteger(raw: string | undefined, fallback: number): number {
   const value = raw === undefined ? fallback : Number(raw);
   return Number.isSafeInteger(value) && value > 0 ? value : fallback;
+}
+
+function percentile(values: readonly number[], quantile: number): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((left, right) => left - right);
+  const position = (sorted.length - 1) * quantile;
+  const lower = Math.floor(position);
+  const upper = Math.ceil(position);
+  if (lower === upper) return sorted[lower] ?? 0;
+  return (sorted[lower] ?? 0) + ((sorted[upper] ?? 0) - (sorted[lower] ?? 0)) * (position - lower);
 }

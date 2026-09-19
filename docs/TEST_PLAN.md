@@ -250,6 +250,7 @@ node <dsh-source>/apps/cli/lib/bin.js --profile tm-live --dump-config
 | Endpoint | 正常用例 | 异常用例 |
 |---|---|---|
 | `/api/status` | 返回 online、workspace、version | 服务停止后连接失败 |
+| `/api/sessions` | 列出持久化 session 摘要并按最近更新时间排序 | 损坏/半写 DAG 被忽略，不创建 `default` |
 | `/api/dag` | 返回指定 session DAG | 不存在 session、默认 session |
 | `/api/diff` | 两 checkpoint diff | 空 id、无效 id |
 | `/api/rewind` | safe、force、delete ignored | 非法 JSON、缺 checkpoint、无 sessionController |

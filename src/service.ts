@@ -110,6 +110,7 @@ export class TimeMachineService {
       restoreMode: options.config?.restoreMode ?? 'safe',
       preservePaths: options.config?.preservePaths ?? ['node_modules'],
       webHost: options.config?.webHost ?? '127.0.0.1',
+      webAllowedOrigins: [...(options.config?.webAllowedOrigins ?? [])],
       maxSnapshots: Math.max(0, Math.floor(options.config?.maxSnapshots ?? 0)),
       maxStorageBytes: Math.max(0, Math.floor(options.config?.maxStorageBytes ?? 0)),
       shadowStore: options.config?.shadowStore ?? false,

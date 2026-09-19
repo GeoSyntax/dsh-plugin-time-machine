@@ -38,6 +38,8 @@
 - Pre-command deduplication fallback for DSH adapters that omit `callId`.
 - Fallback checkpoint-to-checkpoint unified diffs, including an explicit binary
   marker, now power `getDiff`, Web preview, and the dashboard.
+- Explicit `webAllowedOrigins` support for trusted cross-port companions; wildcard
+  CORS remains disabled.
 
 ### Safety boundaries
 

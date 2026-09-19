@@ -22,6 +22,7 @@ export const Config: Schema<Config> = Schema.object({
   restoreMode: Schema.union(['safe', 'merge', 'force']).default('safe'),
   preservePaths: Schema.array(Schema.string()).default(['node_modules']),
   webHost: Schema.string().default('127.0.0.1'),
+  webAllowedOrigins: Schema.array(Schema.string()).default([]),
   maxSnapshots: Schema.number().default(0),
   maxStorageBytes: Schema.number().default(0),
   shadowStore: Schema.boolean().default(false),
@@ -134,7 +135,7 @@ export function apply(ctx: Context, config: Config = {}): void {
           ? controller.create({ cwd: service.workDir })
           : controller.fork({ sessionId: sourceSessionId, atSeq: boundary });
       },
-    });
+    }, config.webAllowedOrigins ?? []);
     ctx.effect(() => {
       void webServer.start().then((url) => {
         ctx.logger.info(`[time-machine] dashboard listening on ${url}`);

@@ -516,6 +516,21 @@ describe('TimeMachineWebServer', () => {
     expect(missingForkTarget.status).toBe(400);
     expect((await missingForkTarget.json()).error).toContain('checkpointId and branchName are required');
   });
+
+  it('allows only explicitly configured trusted cross-origin companions', async () => {
+    await server.stop();
+    server = new TimeMachineWebServer(service, testPort, '127.0.0.1', {}, ['http://127.0.0.1:4173/']);
+    await server.start();
+    const allowed = await fetch(`http://localhost:${testPort}/api/status`, {
+      headers: { Origin: 'http://127.0.0.1:4173' },
+    });
+    expect(allowed.status).toBe(200);
+    expect(allowed.headers.get('access-control-allow-origin')).toBe('http://127.0.0.1:4173');
+    const rejected = await fetch(`http://localhost:${testPort}/api/status`, {
+      headers: { Origin: 'http://127.0.0.1:4174' },
+    });
+    expect(rejected.status).toBe(403);
+  });
 });
 
 function requestWithHost(port: number, host: string): Promise<number> {

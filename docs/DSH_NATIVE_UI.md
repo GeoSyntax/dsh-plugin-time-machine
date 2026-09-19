@@ -18,6 +18,8 @@ assistant 的 `messageId`，并且按 session 注入；它不是一个可以从�
   强制校验一次性 restore-plan 绑定。它不是原生 slot UI，也不会自动注入按钮。
 - 已提供：`GET /api/sessions` 与 `TimeMachineClient.sessions()`，用于原生 companion
   在多个真实 DSH session 之间发现和切换；Dashboard 也不再隐式创建 `default` DAG。
+- 已提供：`webAllowedOrigins` 精确 Origin allowlist 和 CORS 响应头；默认仍拒绝跨源请求，
+  只有部署者明确列出可信的本地 DSH client origin 后，companion 才能跨端口调用 REST API。
 
 ## 推荐的 client companion 设计
 

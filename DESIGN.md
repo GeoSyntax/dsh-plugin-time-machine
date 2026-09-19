@@ -142,3 +142,12 @@ commands; a failed native write should have a reviewed checkpoint before dispatc
 
 **Evidence:** Cordis fixture tests and the live DSH source smoke both persist the
 pre-command boundary without preventing the tool turn from completing.
+
+### 2026-09-19 — explicit companion Origin allowlist
+
+**Changes:** the Web server accepts an optional exact `webAllowedOrigins` list and
+emits CORS headers only for those origins. The default remains same-origin/local
+only.
+
+**Reason:** a separately served DSH client companion needs a controlled cross-port
+transport, but wildcard CORS would undermine the localhost threat model.

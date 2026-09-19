@@ -2080,6 +2080,7 @@ var TimeMachineService = class {
       restoreMode: options.config?.restoreMode ?? "safe",
       preservePaths: options.config?.preservePaths ?? ["node_modules"],
       webHost: options.config?.webHost ?? "127.0.0.1",
+      webAllowedOrigins: [...options.config?.webAllowedOrigins ?? []],
       maxSnapshots: Math.max(0, Math.floor(options.config?.maxSnapshots ?? 0)),
       maxStorageBytes: Math.max(0, Math.floor(options.config?.maxStorageBytes ?? 0)),
       shadowStore: options.config?.shadowStore ?? false,
@@ -3092,11 +3093,13 @@ var TimeMachineWebServer = class {
   host;
   service;
   hooks;
-  constructor(service, port = 3088, host = "127.0.0.1", hooks = {}) {
+  allowedOrigins;
+  constructor(service, port = 3088, host = "127.0.0.1", hooks = {}, allowedOrigins = []) {
     this.service = service;
     this.port = port;
     this.host = host;
     this.hooks = hooks;
+    this.allowedOrigins = new Set(allowedOrigins.map(normalizeOrigin).filter((origin) => origin !== void 0));
   }
   async start() {
     return new Promise((resolve, reject) => {
@@ -3109,6 +3112,7 @@ var TimeMachineWebServer = class {
           res.end(JSON.stringify({ error: "Cross-origin or non-loopback request rejected" }));
           return;
         }
+        this.applyCorsHeaders(req, res);
         if (req.method === "OPTIONS") {
           res.writeHead(204);
           res.end();
@@ -3462,11 +3466,24 @@ var TimeMachineWebServer = class {
     if (!allowed.has(hostname)) return false;
     const origin = req.headers.origin;
     if (!origin) return true;
+    const normalizedOrigin = normalizeOrigin(origin);
+    if (normalizedOrigin && this.allowedOrigins.has(normalizedOrigin)) return true;
     try {
-      return allowed.has(new import_node_url.URL(origin).hostname);
+      const parsedOrigin = new import_node_url.URL(origin);
+      if (!allowed.has(parsedOrigin.hostname)) return false;
+      return effectivePort(req.headers.host ?? "", parsedOrigin.protocol) === effectivePort(parsedOrigin.host, parsedOrigin.protocol);
     } catch {
       return false;
     }
+  }
+  applyCorsHeaders(req, res) {
+    const origin = req.headers.origin;
+    const normalized = typeof origin === "string" ? normalizeOrigin(origin) : void 0;
+    if (!normalized || !this.allowedOrigins.has(normalized)) return;
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "content-type");
+    res.setHeader("Vary", "Origin");
   }
   async compensate(sessionId, rescueCheckpointId) {
     if (!rescueCheckpointId) return;
@@ -3476,6 +3493,20 @@ var TimeMachineWebServer = class {
     });
   }
 };
+function normalizeOrigin(value) {
+  try {
+    const parsed = new import_node_url.URL(value);
+    if (!["http:", "https:"].includes(parsed.protocol) || parsed.pathname !== "/" || parsed.search || parsed.hash || parsed.username || parsed.password) return void 0;
+    return parsed.origin;
+  } catch {
+    return void 0;
+  }
+}
+function effectivePort(hostHeader, protocol) {
+  const explicit = hostHeader.startsWith("[") ? hostHeader.slice(hostHeader.indexOf("]") + 2) : hostHeader.split(":").slice(1).join(":");
+  if (explicit) return explicit;
+  return protocol === "https:" ? "443" : "80";
+}
 
 // src/cli/commands.ts
 init_cjs_shims();
@@ -3846,6 +3877,7 @@ var Config = import_schemastery.default.object({
   restoreMode: import_schemastery.default.union(["safe", "merge", "force"]).default("safe"),
   preservePaths: import_schemastery.default.array(import_schemastery.default.string()).default(["node_modules"]),
   webHost: import_schemastery.default.string().default("127.0.0.1"),
+  webAllowedOrigins: import_schemastery.default.array(import_schemastery.default.string()).default([]),
   maxSnapshots: import_schemastery.default.number().default(0),
   maxStorageBytes: import_schemastery.default.number().default(0),
   shadowStore: import_schemastery.default.boolean().default(false),
@@ -3876,7 +3908,7 @@ function apply(ctx, config = {}) {
         const boundary = checkpoint.sessionState.boundarySeq;
         return boundary === void 0 ? controller.create({ cwd: service.workDir }) : controller.fork({ sessionId: sourceSessionId, atSeq: boundary });
       }
-    });
+    }, config.webAllowedOrigins ?? []);
     ctx.effect(() => {
       void webServer.start().then((url) => {
         ctx.logger.info(`[time-machine] dashboard listening on ${url}`);

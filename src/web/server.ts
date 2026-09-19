@@ -15,12 +15,14 @@ export class TimeMachineWebServer {
   private host: string;
   private service: TimeMachineService;
   private hooks: TimeMachineWebHooks;
+  private allowedOrigins: Set<string>;
 
-  constructor(service: TimeMachineService, port = 3088, host = '127.0.0.1', hooks: TimeMachineWebHooks = {}) {
+  constructor(service: TimeMachineService, port = 3088, host = '127.0.0.1', hooks: TimeMachineWebHooks = {}, allowedOrigins: readonly string[] = []) {
     this.service = service;
     this.port = port;
     this.host = host;
     this.hooks = hooks;
+    this.allowedOrigins = new Set(allowedOrigins.map(normalizeOrigin).filter((origin): origin is string => origin !== undefined));
   }
 
   async start(): Promise<string> {
@@ -35,6 +37,7 @@ export class TimeMachineWebServer {
           res.end(JSON.stringify({ error: 'Cross-origin or non-loopback request rejected' }));
           return;
         }
+        this.applyCorsHeaders(req, res);
 
         if (req.method === 'OPTIONS') {
           res.writeHead(204);
@@ -424,11 +427,25 @@ export class TimeMachineWebServer {
     if (!allowed.has(hostname)) return false;
     const origin = req.headers.origin;
     if (!origin) return true;
+    const normalizedOrigin = normalizeOrigin(origin);
+    if (normalizedOrigin && this.allowedOrigins.has(normalizedOrigin)) return true;
     try {
-      return allowed.has(new URL(origin).hostname);
+      const parsedOrigin = new URL(origin);
+      if (!allowed.has(parsedOrigin.hostname)) return false;
+      return effectivePort(req.headers.host ?? '', parsedOrigin.protocol) === effectivePort(parsedOrigin.host, parsedOrigin.protocol);
     } catch {
       return false;
     }
+  }
+
+  private applyCorsHeaders(req: http.IncomingMessage, res: http.ServerResponse): void {
+    const origin = req.headers.origin;
+    const normalized = typeof origin === 'string' ? normalizeOrigin(origin) : undefined;
+    if (!normalized || !this.allowedOrigins.has(normalized)) return;
+    res.setHeader('Access-Control-Allow-Origin', origin!);
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'content-type');
+    res.setHeader('Vary', 'Origin');
   }
 
   private async compensate(sessionId: string, rescueCheckpointId?: string): Promise<void> {
@@ -438,4 +455,22 @@ export class TimeMachineWebServer {
       createRescuePoint: false,
     });
   }
+}
+
+function normalizeOrigin(value: string): string | undefined {
+  try {
+    const parsed = new URL(value);
+    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.pathname !== '/' || parsed.search || parsed.hash || parsed.username || parsed.password) return undefined;
+    return parsed.origin;
+  } catch {
+    return undefined;
+  }
+}
+
+function effectivePort(hostHeader: string, protocol: string): string {
+  const explicit = hostHeader.startsWith('[')
+    ? hostHeader.slice(hostHeader.indexOf(']') + 2)
+    : hostHeader.split(':').slice(1).join(':');
+  if (explicit) return explicit;
+  return protocol === 'https:' ? '443' : '80';
 }

@@ -4842,7 +4842,12 @@ var import_node_path10 = __toESM(require("path"), 1);
 async function forkThroughWorkspaceHost(host, sourceSessionId, atSeq, configuredRoot) {
   const route = await validateWorkspaceRoute(await host.resolveSessionWorkspace(sourceSessionId));
   const configured = import_node_path10.default.resolve(await import_promises10.default.realpath(configuredRoot).catch(() => configuredRoot));
-  const routed = import_node_path10.default.resolve(await import_promises10.default.realpath(route.cwd).catch(() => route.cwd));
+  let routed;
+  try {
+    routed = import_node_path10.default.resolve(await import_promises10.default.realpath(route.cwd));
+  } catch {
+    throw Object.assign(new Error(`Workspace route '${route.workspaceId}' changed before fork.`), { code: "WORKSPACE_ROUTE_CHANGED" });
+  }
   const sameRoot = process.platform === "win32" ? configured.toLowerCase() === routed.toLowerCase() : configured === routed;
   if (!sameRoot) {
     throw Object.assign(new Error(`Workspace route '${route.workspaceId}' resolves outside the configured single-root service.`), { code: "WORKSPACE_ROUTE_MISMATCH" });
@@ -4851,7 +4856,7 @@ async function forkThroughWorkspaceHost(host, sourceSessionId, atSeq, configured
     sourceSessionId,
     ...atSeq !== void 0 ? { atSeq } : {},
     workspaceId: route.workspaceId,
-    cwd: route.cwd
+    cwd: routed
   });
   if (!result || typeof result.sessionId !== "string" || !result.sessionId.trim()) {
     throw Object.assign(new Error("Workspace host returned an invalid child session id."), { code: "WORKSPACE_HOST_INVALID_RESULT" });

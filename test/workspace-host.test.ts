@@ -14,7 +14,7 @@ describe('workspace host adapter contract', () => {
         forkSession: async request => { calls.push(request); return { sessionId: 'child', workspaceId: request.workspaceId, cwd: request.cwd }; },
       }, 'source', 7, root);
       expect(result).toEqual({ sessionId: 'child' });
-      expect(calls).toEqual([{ sourceSessionId: 'source', atSeq: 7, workspaceId: 'root', cwd: root }]);
+      expect(calls).toEqual([{ sourceSessionId: 'source', atSeq: 7, workspaceId: 'root', cwd: await fs.realpath(root) }]);
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

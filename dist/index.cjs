@@ -5024,7 +5024,12 @@ function apply(ctx, config = {}) {
             status: "success",
             tags: ["pre-command", `tool:${toolName}`]
           });
-          preCommandCheckpoints.set(callKey, { sessionId: session.id, turn, checkpointId: boundary.id, toolName, ...callId ? { callId } : {} });
+          const expiresAt = setTimeout(() => {
+            const pending = preCommandCheckpoints.get(callKey);
+            if (pending?.checkpointId === boundary.id) preCommandCheckpoints.delete(callKey);
+          }, 5 * 60 * 1e3);
+          expiresAt.unref?.();
+          preCommandCheckpoints.set(callKey, { sessionId: session.id, turn, checkpointId: boundary.id, toolName, ...callId ? { callId } : {}, expiresAt });
           ctx.logger.info(`[time-machine] captured pre-command checkpoint ${boundary.id} before ${toolName}`);
         } catch (error) {
           preCommandCalls.delete(callKey);
@@ -5052,12 +5057,29 @@ function apply(ctx, config = {}) {
   if (service.config.autoPreCommandSnapshot) {
     ctx.on("tools/result", (execution, result) => {
       const session = execution.agent?.session;
-      const turn = session ? currentSessionTurn(session) : void 0;
-      if (!session || !Number.isSafeInteger(turn)) return;
-      const { key } = preCommandCallKey(execution, session.id, turn);
-      const boundary = preCommandCheckpoints.get(key);
+      if (!session) return;
+      const turn = currentSessionTurn(session);
+      const { key, callId } = Number.isSafeInteger(turn) ? preCommandCallKey(execution, session.id, turn) : { key: "", callId: execution.callId?.trim() || void 0 };
+      let boundaryKey = key;
+      let boundary = key ? preCommandCheckpoints.get(key) : void 0;
+      if (!boundary) {
+        for (const [candidateKey, candidate] of preCommandCheckpoints) {
+          if (candidate.sessionId !== session.id) continue;
+          if (callId && candidate.callId === callId) {
+            boundaryKey = candidateKey;
+            boundary = candidate;
+            break;
+          }
+          if (!callId && candidateKey.includes(`\0anonymous:${executionIdentity(execution, anonymousExecutionIds, () => nextAnonymousExecutionId++)}\0`)) {
+            boundaryKey = candidateKey;
+            boundary = candidate;
+            break;
+          }
+        }
+      }
       if (!boundary) return;
-      preCommandCheckpoints.delete(key);
+      clearTimeout(boundary.expiresAt);
+      preCommandCheckpoints.delete(boundaryKey);
       void service.inspectCheckpointDelta(boundary.sessionId, boundary.checkpointId).then((changedFiles) => service.recordToolMutation(boundary.sessionId, boundary.checkpointId, {
         toolName: boundary.toolName,
         callId: boundary.callId,
@@ -5117,9 +5139,6 @@ function apply(ctx, config = {}) {
     pendingLedgerWrites.delete(key);
     for (const callKey of preCommandCalls) {
       if (callKey.startsWith(`${session.id}\0`) && callKey.endsWith(`\0${turn}`)) preCommandCalls.delete(callKey);
-    }
-    for (const callKey of preCommandCheckpoints.keys()) {
-      if (callKey.startsWith(`${session.id}\0`) && callKey.endsWith(`\0${turn}`)) preCommandCheckpoints.delete(callKey);
     }
     preCommandCounts.delete(`${session.id}\0${turn}`);
     const assistantMessageIds = assistantMessageIdsForTurn(getMessages(session), baseline);

@@ -165,6 +165,8 @@ describe('DSH Cordis plugin entry', () => {
         arguments: { command: 'rm -rf build' },
         agent,
       }, async () => { await fs.writeFile(path.join(workDir, 'tool-created.txt'), 'created by bash\n', 'utf8'); return { isError: false }; });
+      // The host may finalize the turn before a streamed tool/result callback arrives.
+      ctx.emit('session/event', session, { type: 'turn/end', seq: 2, data: { turn: 1, reason: { kind: 'completed' } } });
       ctx.emit('tools/result', { callId: 'high-risk-call', name: 'bash', agent }, { isError: false });
       const service = ctx.get('timeMachine') as TimeMachineService;
       let firstNode = Object.values((await service.getDAGManager(session.id)).tree.nodes).find(node => node.tags?.includes('pre-command'));

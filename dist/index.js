@@ -1508,9 +1508,11 @@ var DAGStateManager = class {
   tree;
   storageFile;
   encryptionKey;
+  previousEncryptionKey;
   constructor(options) {
     const branch = options.initialBranch || "main";
     this.encryptionKey = options.encryptionKey?.trim() ? createHash3("sha256").update(options.encryptionKey).digest() : void 0;
+    this.previousEncryptionKey = options.previousEncryptionKey?.trim() ? createHash3("sha256").update(options.previousEncryptionKey).digest() : void 0;
     this.tree = {
       formatVersion: DAG_FORMAT_VERSION,
       sessionId: options.sessionId,
@@ -1536,11 +1538,11 @@ var DAGStateManager = class {
   async init() {
     try {
       const content = await fs3.readFile(this.storageFile, "utf-8");
-      const parsed = this.decode(content);
-      const { tree, migrated } = this.migrateTree(parsed);
+      const decoded = this.decode(content);
+      const { tree, migrated } = this.migrateTree(decoded.tree);
       this.assertTree(tree);
       this.tree = tree;
-      if (migrated || this.isPlaintext(content)) await this.persist();
+      if (migrated || decoded.usedPreviousKey || this.isPlaintext(content)) await this.persist();
     } catch (error) {
       if (error?.code !== "ENOENT") throw error;
     }
@@ -1861,19 +1863,22 @@ var DAGStateManager = class {
     if (isDagEnvelope(parsed)) {
       if (!this.encryptionKey) throw new DAGStateKeyError("Encrypted DAG state requires the configured key.");
       if (parsed.version !== DAG_ENVELOPE_VERSION) throw new DAGStateKeyError("Encrypted DAG state format is unsupported.");
-      try {
-        const decipher = createDecipheriv2("aes-256-gcm", this.encryptionKey, Buffer.from(parsed.nonce, "base64url"));
-        decipher.setAuthTag(Buffer.from(parsed.tag, "base64url"));
-        const plaintext = Buffer.concat([
-          decipher.update(Buffer.from(parsed.ciphertext, "base64url")),
-          decipher.final()
-        ]);
-        return JSON.parse(plaintext.toString("utf8"));
-      } catch {
-        throw new DAGStateKeyError("Encrypted DAG state cannot be authenticated with the configured key.");
+      const keys = [{ key: this.encryptionKey, previous: false }, ...this.previousEncryptionKey ? [{ key: this.previousEncryptionKey, previous: true }] : []];
+      for (const candidate of keys) {
+        try {
+          const decipher = createDecipheriv2("aes-256-gcm", candidate.key, Buffer.from(parsed.nonce, "base64url"));
+          decipher.setAuthTag(Buffer.from(parsed.tag, "base64url"));
+          const plaintext = Buffer.concat([
+            decipher.update(Buffer.from(parsed.ciphertext, "base64url")),
+            decipher.final()
+          ]);
+          return { tree: JSON.parse(plaintext.toString("utf8")), usedPreviousKey: candidate.previous };
+        } catch {
+        }
       }
+      throw new DAGStateKeyError("Encrypted DAG state cannot be authenticated with the configured key.");
     }
-    return parsed;
+    return { tree: parsed, usedPreviousKey: false };
   }
   isPlaintext(content) {
     try {
@@ -2139,6 +2144,7 @@ var TimeMachineService = class {
       maxQuarantineBytes: Math.max(0, Math.floor(options.config?.maxQuarantineBytes ?? 0)),
       quarantineEncryptionKeyEnv: options.config?.quarantineEncryptionKeyEnv ?? "",
       stateEncryptionKeyEnv: options.config?.stateEncryptionKeyEnv ?? "",
+      stateEncryptionPreviousKeyEnv: options.config?.stateEncryptionPreviousKeyEnv ?? "",
       restorePlanTtlMs: Math.max(0, Math.floor(options.config?.restorePlanTtlMs ?? 9e5)),
       maxSnapshotFileBytes: Math.max(0, Math.floor(options.config?.maxSnapshotFileBytes ?? 0)),
       maxSnapshotBytes: Math.max(0, Math.floor(options.config?.maxSnapshotBytes ?? 0)),
@@ -2184,7 +2190,8 @@ var TimeMachineService = class {
       mgr = new DAGStateManager({
         sessionId,
         storageDir: this.storageDir,
-        encryptionKey: this.config.stateEncryptionKeyEnv ? process.env[this.config.stateEncryptionKeyEnv] : void 0
+        encryptionKey: this.config.stateEncryptionKeyEnv ? process.env[this.config.stateEncryptionKeyEnv] : void 0,
+        previousEncryptionKey: this.config.stateEncryptionPreviousKeyEnv ? process.env[this.config.stateEncryptionPreviousKeyEnv] : void 0
       });
       await mgr.init();
       this.dagManagers.set(sessionId, mgr);
@@ -2821,7 +2828,8 @@ var TimeMachineService = class {
         const manager = new DAGStateManager({
           sessionId,
           storageDir: this.storageDir,
-          encryptionKey: this.config.stateEncryptionKeyEnv ? process.env[this.config.stateEncryptionKeyEnv] : void 0
+          encryptionKey: this.config.stateEncryptionKeyEnv ? process.env[this.config.stateEncryptionKeyEnv] : void 0,
+          previousEncryptionKey: this.config.stateEncryptionPreviousKeyEnv ? process.env[this.config.stateEncryptionPreviousKeyEnv] : void 0
         });
         await manager.init();
         const tree = manager.tree;
@@ -2855,6 +2863,9 @@ var TimeMachineService = class {
       shadowStore: git && this.config.shadowStore,
       shadowStoreEncryption: false,
       dagStateEncryption: Boolean(this.config.stateEncryptionKeyEnv && process.env[this.config.stateEncryptionKeyEnv]),
+      dagStateKeyRotation: Boolean(
+        this.config.stateEncryptionKeyEnv && process.env[this.config.stateEncryptionKeyEnv] && this.config.stateEncryptionPreviousKeyEnv && process.env[this.config.stateEncryptionPreviousKeyEnv]
+      ),
       quarantineEncryption: Boolean(this.config.quarantineEncryptionKeyEnv && process.env[this.config.quarantineEncryptionKeyEnv]),
       quarantineMigration: git && Boolean(this.config.quarantineEncryptionKeyEnv),
       partialSnapshots: git && this.config.allowPartialSnapshots && (this.config.maxSnapshotFileBytes > 0 || this.config.maxSnapshotBytes > 0),
@@ -3848,6 +3859,7 @@ Use /tm-undo N to restore and fork from the numbered active-lineage checkpoint.`
           `Workspace isolation: ${capabilities.workspaceIsolation}`,
           `Shadow Git object encryption: ${capabilities.shadowStoreEncryption ? "enabled" : "not available (objects are plaintext at rest)"}`,
           `DAG/session metadata encryption: ${capabilities.dagStateEncryption ? "enabled" : "disabled (metadata is plaintext at rest)"}`,
+          `DAG/session key rotation: ${capabilities.dagStateKeyRotation ? "ready (current + previous keys configured)" : "not configured"}`,
           `Web dashboard: ${service.config.enableWebUI === false ? "disabled" : `available on ${service.config.webHost ?? "127.0.0.1"}:${service.config.webPort ?? 3088}`}`,
           `Pre-command checkpoints: ${service.config.autoPreCommandSnapshot ? "enabled" : "disabled"}`,
           `Agent-write ledger: ${service.config.enableAgentWriteLedger ? service.config.preserveVerifiedHandEditsByDefault ? "enabled (preserve hand-edits by default)" : "enabled" : "disabled"}`,
@@ -4428,6 +4440,7 @@ var Config = Schema.object({
   maxQuarantineBytes: Schema.number().default(0),
   quarantineEncryptionKeyEnv: Schema.string().default(""),
   stateEncryptionKeyEnv: Schema.string().default(""),
+  stateEncryptionPreviousKeyEnv: Schema.string().default(""),
   restorePlanTtlMs: Schema.number().default(9e5),
   maxSnapshotFileBytes: Schema.number().default(0),
   maxSnapshotBytes: Schema.number().default(0),

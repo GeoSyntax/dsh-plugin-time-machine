@@ -169,4 +169,20 @@ describe('DAGStateManager', () => {
     const missing = new DAGStateManager({ sessionId, storageDir: tmpDir });
     await expect(missing.init()).rejects.toMatchObject({ code: 'DAG_STATE_KEY_INVALID' });
   });
+
+  it('rotates an encrypted DAG envelope only after authenticating the previous key', async () => {
+    const sessionId = 'rotating-session';
+    const original = new DAGStateManager({ sessionId, storageDir: tmpDir, encryptionKey: 'old-key' });
+    await original.init();
+    await original.persist();
+    const file = path.join(tmpDir, `dag_${Buffer.from(sessionId).toString('base64url')}.json`);
+    const before = await fs.readFile(file, 'utf8');
+    const rotated = new DAGStateManager({ sessionId, storageDir: tmpDir, encryptionKey: 'new-key', previousEncryptionKey: 'old-key' });
+    await rotated.init();
+    const after = await fs.readFile(file, 'utf8');
+    expect(after).not.toBe(before);
+    await expect(new DAGStateManager({ sessionId, storageDir: tmpDir, encryptionKey: 'old-key' }).init())
+      .rejects.toMatchObject({ code: 'DAG_STATE_KEY_INVALID' });
+    await expect(new DAGStateManager({ sessionId, storageDir: tmpDir, encryptionKey: 'new-key' }).init()).resolves.toBeUndefined();
+  });
 });

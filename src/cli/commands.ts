@@ -69,6 +69,7 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
           `Workspace isolation: ${capabilities.workspaceIsolation}`,
           `Shadow Git object encryption: ${capabilities.shadowStoreEncryption ? 'enabled' : 'not available (objects are plaintext at rest)'}`,
           `DAG/session metadata encryption: ${capabilities.dagStateEncryption ? 'enabled' : 'disabled (metadata is plaintext at rest)'}`,
+          `DAG/session key rotation: ${capabilities.dagStateKeyRotation ? 'ready (current + previous keys configured)' : 'not configured'}`,
           `Web dashboard: ${service.config.enableWebUI === false ? 'disabled' : `available on ${service.config.webHost ?? '127.0.0.1'}:${service.config.webPort ?? 3088}`}`,
           `Pre-command checkpoints: ${service.config.autoPreCommandSnapshot ? 'enabled' : 'disabled'}`,
           `Agent-write ledger: ${service.config.enableAgentWriteLedger ? (service.config.preserveVerifiedHandEditsByDefault ? 'enabled (preserve hand-edits by default)' : 'enabled') : 'disabled'}`,

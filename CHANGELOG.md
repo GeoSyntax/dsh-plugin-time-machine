@@ -4,7 +4,8 @@
 
 - Add opt-in AES-256-GCM encryption for persisted DAG/session metadata via
   `stateEncryptionKeyEnv`; wrong or missing keys fail closed during restart and
-  session discovery, while validated legacy plaintext migrates atomically.
+  session discovery, while validated legacy plaintext migrates atomically. Add
+  `stateEncryptionPreviousKeyEnv` for authenticated, atomic key rotation.
 - Cap the optional companion's DSH client peer range at `>=0.1.6-alpha.1 <0.2.0`
   (and Cordis at 4.x) until a new host API matrix is verified; sync the lockfile
   and document the tested `.1/.2` slot matrix.

@@ -69,6 +69,7 @@ describe('TimeMachineWebServer', () => {
     expect(capabilities.handEditPolicy).toBe('reject-drift');
     expect(capabilities.shadowStoreEncryption).toBe(false);
     expect(capabilities.dagStateEncryption).toBe(false);
+    expect(capabilities.dagStateKeyRotation).toBe(false);
     expect(capabilities.policies).toMatchObject({
       restoreMode: 'safe',
       maxSnapshots: 0,

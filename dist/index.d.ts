@@ -1,7 +1,7 @@
 import { Context } from '@deepseek-ai/cordis';
 import Schema from '@deepseek-ai/schemastery';
-import { D as DAGTree, C as CheckpointNode, T as TimeMachineConfig, S as SessionState, A as AgentWriteRecord, F as FileChange, E as ExternalEffectRecord, a as ExternalEffectAdapter, b as ExternalEffectCompensationResult, R as RestoreOptions, c as RestoreResult, d as SelectiveRestoreResult, e as ReflectionSummary, f as DiffResult, g as RestorePreview, h as StorageStatus, i as SessionSummary, W as WorkspaceIsolation, P as PruneResult } from './client-BwHpOjE0.js';
-export { j as CompanionTimelineEntry, k as ExternalCompensationRequest, l as ExternalEffectCompensationContext, m as ExternalEffectRequest, n as ForkRequest, o as PreviewBoundAction, p as PruneRequest, q as RestoreFilesRequest, r as RestoreWorkspaceRequest, s as RewindRequest, t as SessionMessage, u as TimeMachineClient, v as TimeMachineClientError, w as TimeMachineClientOptions, U as UndoRequest, x as buildCompanionTimeline } from './client-BwHpOjE0.js';
+import { D as DAGTree, C as CheckpointNode, T as TimeMachineConfig, S as SessionState, A as AgentWriteRecord, F as FileChange, E as ExternalEffectRecord, a as ExternalEffectAdapter, b as ExternalEffectCompensationResult, R as RestoreOptions, c as RestoreResult, d as SelectiveRestoreResult, e as ReflectionSummary, f as DiffResult, g as RestorePreview, h as StorageStatus, i as SessionSummary, W as WorkspaceIsolation, P as PruneResult } from './client-BGRao_pJ.js';
+export { j as CompanionTimelineEntry, k as ExternalCompensationRequest, l as ExternalEffectCompensationContext, m as ExternalEffectRequest, n as ForkRequest, o as PreviewBoundAction, p as PruneRequest, q as RestoreFilesRequest, r as RestoreWorkspaceRequest, s as RewindRequest, t as SessionMessage, u as TimeMachineClient, v as TimeMachineClientError, w as TimeMachineClientOptions, U as UndoRequest, x as buildCompanionTimeline } from './client-BGRao_pJ.js';
 
 /** Current on-disk DAG schema. Bump only with an explicit migration path. */
 declare const DAG_FORMAT_VERSION: 1;
@@ -15,11 +15,14 @@ interface DAGManagerOptions {
     initialBranch?: string;
     /** Optional operator-provided key for encrypting persisted session metadata. */
     encryptionKey?: string;
+    /** Optional previous key accepted only to re-encrypt an authenticated legacy envelope. */
+    previousEncryptionKey?: string;
 }
 declare class DAGStateManager {
     tree: DAGTree;
     private readonly storageFile;
     private readonly encryptionKey?;
+    private readonly previousEncryptionKey?;
     constructor(options: DAGManagerOptions);
     /**
      * 初始化并尝试从本地恢复树结构
@@ -256,6 +259,7 @@ declare class TimeMachineService {
         shadowStore: boolean;
         shadowStoreEncryption: false;
         dagStateEncryption: boolean;
+        dagStateKeyRotation: boolean;
         quarantineEncryption: boolean;
         quarantineMigration: boolean;
         partialSnapshots: boolean;

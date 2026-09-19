@@ -23,7 +23,9 @@ files remain rejected.
 Protect optional shadow objects and sensitive metadata at rest. DAG/session
 metadata is now covered by `stateEncryptionKeyEnv`: it uses an authenticated
 AES-256-GCM envelope, migrates validated legacy plaintext on first open, and
-fails closed when the key is missing or wrong. Ignored-file quarantine is now
+fails closed when the key is missing or wrong. Key rotation is supported by
+temporarily configuring `stateEncryptionPreviousKeyEnv`; authenticated files
+are rewritten with the current key atomically. Ignored-file quarantine is now
 covered by `quarantineEncryptionKeyEnv`; an explicit `/tm-quarantine-migrate`
 path converts legacy plaintext backups while preserving fail-closed behavior.
 Shadow object encryption remains the outstanding part of this item.

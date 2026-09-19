@@ -32,6 +32,7 @@ export const Config: Schema<Config> = Schema.object({
   maxQuarantineBytes: Schema.number().default(0),
   quarantineEncryptionKeyEnv: Schema.string().default(''),
   stateEncryptionKeyEnv: Schema.string().default(''),
+  stateEncryptionPreviousKeyEnv: Schema.string().default(''),
   restorePlanTtlMs: Schema.number().default(900000),
   maxSnapshotFileBytes: Schema.number().default(0),
   maxSnapshotBytes: Schema.number().default(0),

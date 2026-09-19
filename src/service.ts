@@ -122,6 +122,7 @@ export class TimeMachineService {
       maxQuarantineBytes: Math.max(0, Math.floor(options.config?.maxQuarantineBytes ?? 0)),
       quarantineEncryptionKeyEnv: options.config?.quarantineEncryptionKeyEnv ?? '',
       stateEncryptionKeyEnv: options.config?.stateEncryptionKeyEnv ?? '',
+      stateEncryptionPreviousKeyEnv: options.config?.stateEncryptionPreviousKeyEnv ?? '',
       restorePlanTtlMs: Math.max(0, Math.floor(options.config?.restorePlanTtlMs ?? 900000)),
       maxSnapshotFileBytes: Math.max(0, Math.floor(options.config?.maxSnapshotFileBytes ?? 0)),
       maxSnapshotBytes: Math.max(0, Math.floor(options.config?.maxSnapshotBytes ?? 0)),
@@ -176,6 +177,7 @@ export class TimeMachineService {
         sessionId,
         storageDir: this.storageDir,
         encryptionKey: this.config.stateEncryptionKeyEnv ? process.env[this.config.stateEncryptionKeyEnv] : undefined,
+        previousEncryptionKey: this.config.stateEncryptionPreviousKeyEnv ? process.env[this.config.stateEncryptionPreviousKeyEnv] : undefined,
       });
       await mgr.init();
       this.dagManagers.set(sessionId, mgr);
@@ -949,6 +951,7 @@ export class TimeMachineService {
           sessionId,
           storageDir: this.storageDir,
           encryptionKey: this.config.stateEncryptionKeyEnv ? process.env[this.config.stateEncryptionKeyEnv] : undefined,
+          previousEncryptionKey: this.config.stateEncryptionPreviousKeyEnv ? process.env[this.config.stateEncryptionPreviousKeyEnv] : undefined,
         });
         await manager.init();
         const tree = manager.tree;
@@ -983,6 +986,7 @@ export class TimeMachineService {
     shadowStore: boolean;
     shadowStoreEncryption: false;
     dagStateEncryption: boolean;
+    dagStateKeyRotation: boolean;
     quarantineEncryption: boolean;
     quarantineMigration: boolean;
     partialSnapshots: boolean;
@@ -1034,6 +1038,10 @@ export class TimeMachineService {
       shadowStore: git && this.config.shadowStore,
       shadowStoreEncryption: false,
       dagStateEncryption: Boolean(this.config.stateEncryptionKeyEnv && process.env[this.config.stateEncryptionKeyEnv]),
+      dagStateKeyRotation: Boolean(
+        this.config.stateEncryptionKeyEnv && process.env[this.config.stateEncryptionKeyEnv]
+        && this.config.stateEncryptionPreviousKeyEnv && process.env[this.config.stateEncryptionPreviousKeyEnv],
+      ),
       quarantineEncryption: Boolean(this.config.quarantineEncryptionKeyEnv && process.env[this.config.quarantineEncryptionKeyEnv]),
       quarantineMigration: git && Boolean(this.config.quarantineEncryptionKeyEnv),
       partialSnapshots: git && this.config.allowPartialSnapshots && (this.config.maxSnapshotFileBytes > 0 || this.config.maxSnapshotBytes > 0),

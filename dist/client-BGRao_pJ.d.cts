@@ -171,6 +171,8 @@ interface TimeMachineConfig {
     quarantineEncryptionKeyEnv?: string;
     /** Optional environment variable containing a key used to encrypt persisted DAG/session metadata. */
     stateEncryptionKeyEnv?: string;
+    /** Optional old key used once to atomically rotate encrypted DAG/session metadata. */
+    stateEncryptionPreviousKeyEnv?: string;
     /** Lifetime of a preview restore plan. Set to 0 to disable plan expiry. */
     restorePlanTtlMs?: number;
     /** Maximum size of one captured regular file; 0 disables the guard. */

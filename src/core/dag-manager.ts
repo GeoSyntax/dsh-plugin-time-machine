@@ -23,17 +23,23 @@ export interface DAGManagerOptions {
   initialBranch?: string;
   /** Optional operator-provided key for encrypting persisted session metadata. */
   encryptionKey?: string;
+  /** Optional previous key accepted only to re-encrypt an authenticated legacy envelope. */
+  previousEncryptionKey?: string;
 }
 
 export class DAGStateManager {
   public tree: DAGTree;
   private readonly storageFile: string;
   private readonly encryptionKey?: Buffer;
+  private readonly previousEncryptionKey?: Buffer;
 
   constructor(options: DAGManagerOptions) {
     const branch = options.initialBranch || 'main';
     this.encryptionKey = options.encryptionKey?.trim()
       ? createHash('sha256').update(options.encryptionKey).digest()
+      : undefined;
+    this.previousEncryptionKey = options.previousEncryptionKey?.trim()
+      ? createHash('sha256').update(options.previousEncryptionKey).digest()
       : undefined;
     this.tree = {
       formatVersion: DAG_FORMAT_VERSION,
@@ -61,14 +67,14 @@ export class DAGStateManager {
   async init(): Promise<void> {
     try {
       const content = await fs.readFile(this.storageFile, 'utf-8');
-      const parsed = this.decode(content);
-      const { tree, migrated } = this.migrateTree(parsed);
+      const decoded = this.decode(content);
+      const { tree, migrated } = this.migrateTree(decoded.tree);
       this.assertTree(tree);
       this.tree = tree;
       // Legacy files are upgraded only after they have passed full validation.
       // This keeps a corrupt/foreign file untouched for diagnosis and makes the
       // migration atomic through the normal temporary-file persistence path.
-      if (migrated || this.isPlaintext(content)) await this.persist();
+      if (migrated || decoded.usedPreviousKey || this.isPlaintext(content)) await this.persist();
     } catch (error: any) {
       if (error?.code !== 'ENOENT') throw error;
     }
@@ -412,25 +418,27 @@ export class DAGStateManager {
     return `${JSON.stringify(envelope, null, 2)}\n`;
   }
 
-  private decode(content: string): DAGTree {
+  private decode(content: string): { tree: DAGTree; usedPreviousKey: boolean } {
     let parsed: unknown;
     try { parsed = JSON.parse(content); } catch { throw new Error(`Invalid DAG state JSON in '${this.storageFile}'.`); }
     if (isDagEnvelope(parsed)) {
       if (!this.encryptionKey) throw new DAGStateKeyError('Encrypted DAG state requires the configured key.');
       if (parsed.version !== DAG_ENVELOPE_VERSION) throw new DAGStateKeyError('Encrypted DAG state format is unsupported.');
-      try {
-        const decipher = createDecipheriv('aes-256-gcm', this.encryptionKey, Buffer.from(parsed.nonce, 'base64url'));
-        decipher.setAuthTag(Buffer.from(parsed.tag, 'base64url'));
-        const plaintext = Buffer.concat([
-          decipher.update(Buffer.from(parsed.ciphertext, 'base64url')),
-          decipher.final(),
-        ]);
-        return JSON.parse(plaintext.toString('utf8')) as DAGTree;
-      } catch {
-        throw new DAGStateKeyError('Encrypted DAG state cannot be authenticated with the configured key.');
+      const keys = [{ key: this.encryptionKey, previous: false }, ...(this.previousEncryptionKey ? [{ key: this.previousEncryptionKey, previous: true }] : [])];
+      for (const candidate of keys) {
+        try {
+          const decipher = createDecipheriv('aes-256-gcm', candidate.key, Buffer.from(parsed.nonce, 'base64url'));
+          decipher.setAuthTag(Buffer.from(parsed.tag, 'base64url'));
+          const plaintext = Buffer.concat([
+            decipher.update(Buffer.from(parsed.ciphertext, 'base64url')),
+            decipher.final(),
+          ]);
+          return { tree: JSON.parse(plaintext.toString('utf8')) as DAGTree, usedPreviousKey: candidate.previous };
+        } catch { /* try the explicitly configured previous key, then fail closed */ }
       }
+      throw new DAGStateKeyError('Encrypted DAG state cannot be authenticated with the configured key.');
     }
-    return parsed as DAGTree;
+    return { tree: parsed as DAGTree, usedPreviousKey: false };
   }
 
   private isPlaintext(content: string): boolean {

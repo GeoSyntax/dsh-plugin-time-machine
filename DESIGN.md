@@ -171,6 +171,12 @@ than treated as an empty session list.
 runtime/archive design remains separate and is not implied by this metadata
 encryption switch.
 
+During rotation operators set both `stateEncryptionKeyEnv` and
+`stateEncryptionPreviousKeyEnv`, restart once, verify discovery, then remove
+the previous-key setting. The previous key is only a decryption fallback; new
+writes always use the current key, and an unauthenticated file is never
+rewritten.
+
 ### 2026-09-19 — API boundary and external-effect identity hardening
 
 **Changes:** explicit external-effect IDs are now unique within a checkpoint and

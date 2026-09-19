@@ -35,8 +35,9 @@ assistant 的 `messageId`，并且按 session 注入；它不是一个可以从�
 - 已加入：`client-companion/` 独立 React/slot 包源码，使用 `TimeMachineClient`
   timeline、消息级 preview、确认后的相对 undo 和 `uiWorkspace.openSession()` 导航；它只声明 DSH
   client peer dependencies，不会被主服务包加载。当前已用 DSH `0.1.6-alpha.2`
-  依赖完成 typecheck、构建和 pack dry-run；仓库已配置 npm 发布流程与
-  `0.1.6-alpha.1/.2` 跨版本 slot CI，仍需等待首次 GitHub runner 执行并完成 npm 发布。
+  依赖完成 typecheck、构建和 pack dry-run，且已在 `0.1.6-alpha.1` 临时隔离安装中
+  通过双 slot smoke；仓库已配置 npm 发布流程与跨版本 slot CI，仍需首次 GitHub
+  runner 执行并完成 npm 发布。
 
 ## Client companion 设计与当前实现
 

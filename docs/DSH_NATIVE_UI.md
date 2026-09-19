@@ -26,6 +26,9 @@ assistant 的 `messageId`，并且按 session 注入；它不是一个可以从�
   再提交 session-bound restore plan 到 `/api/rewind`。
 - 已提供：`GET /api/sessions` 与 `TimeMachineClient.sessions()`，用于原生 companion
   在多个真实 DSH session 之间发现和切换；Dashboard 也不再隐式创建 `default` DAG。
+- 能力发现会返回 `rewindSessionMode: fork` 与 `workspaceIsolation: shared-lock`，让 UI
+  明确提示“回滚会打开新会话，工作区仍由共享锁保护”，避免误解成 Hermes/Claude
+  Code 式原地上下文回退或独立 worktree。
 - 已提供：`webAllowedOrigins` 精确 Origin allowlist 和 CORS 响应头；默认仍拒绝跨源请求，
   只有部署者明确列出可信的本地 DSH client origin 后，companion 才能跨端口调用 REST API。
 - 已加入：`client-companion/` 独立 React/slot 包源码，使用 `TimeMachineClient`

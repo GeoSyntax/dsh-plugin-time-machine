@@ -17,6 +17,7 @@ function TimeMachineAction({ sessionId, client, openSession }: ActionProps) {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [rows, setRows] = useState<CompanionTimelineEntry[]>([])
+  const [capabilities, setCapabilities] = useState<Record<string, unknown> | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -24,8 +25,11 @@ function TimeMachineAction({ sessionId, client, openSession }: ActionProps) {
     let active = true
     setBusy(true)
     setError(null)
-    void client.timeline(String(sessionId), 20).then((next) => {
-      if (active) setRows(next)
+    void Promise.all([client.timeline(String(sessionId), 20), client.capabilities().catch(() => ({}))]).then(([next, nextCapabilities]) => {
+      if (active) {
+        setRows(next)
+        setCapabilities(nextCapabilities)
+      }
     }).catch((reason: unknown) => {
       if (active) setError(reason instanceof Error ? reason.message : String(reason))
     }).finally(() => {
@@ -64,6 +68,8 @@ function TimeMachineAction({ sessionId, client, openSession }: ActionProps) {
     {open ? <div role="dialog" aria-label="Time Machine timeline" style={{ position: 'absolute', right: 0, zIndex: 10, minWidth: 280, padding: 12, background: 'var(--dsw-alias-surface-primary, #fff)', border: '1px solid var(--dsw-alias-border, #ccc)', borderRadius: 8 }}>
       {busy ? <p>Loading checkpoints…</p> : null}
       {error ? <p role="alert">{error}</p> : null}
+      {capabilities?.rewindSessionMode === 'fork' ? <p>Rewind restores files and opens a new session; DSH history is append-only.</p> : null}
+      {capabilities?.workspaceIsolation === 'shared-lock' ? <p>Workspace mode: shared lock (not an isolated worktree).</p> : null}
       {!busy && rows.length === 0 && !error ? <p>No completed turns available.</p> : null}
       {rows.filter(row => row.userVisible).map(row => <button key={row.checkpoint.id} type="button" disabled={!row.canUndo || busy} onClick={() => { void undo(row) }} style={{ display: 'block', width: '100%', textAlign: 'left', marginTop: 4 }}>
         {row.relativeUndo === 0 ? 'Current' : `Undo ${row.relativeUndo}`} · Turn {row.checkpoint.turnIndex}

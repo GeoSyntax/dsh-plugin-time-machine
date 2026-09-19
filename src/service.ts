@@ -903,6 +903,8 @@ export class TimeMachineService {
     externalEffectLedger: true;
     externalEffectAdapters: string[];
     workspaceIsolation: 'shared-lock';
+    /** Rewind restores files and opens a new DSH session; it never rewrites the append-only log. */
+    rewindSessionMode: 'fork';
     workspace: { sparseCheckout: boolean; submodulePaths: string[]; inProgressOperation: string | null };
     policies: {
       restoreMode: 'safe' | 'merge' | 'force';
@@ -947,6 +949,7 @@ export class TimeMachineService {
       externalEffectLedger: true,
       externalEffectAdapters: this.listExternalEffectAdapters(),
       workspaceIsolation: 'shared-lock',
+      rewindSessionMode: 'fork',
       workspace,
       policies: {
         restoreMode: this.config.restoreMode,

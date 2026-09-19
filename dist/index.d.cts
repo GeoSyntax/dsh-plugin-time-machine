@@ -844,11 +844,15 @@ declare class TimeMachineClient {
     private readonly http;
     constructor(options: TimeMachineClientOptions);
     capabilities(): Promise<Record<string, unknown>>;
+    status(): Promise<Record<string, unknown>>;
+    storage(sessionId?: string): Promise<Record<string, unknown>>;
     dag(sessionId: string): Promise<DAGTree>;
     preview(sessionId: string, checkpointId: string): Promise<PreviewBoundAction>;
     rewind(action: PreviewBoundAction, options?: Omit<RewindRequest, 'sessionId' | 'checkpointId' | 'restorePlanId'>): Promise<unknown>;
     fork(action: PreviewBoundAction, branchName: string, options?: Omit<ForkRequest, 'sessionId' | 'checkpointId' | 'restorePlanId' | 'branchName'>): Promise<unknown>;
     restoreFiles(request: RestoreFilesRequest): Promise<unknown>;
+    restoreFilesFromPreview(action: PreviewBoundAction, paths: string[], options?: Omit<RestoreFilesRequest, 'sessionId' | 'checkpointId' | 'paths' | 'restorePlanId'>): Promise<unknown>;
+    diff(sessionId: string, baseCheckpointId: string, targetCheckpointId: string): Promise<unknown>;
     agentWrites(sessionId: string, checkpointId: string): Promise<unknown>;
     unattributedChanges(sessionId: string, checkpointId: string): Promise<unknown>;
     private assertBinding;

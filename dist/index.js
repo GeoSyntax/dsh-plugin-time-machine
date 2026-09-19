@@ -3613,6 +3613,12 @@ var TimeMachineClient = class {
   async capabilities() {
     return this.get("/api/capabilities").then((body) => objectField(body, "capabilities"));
   }
+  async status() {
+    return this.get("/api/status");
+  }
+  async storage(sessionId) {
+    return this.get(`/api/storage${sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ""}`);
+  }
   async dag(sessionId) {
     return this.get(`/api/dag?sessionId=${encodeURIComponent(sessionId)}`);
   }
@@ -3636,6 +3642,13 @@ var TimeMachineClient = class {
   async restoreFiles(request) {
     if (!request.sessionId || !request.checkpointId || request.paths.length === 0) throw new Error("restoreFiles requires sessionId, checkpointId, and paths.");
     return this.post("/api/restore-files", request);
+  }
+  async restoreFilesFromPreview(action, paths, options = {}) {
+    this.assertBinding(action);
+    return this.restoreFiles({ ...options, sessionId: action.sessionId, checkpointId: action.checkpointId, paths, restorePlanId: action.restorePlanId });
+  }
+  async diff(sessionId, baseCheckpointId, targetCheckpointId) {
+    return this.get(`/api/diff?sessionId=${encodeURIComponent(sessionId)}&base=${encodeURIComponent(baseCheckpointId)}&target=${encodeURIComponent(targetCheckpointId)}`);
   }
   async agentWrites(sessionId, checkpointId) {
     return this.get(`/api/agent-writes?sessionId=${encodeURIComponent(sessionId)}&checkpoint=${encodeURIComponent(checkpointId)}`);

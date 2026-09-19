@@ -220,7 +220,8 @@ client slot 集成伪装成已支持能力。
 
 如果要开发自己的原生 UI companion，可直接复用无依赖的
 `TimeMachineClient`（`import { TimeMachineClient } from 'dsh-plugin-time-machine'`）。
-它提供 capabilities、DAG、preview、rewind、fork、选择性恢复和审计读取方法，
+它提供 status、capabilities、storage、DAG、diff、preview、rewind、fork、选择性恢复和审计读取方法，
+其中 `restoreFilesFromPreview()` 与 rewind/fork 一样复用一次性 preview 绑定，
 并强制把 `restorePlanId` 绑定到 preview 返回的 session/checkpoint；服务端返回
 409 时会抛出带 `status`/`code`/`body` 的 `TimeMachineClientError`。
 

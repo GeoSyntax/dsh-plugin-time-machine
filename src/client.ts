@@ -74,6 +74,14 @@ export class TimeMachineClient {
     return this.get('/api/capabilities').then((body) => objectField(body, 'capabilities'));
   }
 
+  async status(): Promise<Record<string, unknown>> {
+    return this.get('/api/status') as Promise<Record<string, unknown>>;
+  }
+
+  async storage(sessionId?: string): Promise<Record<string, unknown>> {
+    return this.get(`/api/storage${sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ''}`) as Promise<Record<string, unknown>>;
+  }
+
   async dag(sessionId: string): Promise<DAGTree> {
     return this.get(`/api/dag?sessionId=${encodeURIComponent(sessionId)}`) as Promise<DAGTree>;
   }
@@ -101,6 +109,15 @@ export class TimeMachineClient {
   async restoreFiles(request: RestoreFilesRequest): Promise<unknown> {
     if (!request.sessionId || !request.checkpointId || request.paths.length === 0) throw new Error('restoreFiles requires sessionId, checkpointId, and paths.');
     return this.post('/api/restore-files', request);
+  }
+
+  async restoreFilesFromPreview(action: PreviewBoundAction, paths: string[], options: Omit<RestoreFilesRequest, 'sessionId' | 'checkpointId' | 'paths' | 'restorePlanId'> = {}): Promise<unknown> {
+    this.assertBinding(action);
+    return this.restoreFiles({ ...options, sessionId: action.sessionId, checkpointId: action.checkpointId, paths, restorePlanId: action.restorePlanId });
+  }
+
+  async diff(sessionId: string, baseCheckpointId: string, targetCheckpointId: string): Promise<unknown> {
+    return this.get(`/api/diff?sessionId=${encodeURIComponent(sessionId)}&base=${encodeURIComponent(baseCheckpointId)}&target=${encodeURIComponent(targetCheckpointId)}`);
   }
 
   async agentWrites(sessionId: string, checkpointId: string): Promise<unknown> {

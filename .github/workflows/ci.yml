@@ -83,6 +83,9 @@ jobs:
       - name: Smoke-test slot registration
         working-directory: client-companion
         run: pnpm test:smoke
+      - name: Verify consumer package metadata
+        working-directory: client-companion
+        run: pnpm test:package
       - name: Verify companion package contents
         working-directory: client-companion
         run: pnpm pack --dry-run

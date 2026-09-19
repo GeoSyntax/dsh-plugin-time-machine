@@ -4,8 +4,8 @@
   "description": "Optional DeepSeek Harness Web client companion for Time Machine checkpoints",
   "type": "module",
   "main": "lib/index.js",
-  "types": "lib/types/index.d.ts",
-  "exports": { ".": { "types": "./lib/types/index.d.ts", "default": "./lib/index.js" } },
+  "types": "lib/index.d.ts",
+  "exports": { ".": { "types": "./lib/index.d.ts", "default": "./lib/index.js" } },
   "files": ["lib"],
   "license": "MIT",
   "repository": {

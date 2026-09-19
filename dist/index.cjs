@@ -1551,7 +1551,7 @@ __export(index_exports, {
 module.exports = __toCommonJS(index_exports);
 init_cjs_shims();
 var import_node_path11 = __toESM(require("path"), 1);
-var import_promises10 = __toESM(require("fs/promises"), 1);
+var import_promises11 = __toESM(require("fs/promises"), 1);
 var import_node_fs = __toESM(require("fs"), 1);
 var import_node_crypto7 = require("crypto");
 var import_schemastery = __toESM(require("@deepseek-ai/schemastery"), 1);
@@ -3807,14 +3807,10 @@ async function validateWorkspaceRoute(route) {
   if (typeof route.cwd !== "string" || !import_node_path8.default.isAbsolute(route.cwd) || /[\0\r\n]/.test(route.cwd)) {
     throw Object.assign(new Error("Workspace route cwd must be an absolute path."), { code: "BAD_REQUEST" });
   }
+  let canonicalPath;
   try {
-    const canonical = await import_promises8.default.realpath(route.cwd);
-    const canonicalPath = import_node_path8.default.resolve(canonical);
-    const requestedPath = import_node_path8.default.resolve(route.cwd);
-    const samePath = process.platform === "win32" ? canonicalPath.toLowerCase() === requestedPath.toLowerCase() : canonicalPath === requestedPath;
-    if (!samePath) throw Object.assign(new Error("Workspace route cwd must be a canonical real path."), { code: "BAD_REQUEST" });
+    canonicalPath = import_node_path8.default.resolve(await import_promises8.default.realpath(route.cwd));
   } catch (error) {
-    if (error?.code === "BAD_REQUEST") throw error;
     throw Object.assign(new Error("Workspace route cwd does not exist."), { code: "BAD_REQUEST" });
   }
   if (!["shared-lock", "isolated-worktree", "isolated-container"].includes(route.isolation)) {
@@ -4841,11 +4837,12 @@ async function compensate(service, sessionId, rescueCheckpointId) {
 
 // src/core/workspace-host.ts
 init_cjs_shims();
+var import_promises10 = __toESM(require("fs/promises"), 1);
 var import_node_path10 = __toESM(require("path"), 1);
 async function forkThroughWorkspaceHost(host, sourceSessionId, atSeq, configuredRoot) {
   const route = await validateWorkspaceRoute(await host.resolveSessionWorkspace(sourceSessionId));
-  const configured = import_node_path10.default.resolve(configuredRoot);
-  const routed = import_node_path10.default.resolve(route.cwd);
+  const configured = import_node_path10.default.resolve(await import_promises10.default.realpath(configuredRoot).catch(() => configuredRoot));
+  const routed = import_node_path10.default.resolve(await import_promises10.default.realpath(route.cwd).catch(() => route.cwd));
   const sameRoot = process.platform === "win32" ? configured.toLowerCase() === routed.toLowerCase() : configured === routed;
   if (!sameRoot) {
     throw Object.assign(new Error(`Workspace route '${route.workspaceId}' resolves outside the configured single-root service.`), { code: "WORKSPACE_ROUTE_MISMATCH" });
@@ -5130,7 +5127,7 @@ function apply(ctx, config = {}) {
   const workDir = import_node_path11.default.resolve(process.cwd());
   const service = new TimeMachineService({ workDir, storageDir: config.storageDir, config });
   ctx.provide("timeMachine", service);
-  const canonicalWorkDir = import_promises10.default.realpath(service.workDir).catch(() => service.workDir);
+  const canonicalWorkDir = import_promises11.default.realpath(service.workDir).catch(() => service.workDir);
   let workspaceHost;
   try {
     workspaceHost = ctx.get("workspaceHost");
@@ -5369,7 +5366,7 @@ function apply(ctx, config = {}) {
       const session = agent.session;
       const cwd = session.header.cwd ? import_node_path11.default.resolve(session.header.cwd) : workDir;
       const [canonicalCwd, canonicalRoot] = await Promise.all([
-        import_promises10.default.realpath(cwd).catch(() => cwd),
+        import_promises11.default.realpath(cwd).catch(() => cwd),
         canonicalWorkDir
       ]);
       if (canonicalCwd !== canonicalRoot) {

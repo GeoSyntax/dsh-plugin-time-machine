@@ -296,7 +296,7 @@ artifacts/<run-id>/
 
 当前已经有证据：
 
-- 当前仓库全量自动化测试 101/101 通过；Web 22/22、CLI 13/13，companion client 4/4，覆盖 DSH durable `tool/call`/`tool/result` 失败配对、反思输入提取、失败 fork 点反思，以及 Web fork 失败补偿测试。CLI 与 Web `/api/undo` 回归还验证了同一 turn 内 pre-command 节点不会改变按 turn 的回退距离，并且不会把 running checkpoint 当作已完成 turn；client timeline 回归锁定相同的 UI 安全规则。
+- 当前仓库全量自动化测试 103/103 通过；Web 23/23、CLI 13/13，companion client 5/5，覆盖 DSH durable `tool/call`/`tool/result` 失败配对、反思输入提取、失败 fork 点反思、消息级 checkpoint 映射，以及 Web fork 失败补偿测试。CLI 与 Web `/api/undo` 回归还验证了同一 turn 内 pre-command 节点不会改变按 turn 的回退距离，并且不会把 running checkpoint 当作已完成 turn；client timeline 回归锁定相同的 UI 安全规则。
 - `client-companion/` 已使用实际安装的 DSH `0.1.6-alpha.2` client 包完成严格 typecheck、`tsdown` 构建、slot 注册 smoke 和 `pnpm pack --dry-run`；它仍是可选包，跨版本 slot CI 与 npm 发布尚未完成。
 - finalized assistant message 映射已覆盖：checkpoint 在 turn 结束时记录宿主 message id，`/api/checkpoint-for-message` 对未知消息 fail-closed，companion 只对可解析的消息显示 rewind action。
 - Git 与 fallback 恢复完成后均执行工作区摘要校验；持久化 DAG 加载会校验节点、父节点、分支和会话归属。

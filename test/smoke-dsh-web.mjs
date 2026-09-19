@@ -171,6 +171,15 @@ try {
   if (!checkpoint || !['success', 'failed', 'aborted'].includes(checkpoint.status)) {
     throw new Error(`Real-host turn did not finalize. Logs:\n${logs}`);
   }
+  if (typeof checkpoint.assistantMessageId !== 'string' || !checkpoint.assistantMessageId) {
+    throw new Error('Real-host checkpoint did not capture the finalized assistant message id.');
+  }
+  const messageCheckpoint = await fetch(`http://127.0.0.1:${pluginPort}/api/checkpoint-for-message?sessionId=${encodeURIComponent(sessionId)}&messageId=${encodeURIComponent(checkpoint.assistantMessageId)}`);
+  const messageCheckpointBody = await messageCheckpoint.json();
+  if (!messageCheckpoint.ok || messageCheckpointBody.checkpoint?.id !== checkpoint.id) {
+    throw new Error(`Message action checkpoint mapping failed: ${messageCheckpoint.status} ${JSON.stringify(messageCheckpointBody)}`);
+  }
+
   const file = path.join(workspace, 'web-smoke.txt');
   let fileContent;
   try {

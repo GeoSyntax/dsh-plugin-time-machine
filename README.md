@@ -18,6 +18,11 @@ dsh plugin --profile web add github:GeoSyntax/dsh-plugin-time-machine
 dsh plugin --profile web add npm:dsh-plugin-time-machine
 ```
 
+原生 Web UI companion 单独发布为 `dsh-plugin-time-machine-client`，需要与
+目标 DSH Web client 版本匹配；它不会被主服务包自动安装。源码开发和发布
+步骤见 [`client-companion/README.md`](client-companion/README.md) 与
+[`docs/RELEASING.md`](docs/RELEASING.md)。
+
 ## Quickstart
 
 在目标工作区执行：

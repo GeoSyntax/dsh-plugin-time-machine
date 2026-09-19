@@ -2,6 +2,11 @@
 
 项目尚未发布到 npm。首次公开 release 与后续版本使用同一检查流程。
 
+主服务和原生 Web companion 使用独立版本与 tag：主服务使用 `vX.Y.Z`，
+companion 使用 `client-vX.Y.Z`。companion 的 npm 名称是
+`dsh-plugin-time-machine-client`，运行时必须与匹配的 DSH Web client peer
+dependencies 一起安装。
+
 1. 从干净的 `main` 开始，确认 Node.js 与 pnpm 版本符合 `package.json`。
 2. 更新 `package.json` 版本、`CHANGELOG.md`、兼容范围和必要的存储迁移说明。
 3. 运行统一发布门禁：
@@ -22,5 +27,17 @@
    `pnpm test:release`、校验 tag 与 package version 一致，然后使用 npm
    provenance 发布。首次启用前，在仓库环境中配置 `NPM_TOKEN`，并确认 npm
    trusted publishing/2FA 策略；发布后从空 profile 重做一次 registry 安装验证。
+9. 发布 companion 时，在 `client-companion/package.json` 更新版本，运行：
+
+   ```bash
+   cd client-companion
+   pnpm install --frozen-lockfile
+   pnpm typecheck
+   pnpm test:smoke
+   pnpm pack --dry-run
+   ```
+
+   提交后创建 `client-vX.Y.Z` tag。Release workflow 会构建本地 core link、
+   重跑 companion 门禁、校验 tag 版本，并在非 dry-run 时以 npm provenance 发布。
 
 如果任何恢复测试失败，不发布；不要仅通过改文档隐藏不兼容行为。

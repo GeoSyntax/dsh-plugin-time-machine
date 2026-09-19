@@ -254,6 +254,7 @@ node <dsh-source>/apps/cli/lib/bin.js --profile tm-live --dump-config
 | `/api/dag` | 返回指定 session DAG | 不存在 session、默认 session |
 | `/api/diff` | 两 checkpoint diff | 空 id、无效 id |
 | `/api/rewind` | safe、force、delete ignored | 非法 JSON、缺 checkpoint、无 sessionController |
+| `/api/restore-workspace` | 完整工作区恢复且不重启会话 | 未知 session、缺 checkpoint、恢复计划失效 |
 | `/api/fork` | 新 branch、description | 重名 branch、缺参数、fork 失败补偿 |
 
 所有 Web API 还要验证：非 loopback Host 返回 403、跨 origin 返回 403、请求体超过 64 KiB 被拒绝、错误响应不泄漏密钥或绝对敏感路径。
@@ -294,7 +295,7 @@ artifacts/<run-id>/
 
 当前已经有证据：
 
-- L1 核心测试 23/23 通过；新增 DSH durable `tool/call`/`tool/result` 失败配对、反思输入提取、失败 fork 点反思，以及 Web fork 失败补偿测试。
+- 当前仓库全量自动化测试 96/96 通过；Web 21/21、CLI 10/10，覆盖 DSH durable `tool/call`/`tool/result` 失败配对、反思输入提取、失败 fork 点反思，以及 Web fork 失败补偿测试。
 - Git 与 fallback 恢复完成后均执行工作区摘要校验；持久化 DAG 加载会校验节点、父节点、分支和会话归属。
 - 真实 DSH 源码宿主加载插件通过。
 - 真实本地模型请求、文件创建、turn 结束后的 finalized checkpoint 落盘通过。
@@ -307,8 +308,9 @@ artifacts/<run-id>/
 - 真实 DSH Web smoke 在 Windows 上通过有效本地网关完成真实 turn、fork、rewind，并触发真实缺失 session 的 `SessionController` fork 拒绝；rescue 补偿恢复了 fork 调用前工作区。
 - Web UI 在 fork/rewind 后采用服务端返回的新 conversation sessionId，后续 DAG 查询不再使用旧会话。
 - CLI 命令注册层已自动化覆盖 `/tm-tree`、`/tm-fork`、`/tm-rewind`，包括 sessionController 返回的新会话身份和工作区恢复。
+- CLI 命令注册层已自动化覆盖 `/tm-tree`、`/tm-doctor`、`/tm-restore`、`/tm-fork`、`/tm-rewind`，包括不分叉会话的完整工作区恢复。
 - `turn/end` 生命周期会从 DSH 持久事件中提取失败工具、输入和错误原因，并传入 checkpoint 反思顾问；已用接近真实 DSH 消息结构的单元测试覆盖。
-- 真实 checkpoint DAG 和 Dashboard status/dag 通过。
+- 真实 checkpoint DAG 和 Dashboard status/dag 通过；`/api/restore-workspace` 通过 Web 回归并保持当前会话不变。
 - Web API rewind/fork、Host/JSON 安全、Session fork 失败补偿和重启 DAG 持久化已有自动化覆盖。
 
 仍需补齐的 P1/P2 证据：

@@ -9,7 +9,8 @@ headless, and non-React profiles.
 The package registers one `conversation.session.header.actions` slot. It reads
 the UI-neutral `TimeMachineClient.timeline()` projection, previews a selected
 checkpoint, shows the returned diff/conflict/omitted-path counts, and only then
-submits the one-shot restore plan. A successful rewind opens the forked DSH
+submits the one-shot restore plan. Confirmation also includes external-effect
+and read-only abandoned-branch reflection warnings. A successful rewind opens the forked DSH
 session through `uiWorkspace.openSession()`.
 
 The package does not restore files directly, bypass the restore-plan fence, or

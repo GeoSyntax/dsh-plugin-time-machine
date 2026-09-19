@@ -6,8 +6,8 @@ This optional Web client package contributes a session-header action to
 `dsh-plugin-time-machine/client` contract.
 
 The actions resolve finalized assistant messages to their checkpoint, load the
-safety-aware timeline, show partial/unattributed/external effect warnings, ask
-for confirmation, invoke preview-bound rewind, and open the
+safety-aware timeline, show partial/unattributed/external effect and abandoned-
+branch reflection warnings, ask for confirmation, invoke preview-bound rewind, and open the
 forked session returned by DSH. The service package deliberately does not
 include React or DSH client UI dependencies.
 

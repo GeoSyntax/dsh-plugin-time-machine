@@ -30,7 +30,15 @@ async function previewAndRewind(
   const changed = action.preview.diffs.length
   const conflicts = action.preview.conflictingPaths.length
   const omitted = action.preview.targetOmittedPaths?.length ?? 0
-  const details = `\n\n${changed} file change(s), ${conflicts} conflict path(s), ${omitted} omitted path(s).`
+  const externalEffects = action.preview.externalEffects ?? []
+  const effectWarning = externalEffects.length > 0
+    ? `\n\n⚠ ${externalEffects.length} external effect(s) are not undone by file restore: ${externalEffects.map(effect => `${effect.adapter}:${effect.operation}`).join(', ')}`
+    : ''
+  const reflection = await client.reflection(String(sessionId), checkpointId).catch(() => undefined) as { reflection?: { hasPastFailures?: boolean; summaryNote?: string } } | undefined
+  const reflectionWarning = reflection?.reflection?.hasPastFailures
+    ? `\n\n⚠ ${reflection.reflection.summaryNote ?? 'Prior abandoned-branch failures were recorded.'}`
+    : ''
+  const details = `\n\n${changed} file change(s), ${conflicts} conflict path(s), ${omitted} omitted path(s).${effectWarning}${reflectionWarning}`
   if (!window.confirm(`${label}${details}`)) return
   const result = await client.rewind(action, { merge: action.preview.requiresForce }) as { conversation?: { sessionId?: string } }
   const next = result.conversation?.sessionId

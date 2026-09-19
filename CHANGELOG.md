@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add opt-in AES-256-GCM encryption for plugin-owned Git shadow objects via
+  `shadowStoreEncryptionKeyEnv`. Git receives a disposable runtime object
+  directory; durable payloads are authenticated, explicit `/tm-shadow-migrate`
+  converts legacy plaintext, and `shadowStoreEncryptionPreviousKeyEnv` enables
+  authenticated key rotation. Add CLI, Web API, and companion client migration
+  surfaces with fail-closed `SHADOW_KEY_INVALID`/`SHADOW_ARCHIVE_CORRUPT`
+  errors.
 - Add opt-in AES-256-GCM encryption for persisted DAG/session metadata via
   `stateEncryptionKeyEnv`; wrong or missing keys fail closed during restart and
   session discovery, while validated legacy plaintext migrates atomically. Add

@@ -3129,6 +3129,12 @@ var TimeMachineWebServer = class {
       if (typeof body.reversible !== "boolean") {
         throw Object.assign(new Error("reversible must be a boolean"), { code: "BAD_REQUEST" });
       }
+      if (body.status !== void 0 && !["unresolved", "compensated", "unknown"].includes(body.status)) {
+        throw Object.assign(new Error("status must be unresolved, compensated, or unknown"), { code: "BAD_REQUEST" });
+      }
+      if (body.id !== void 0 && (typeof body.id !== "string" || !body.id.trim() || /\s/.test(body.id))) {
+        throw Object.assign(new Error("id must be a non-empty string without whitespace"), { code: "BAD_REQUEST" });
+      }
       const result = await this.service.recordExternalEffect(body.sessionId, body.checkpointId, {
         adapter: body.adapter,
         operation: body.operation,

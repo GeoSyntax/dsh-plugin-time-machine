@@ -177,6 +177,20 @@ describe('TimeMachineWebServer', () => {
     expect(called).toBe(false);
   });
 
+  it('rejects malformed external effect declarations before touching the DAG', async () => {
+    const sessionId = 'web-invalid-effect';
+    const checkpoint = await service.createTurnCheckpoint({
+      sessionId, turnIndex: 1, prompt: 'invalid effect', sessionState: { sessionId, messages: [] },
+    });
+    const response = await fetch(`http://localhost:${testPort}/api/external-effects`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId, checkpointId: checkpoint.id, adapter: 'adapter', operation: 'op', reversible: true, failureSemantics: 'retryable', status: 'bogus' }),
+    });
+    expect(response.status).toBe(400);
+    expect((await response.json()).error).toContain('status must be');
+    expect((await service.getDAGManager(sessionId)).getNode(checkpoint.id)?.externalEffects ?? []).toHaveLength(0);
+  });
+
   it('returns a conflict instead of a server error when explicit compensation lacks an adapter', async () => {
     const sessionId = 'web-missing-adapter';
     const checkpoint = await service.createTurnCheckpoint({

@@ -3136,7 +3136,9 @@ var TimeMachineWebServer = class {
       return;
     }
     if (pathname === "/api/storage" && req.method === "GET") {
-      const sessionId = query.get("sessionId") || void 0;
+      const rawSessionId = query.get("sessionId");
+      const sessionId = rawSessionId ? this.requireSessionId(rawSessionId) : void 0;
+      if (sessionId) await this.requirePersistedSession(sessionId);
       const status = await this.service.getStorageStatus(sessionId);
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ status }));

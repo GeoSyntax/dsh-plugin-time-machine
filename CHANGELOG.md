@@ -7,6 +7,7 @@
 - 接入可选的 DSH `sessionController.inspect` 宿主核验，避免展示或操作已经从 DSH 会话目录删除的孤儿 session。
 - 新增完整工作区“只恢复文件、不分叉会话”路径：`/tm-restore` 与 `/api/restore-workspace`。
 - 更新合成基准记录：100/1,000/10,000 文件 fixture 的实际延迟与存储比例。
+- 收紧 `/api/storage?sessionId=...` 的宿主边界，未知 session 不再创建空 DAG。
 
 ## 0.2.0 — 2026-09-19
 

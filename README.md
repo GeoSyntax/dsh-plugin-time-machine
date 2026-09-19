@@ -98,7 +98,7 @@ dsh plugin --profile web list --depth 0
 - **高风险工具前置边界（可选）:** 设置 `autoPreCommandSnapshot: true` 后，插件会在 DSH `tools/pre-execute`（并以 `tools/execute` 作为后备）进入原生文件工具 `write`、`edit`、`str_replace_editor`，以及 `bash`、`shell`、`pwsh`、`terminal_bash`、`terminal_exec`、`run_code`、`python` 前创建带 `pre-command` 标签的 checkpoint；同一 callId 会去重。可通过 `preCommandTools` 收紧或扩展工具集合。该能力只覆盖经过 DSH waterfall 的工具，不会拦截宿主外部手工 shell。
 - **无 callId 宿主兼容:** 若某个 DSH 适配器没有提供 `callId`，插件会按 execution 对象身份去重同一次调用跨越的两个 waterfall；不同的匿名 execution 不会因工具名相同而被错误合并。
 - **多 Session Dashboard:** `GET /api/sessions` 会列出已持久化的真实 DSH session；Dashboard 默认选择最近更新的 session，也支持 `?sessionId=...` 和下拉切换，不会因访问空页面制造 `default` 时间线。
-- **Session 边界一致性:** `/api/preview`、`/api/diff`、`/api/rewind`、`/api/fork`、`/api/restore-files`、`/api/prune` 及账本查询都要求显式且已持久化的 `sessionId`；未知会话统一返回 `404 SESSION_NOT_FOUND`，不会隐式创建幽灵 `default` 会话。
+- **Session 边界一致性:** `/api/preview`、`/api/diff`、`/api/rewind`、`/api/fork`、`/api/restore-files`、`/api/prune`、`/api/storage` 及账本查询都要求显式且已持久化的 `sessionId`；未知会话统一返回 `404 SESSION_NOT_FOUND`，不会隐式创建幽灵 `default` 会话。
 - **宿主会话核验:** 在 DSH profile 提供 `sessionController.inspect` 时，Dashboard 会过滤已被宿主删除的孤儿 checkpoint session，恢复类 API 也会在执行前再次核验宿主会话。
 - **完整工作区恢复而不分叉会话:** `/tm-restore <checkpoint>` 或 `POST /api/restore-workspace` 可将整个工作区恢复到 checkpoint，同时保留当前 DSH 对话；需要新对话上下文时再使用 `/tm-rewind`。
 - **可诊断的社区安装:** `/tm-doctor` 会检查当前 profile 是否有 `sessionController`、Git/fallback 引擎、Web Dashboard、预命令边界和 Agent-write ledger，并给出可执行的配置警告。

@@ -116,6 +116,10 @@ describe('TimeMachineWebServer', () => {
     expect((await dag.json()).sessionId).toBe('web-session-alpha');
     const unknown = await fetch(`http://localhost:${testPort}/api/dag?sessionId=does-not-exist`);
     expect(unknown.status).toBe(404);
+
+    const unknownStorage = await fetch(`http://localhost:${testPort}/api/storage?sessionId=does-not-exist`);
+    expect(unknownStorage.status).toBe(404);
+    expect((await unknownStorage.json()).code).toBe('SESSION_NOT_FOUND');
   });
 
   it('filters plugin sessions through the host session authority when available', async () => {

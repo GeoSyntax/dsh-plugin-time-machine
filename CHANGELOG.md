@@ -73,3 +73,6 @@ See [README.md](./README.md), [docs/COMPARISON.md](./docs/COMPARISON.md), and
   `/tm-rewind`.
 - Add `/tm-list [limit]` so users can discover those relative active-lineage
   numbers without copying opaque checkpoint IDs.
+- Resolve `/tm-undo N` by completed turn rather than raw checkpoint count;
+  internal pre-command, rescue, and selective-restore nodes no longer shift
+  the user-visible undo distance.

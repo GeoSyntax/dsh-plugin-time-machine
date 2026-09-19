@@ -39,11 +39,11 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
         const dag = await service.getDAGManager(agent.session.id);
         const current = dag.getCurrentNode();
         if (!current) return { kind: 'success', text: 'No checkpoints recorded for this session yet.' };
-        const lineage = dag.getLineage(current.id).slice(-limit).reverse();
+        const lineage = relativeTurnNodes(dag.getLineage(current.id)).slice(0, limit);
         const lines = lineage.map((node, index) => {
           const undo = index === 0 ? 'current' : `undo ${index}`;
           const summary = node.summary || node.prompt || node.status;
-          return `${String(index).padStart(2, ' ')}  ${undo.padEnd(8, ' ')} ${node.id}  ${summary}`;
+          return `${String(index).padStart(2, ' ')}  ${undo.padEnd(8, ' ')} turn=${node.turnIndex} ${node.id}  ${summary}`;
         });
         return { kind: 'success', text: `Recent checkpoints for ${agent.session.id}:\n${lines.join('\n')}\nUse /tm-undo N to restore and fork from the numbered active-lineage checkpoint.` };
       },
@@ -250,7 +250,7 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
 
         const sessionId = agent.session.id;
         const checkpointId = await resolveRelativeCheckpoint(service, sessionId, count);
-        if (!checkpointId) return { kind: 'error', text: `Cannot undo ${count} turn(s): the active session has fewer than ${count + 1} checkpoints.` };
+        if (!checkpointId) return { kind: 'error', text: `Cannot undo ${count} turn(s): the active session has fewer than ${count + 1} completed turns.` };
         const result = await service.rewindToCheckpoint(sessionId, checkpointId, {
           mode: args.includes('--force') ? 'force' : args.includes('--merge') ? 'merge' : undefined,
           preserveVerifiedHandEdits: args.includes('--preserve-hand-edits'),
@@ -369,8 +369,20 @@ async function resolveRelativeCheckpoint(service: TimeMachineService, sessionId:
   const dag = await service.getDAGManager(sessionId);
   const current = dag.getCurrentNode();
   if (!current) return undefined;
-  const lineage = dag.getLineage(current.id);
-  return lineage.at(-(count + 1))?.id;
+  return relativeTurnNodes(dag.getLineage(current.id))[count]?.id;
+}
+
+/** Select one user-visible boundary per completed turn, ignoring internal safety nodes. */
+function relativeTurnNodes(lineage: CheckpointNode[]): CheckpointNode[] {
+  const selected: CheckpointNode[] = [];
+  const seenTurns = new Set<number>();
+  for (const node of [...lineage].reverse()) {
+    if (node.tags?.includes('pre-command') || node.tags?.includes('rescue') || node.tags?.includes('selective-restore')) continue;
+    if (seenTurns.has(node.turnIndex)) continue;
+    seenTurns.add(node.turnIndex);
+    selected.push(node);
+  }
+  return selected;
 }
 
 function parseDurationMs(value: string): number | undefined {

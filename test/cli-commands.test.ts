@@ -77,11 +77,20 @@ describe('registered DSH time-machine commands', () => {
       checkpoints.push(checkpoint);
       await service.finalizeTurnCheckpoint({ sessionId, checkpointId: checkpoint.id, status: 'success' });
     }
+    const preCommand = await service.createTurnCheckpoint({
+      sessionId,
+      turnIndex: 3,
+      prompt: '[pre-command bash]',
+      summary: 'pre-command safety boundary',
+      sessionState: { sessionId, messages: [] },
+      tags: ['pre-command', 'tool:bash'],
+    });
 
     const result = await handlers['tm-undo']({ agent: { session: { id: sessionId } }, rawInput: '2' });
     expect(result.kind).toBe('success');
     expect(result.text).toContain(`Undid 2 turns to ${checkpoints[0].id}`);
     expect(result.text).toContain('cli-created-session');
+    expect(preCommand.id).not.toBe(checkpoints[2].id);
   });
 
   it('lists relative active-lineage numbers for low-friction undo', async () => {

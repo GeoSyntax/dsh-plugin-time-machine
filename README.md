@@ -68,7 +68,7 @@ dsh plugin --profile web list --depth 0
 /tm-rewind <checkpoint> [--preserve-hand-edits] [--plan=<id>]
 ```
 
-插件会在每个 turn 开始前创建 checkpoint。`/tm-tree` 显示当前 DAG；`/tm-list` 以 `0=current`、`1=undo 1` 的相对编号列出活动 lineage；`/tm-preview` 在不修改文件的情况下列出回滚影响；`/tm-restore-files` 只恢复指定路径并保持当前会话不变；`/tm-fork` 从旧状态创建平行会话；`/tm-rewind` 恢复工作区并通过 DSH `sessionController` 创建对齐的新会话；`/tm-undo [count]` 是面向用户的快捷别名，按当前活动分支向前回退 count 个 checkpoint（默认 1），底层仍使用同一套 safe restore、rescue 和 fork 语义。Web 仪表盘的 rewind 也会先执行同样的预览。
+插件会在每个 turn 开始前创建 checkpoint。`/tm-tree` 显示当前 DAG；`/tm-list` 以 `0=current`、`1=undo 1` 的相对编号列出活动 lineage；`/tm-preview` 在不修改文件的情况下列出回滚影响；`/tm-restore-files` 只恢复指定路径并保持当前会话不变；`/tm-fork` 从旧状态创建平行会话；`/tm-rewind` 恢复工作区并通过 DSH `sessionController` 创建对齐的新会话；`/tm-undo [count]` 是面向用户的快捷别名，按当前活动分支向前回退 count 个已完成 turn（默认 1），会忽略同一 turn 的 pre-command 和 rescue 内部节点，底层仍使用同一套 safe restore、rescue 和 fork 语义。Web 仪表盘的 rewind 也会先执行同样的预览。
 
 ## What you can do
 

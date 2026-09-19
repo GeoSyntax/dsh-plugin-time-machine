@@ -3539,11 +3539,11 @@ function registerCliCommands(ctx, service) {
         const dag = await service.getDAGManager(agent.session.id);
         const current = dag.getCurrentNode();
         if (!current) return { kind: "success", text: "No checkpoints recorded for this session yet." };
-        const lineage = dag.getLineage(current.id).slice(-limit).reverse();
+        const lineage = relativeTurnNodes(dag.getLineage(current.id)).slice(0, limit);
         const lines = lineage.map((node, index) => {
           const undo = index === 0 ? "current" : `undo ${index}`;
           const summary = node.summary || node.prompt || node.status;
-          return `${String(index).padStart(2, " ")}  ${undo.padEnd(8, " ")} ${node.id}  ${summary}`;
+          return `${String(index).padStart(2, " ")}  ${undo.padEnd(8, " ")} turn=${node.turnIndex} ${node.id}  ${summary}`;
         });
         return { kind: "success", text: `Recent checkpoints for ${agent.session.id}:
 ${lines.join("\n")}
@@ -3743,7 +3743,7 @@ ${changes.map((item) => `${item.status} ${item.path}`).join("\n")}` };
         if (!controller) return { kind: "error", text: "This DSH profile has no sessionController; conversation undo is unavailable." };
         const sessionId = agent.session.id;
         const checkpointId = await resolveRelativeCheckpoint(service, sessionId, count);
-        if (!checkpointId) return { kind: "error", text: `Cannot undo ${count} turn(s): the active session has fewer than ${count + 1} checkpoints.` };
+        if (!checkpointId) return { kind: "error", text: `Cannot undo ${count} turn(s): the active session has fewer than ${count + 1} completed turns.` };
         const result = await service.rewindToCheckpoint(sessionId, checkpointId, {
           mode: args.includes("--force") ? "force" : args.includes("--merge") ? "merge" : void 0,
           preserveVerifiedHandEdits: args.includes("--preserve-hand-edits"),
@@ -3853,8 +3853,18 @@ async function resolveRelativeCheckpoint(service, sessionId, count) {
   const dag = await service.getDAGManager(sessionId);
   const current = dag.getCurrentNode();
   if (!current) return void 0;
-  const lineage = dag.getLineage(current.id);
-  return lineage.at(-(count + 1))?.id;
+  return relativeTurnNodes(dag.getLineage(current.id))[count]?.id;
+}
+function relativeTurnNodes(lineage) {
+  const selected = [];
+  const seenTurns = /* @__PURE__ */ new Set();
+  for (const node of [...lineage].reverse()) {
+    if (node.tags?.includes("pre-command") || node.tags?.includes("rescue") || node.tags?.includes("selective-restore")) continue;
+    if (seenTurns.has(node.turnIndex)) continue;
+    seenTurns.add(node.turnIndex);
+    selected.push(node);
+  }
+  return selected;
 }
 function parseDurationMs(value) {
   const match = /^(\d+(?:\.\d+)?)(ms|s|m|h|d|w)$/i.exec(value.trim());

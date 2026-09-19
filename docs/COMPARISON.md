@@ -59,6 +59,13 @@ without copying their storage format. It also offers an explicit Git-only
 three-way merge restore for non-conflicting workspace drift; safe mode remains
 the default and still fails closed on any drift.
 
+The newer [PerryLink/dsh-checkpoint-rewind](https://github.com/PerryLink/dsh-checkpoint-rewind)
+project is a particularly close peer: it also uses Git-first checkpoints,
+turn-boundary session forks, and a clearly labeled non-Git copy fallback. The
+remaining differentiators here are the persistent DAG/reflection model,
+Agent-write and unattributed-mutation audit surfaces, selective/merge restore,
+and the explicit external-effect adapter contract.
+
 Hermes currently offers a different hand-edit contract: its agent-write ledger
 records content hashes for successful file writes and skips files whose current
 contents no longer match, while `/rollback --all` opts into a full overwrite.
@@ -68,6 +75,13 @@ more conservative for an untrusted multi-process workspace, but less convenient
 for users who expect automatic preservation of hand-edits. See the
 [Hermes checkpoint documentation](https://hermes-agent.nousresearch.com/docs/user-guide/checkpoints-and-rollback)
 for that behavior.
+
+Hermes' secure-workstation guidance also describes checkpoints before
+destructive terminal commands. Time Machine currently captures first-party DSH
+file-tool events and inventories later shell/PTC changes as unattributed; it
+does not yet promise a pre-bash mutation checkpoint. See the
+[Hermes secure-workstation guide](https://hermes-agent.nousresearch.com/docs/guides/secure-hermes-on-a-work-machine)
+for the peer behavior.
 
 Time Machine now offers a deliberately explicit partial-capture mode for
 compatibility with Change Ledger's oversized-file behavior. It is disabled by

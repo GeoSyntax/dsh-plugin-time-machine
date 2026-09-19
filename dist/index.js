@@ -5075,6 +5075,7 @@ function apply(ctx, config = {}) {
   const workDir = path12.resolve(process.cwd());
   const service = new TimeMachineService({ workDir, storageDir: config.storageDir, config });
   ctx.provide("timeMachine", service);
+  const canonicalWorkDir = fs10.realpath(service.workDir).catch(() => service.workDir);
   let workspaceHost;
   try {
     workspaceHost = ctx.get("workspaceHost");
@@ -5314,7 +5315,7 @@ function apply(ctx, config = {}) {
       const cwd = session.header.cwd ? path12.resolve(session.header.cwd) : workDir;
       const [canonicalCwd, canonicalRoot] = await Promise.all([
         fs10.realpath(cwd).catch(() => cwd),
-        fs10.realpath(service.workDir).catch(() => service.workDir)
+        canonicalWorkDir
       ]);
       if (canonicalCwd !== canonicalRoot) {
         scope.logger.warn(`[time-machine] skipped session ${session.id}: cwd ${cwd} differs from configured workspace ${service.workDir}`);

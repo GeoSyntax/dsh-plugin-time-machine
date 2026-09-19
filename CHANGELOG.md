@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Keep delayed `tools/result` events attributable after `turn/end` by matching
+  the pre-command boundary by call id or execution identity; pending entries
+  expire after five minutes without keeping the Node process alive.
+
+## Unreleased
+
 - Add a documented host workspace-routing contract covering multi-root
   services, isolated fork requirements, capability states, and failure
   acceptance tests; keep the current single-root behavior fail-closed until

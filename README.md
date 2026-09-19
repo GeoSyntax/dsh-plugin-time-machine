@@ -97,7 +97,7 @@ dsh plugin --profile web list --depth 0
 - **账本可审计:** 时间线检查点详情、CLI `/tm-agent-writes <checkpoint>` 与只读 `GET /api/agent-writes?sessionId=...&checkpoint=...` 暴露已验证的路径、操作、SHA-256 和时间戳，便于在回滚前解释哪些内容由 Agent 写入。
 - **未归因变更显式告警:** turn 结束时 Git 或 fallback manifest 会对比 checkpoint 起点与 settled workspace；没有对应 Agent-write 证据的路径会记录为 `unattributedChanges`，并在时间线中标记。插件不会把这类 bash/PTC/人工修改猜成 Agent 写入。
 - **未归因变更可查询:** CLI `/tm-unattributed <checkpoint>` 与 `GET /api/unattributed-changes?sessionId=...&checkpoint=...` 提供机器可读的只读清单。
-- **工具变更归因账本:** 开启 `autoPreCommandSnapshot` 后，插件会把每个成功或失败的高风险工具调用与其前置边界之间的 workspace delta 记录为 `toolMutations`；可用 CLI `/tm-tool-mutations <checkpoint>`、`GET /api/tool-mutations?...` 和 Dashboard 查看。它是路径级审计证据，不会猜测作者，也不替代 turn 级回滚。
+- **工具变更归因账本:** 开启 `autoPreCommandSnapshot` 后，插件会把每个成功或失败的高风险工具调用与其前置边界之间的 workspace delta 记录为 `toolMutations`；可用 CLI `/tm-tool-mutations <checkpoint>`、`GET /api/tool-mutations?...` 和 Dashboard 查看。它是路径级审计证据，不会猜测作者，也不替代 turn 级回滚；即使宿主的 `tools/result` 晚于 `turn/end` 到达，也会按 callId/执行对象关联并保留最多 5 分钟。
 - **硬配额:** `maxSnapshots` 和 `maxStorageBytes` 默认关闭；启用后达到上限会安全拒绝新 checkpoint，不会静默删除历史。
 - **自动配额清理:** `autoPrune: true` 才会在普通 checkpoint 前尝试压缩旧节点；无法安全腾出空间时仍然拒绝 checkpoint，不会强行删除 current 或 branch head。
 - **自动年龄保留:** `retentionMaxAgeMs` 大于 0 时，普通 checkpoint 前会自动压缩超过该年龄的非 current、非 branch head 节点；默认关闭，内部 rescue checkpoint 不触发清理。
@@ -122,6 +122,7 @@ dsh plugin --profile web list --depth 0
 - **分支反思查询:** `/tm-reflection <checkpoint>`、`GET /api/reflection` 和 `TimeMachineClient.reflection()` 可在 fork 前读取失败分支与外部副作用警告，不会改变会话或工作区。
 - **消息锚点:** `GET /api/checkpoint-for-message` 与 `TimeMachineClient.checkpointForMessage()` 同时支持 finalized assistant message 和开启 turn 的 user message；旧的 assistant-only 服务方法仍保留兼容性。
 - `GET /api/capabilities` 的 `messageAnchors` 会声明当前可解析的消息类型（目前为 `assistant` 与 `user`），便于第三方 UI 在宿主没有 user-message slot 时仍使用 REST contract。
+- `GET /api/capabilities` 的 `toolMutationLedger` 会声明高风险工具变更归因是否启用；归因事件即使晚于 `turn/end` 到达也会按 callId/执行对象关联，最多保留 5 分钟等待窗口。
 - **安全清理预览:** `/tm-prune --dry-run` 或 Web API `dryRun: true` 只计算将被删除的 checkpoint，不修改 DAG、quarantine 或 Git objects。
 - **Companion 清理 API:** `TimeMachineClient.prune({ sessionId, dryRun: true })` 提供与 CLI/Web 相同的类型化 retention 预览与执行入口。
 

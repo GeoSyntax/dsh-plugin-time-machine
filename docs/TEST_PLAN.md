@@ -312,6 +312,7 @@ artifacts/<run-id>/
 - 真实 DSH 不可达模型端点会产生并持久化 `failed` checkpoint，且保留错误证据。
 - 真实 DSH 强制执行退出码非零的 shell 命令后，checkpoint 持久化了 `failedTools` 证据。
 - 真实 DSH source smoke 在 `TM_DSH_LIVE_PRECOMMAND=1` 下已验证：高风险 shell 工具执行前实际持久化了 `pre-command` checkpoint。
+- 插件回归还验证了宿主先发 `turn/end`、再发 `tools/result` 时仍能按 callId 归因并持久化 `toolMutations`；未返回的调用由 5 分钟 unref 超时清理，避免账本内存泄漏。
 - 真实 DSH Web smoke 在 Windows 上通过有效本地网关完成真实 turn、fork、rewind，并触发真实缺失 session 的 `SessionController` fork 拒绝；rescue 补偿恢复了 fork 调用前工作区。
 - 真实 DSH Web smoke 在新增 `Sec-Fetch-Site` 围栏后仍通过，说明正常宿主 API 请求未被 CSRF 防护误拦截。
 - Web UI 在 fork/rewind 后采用服务端返回的新 conversation sessionId，后续 DAG 查询不再使用旧会话。

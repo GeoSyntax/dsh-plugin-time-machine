@@ -68,6 +68,9 @@ See [README.md](./README.md), [docs/COMPARISON.md](./docs/COMPARISON.md), and
 [docs/ROADMAP.md](./docs/ROADMAP.md) for configuration and upgrade guidance.
 ## Unreleased
 
+- Expose `rewindSessionMode: fork` in capability discovery and surface the
+  shared-lock/new-session semantics in the native client companion, so users
+  cannot mistake this append-only-safe rewind for in-place context undo.
 - Add an optional `client-companion/` source package for DSH Web clients. It
   contributes a session-header action with timeline warnings, preview-first
   confirmation, and navigation to the forked session while keeping React and

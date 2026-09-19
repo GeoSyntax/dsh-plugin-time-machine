@@ -163,6 +163,11 @@ export class EncryptedShadowStore {
       const temporaryManifest = path.join(this.archiveDir, `.manifest-${randomUUID()}.tmp`);
       await fs.writeFile(temporaryManifest, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
       await fs.rename(temporaryManifest, path.join(this.archiveDir, 'manifest.v1.json'));
+      const referenced = new Set(entries.map(entry => entry.payload.replace(/\\/g, '/')));
+      for (const payloadFile of await listFiles(path.join(this.archiveDir, 'payload'))) {
+        const relative = path.relative(this.archiveDir, payloadFile).replace(/\\/g, '/');
+        if (!referenced.has(relative)) await fs.rm(payloadFile, { force: true });
+      }
     } finally {
       await fs.rm(staging, { recursive: true, force: true }).catch(() => undefined);
     }

@@ -377,6 +377,9 @@ describe('GitPlumbingEngine', () => {
     const restarted = new GitPlumbingEngine({ workDir: tmpDir, shadowObjectDir, shadowEncryptionKey: 'shadow-secret' });
     expect((await restarted.runGit(['cat-file', '-t', first.commitOid])).stdout.trim()).toBe('commit');
     await expect(fs.access(shadowObjectDir)).rejects.toThrow();
+    const payloadCount = (await fs.readdir(path.join(archiveDir, 'payload'))).length;
+    await restarted.runGit(['cat-file', '-t', first.commitOid]);
+    expect((await fs.readdir(path.join(archiveDir, 'payload'))).length).toBe(payloadCount);
     const wrongKey = new GitPlumbingEngine({ workDir: tmpDir, shadowObjectDir, shadowEncryptionKey: 'wrong-secret' });
     await expect(wrongKey.runGit(['cat-file', '-t', first.commitOid])).rejects.toMatchObject({ code: 'SHADOW_KEY_INVALID' });
     const manifestAfterWrongKey = JSON.parse(await fs.readFile(path.join(archiveDir, 'manifest.v1.json'), 'utf8')) as { entries: Array<{ path: string; sha256: string; bytes: number }> };

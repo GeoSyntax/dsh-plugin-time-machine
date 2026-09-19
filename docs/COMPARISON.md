@@ -4,6 +4,38 @@ This document explains where Time Machine fits among existing workspace undo and
 checkpoint plugins. It is intentionally conservative: a capability is marked
 supported only when it is covered by the current implementation and tests.
 
+## Peer verification (2026-09)
+
+The comparison below is grounded in the peers' current public documentation,
+not only their package names:
+
+- [Hermes checkpoints and rollback](https://hermes-agent.nousresearch.com/docs/user-guide/checkpoints-and-rollback)
+  uses an opt-in shared shadow Git store, checkpoints before file/destructive
+  terminal tools, keeps later hand-edits by default through an Agent-write hash
+  ledger, and exposes `--all` for an explicit full overwrite. Time Machine
+  matches the pre-command boundary and ledger seam, but keeps strict drift
+  rejection as its default and adds persistent branches, reflection, and
+  external-effect declarations.
+- [PerryLink/dsh-checkpoint-rewind](https://github.com/PerryLink/dsh-checkpoint-rewind)
+  is the closest DSH peer: it captures before mutation, supports Git/copy
+  providers, quotas, and a reversible guard checkpoint. Its restore is
+  path-explicit and avoids deleting post-checkpoint files; Time Machine offers
+  that selective mode plus a separately reviewed full restore that can remove
+  ordinary orphans, with conflict and rescue checks.
+- [Anionex/dsh-turn-rewind](https://github.com/Anionex/dsh-turn-rewind) centers
+  on a Change Ledger and profile-bundle integration. That is a useful lower
+  friction deployment model, while Time Machine deliberately exposes its
+  native DSH capability seam and refuses to infer authorship for unobserved
+  shell/PTC changes.
+- [SiriLee/dsh-rewind](https://github.com/SiriLee/dsh-rewind) prioritizes
+  same-window in-place conversation rewind. Time Machine's default contract is
+  a new forked session, with in-place rewind available only through an explicit
+  host `sessionController.rewind()` capability.
+
+These are policy differences rather than claims that one implementation wins
+every workflow. Operators should choose based on whether they value in-place
+UX, selective non-destructive restore, or durable branch exploration.
+
 | Capability | Time Machine | Hermes checkpoints | Change Ledger | dsh-undo / dsh-rewind |
 | --- | --- | --- | --- | --- |
 | Full workspace snapshot | Git plumbing + non-Git fallback; explicitly refuses sparse/submodule/in-progress Git states | Yes | Yes; explicit unsupported-state policy | Partial / lightweight |

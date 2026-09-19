@@ -3218,6 +3218,7 @@ var TimeMachineService = class {
       externalEffectLedger: true,
       externalEffectAdapters: this.listExternalEffectAdapters(),
       workspaceRouting: "single-root",
+      messageAnchors: ["assistant", "user"],
       workspaceIsolation: "shared-lock",
       rewindSessionMode: "fork",
       workspace,

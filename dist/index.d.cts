@@ -287,6 +287,8 @@ declare class TimeMachineService {
         externalEffectAdapters: string[];
         /** Session routing is intentionally single-root until DSH exposes a host router contract. */
         workspaceRouting: 'single-root';
+        /** Message kinds that can resolve to a persisted checkpoint. */
+        messageAnchors: Array<'assistant' | 'user'>;
         workspaceIsolation: WorkspaceIsolation;
         /** Rewind restores files and opens a new DSH session; it never rewrites the append-only log. */
         rewindSessionMode: 'fork';

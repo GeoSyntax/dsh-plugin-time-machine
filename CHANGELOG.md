@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Advertise `messageAnchors: ["assistant", "user"]` through capabilities so
+  third-party clients can discover the user-message checkpoint contract.
 - Bind checkpoints to the turn-opening user message as well as finalized
   assistant messages, so `/api/checkpoint-for-message` and the client contract
   can support message-level rewind UI without breaking the assistant-only API.

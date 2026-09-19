@@ -151,7 +151,9 @@ describe('DSH Cordis plugin entry', () => {
       const service = ctx.get('timeMachine') as TimeMachineService;
       expect(service.storageDir).toBe(path.join(workDir, '.dsh-tm'));
       let node = (await service.getDAGManager(session.id)).getCurrentNode();
-      for (let attempt = 0; attempt < 100 && !node?.agentWrites?.length; attempt += 1) {
+      // turn/end finalization is intentionally fire-and-forget on the host
+      // event bus; allow slower hosted runners to settle the ledger and DAG.
+      for (let attempt = 0; attempt < 300 && (!node?.agentWrites?.length || node?.status === 'running'); attempt += 1) {
         await new Promise(resolve => setTimeout(resolve, 20));
         node = (await service.getDAGManager(session.id)).getCurrentNode();
       }

@@ -646,6 +646,15 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
     expect(updated.externalEffects).toHaveLength(1);
     expect(updated.externalEffects?.[0]?.adapter).toBe('redis-adapter');
     await expect(service.recordExternalEffect(sessionId, second.id, {
+      id: updated.externalEffects![0]!.id,
+      adapter: 'redis-adapter',
+      operation: 'duplicate declaration',
+      reversible: false,
+      failureSemantics: 'must remain uniquely addressable',
+      status: 'unresolved',
+    })).rejects.toMatchObject({ code: 'EXTERNAL_EFFECT_DUPLICATE' });
+    expect((await service.getDAGManager(sessionId)).getNode(second.id)?.externalEffects).toHaveLength(1);
+    await expect(service.recordExternalEffect(sessionId, second.id, {
       adapter: 'redis-adapter',
       operation: 'invalid status example',
       reversible: false,

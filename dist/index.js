@@ -2175,6 +2175,11 @@ var TimeMachineService = class {
         id: effect.id?.trim() || randomUUID5(),
         recordedAt: Date.now()
       };
+      if ((node.externalEffects ?? []).some((item) => item.id === record.id)) {
+        throw Object.assign(new Error(`External effect '${record.id}' already exists on checkpoint '${checkpointId}'.`), {
+          code: "EXTERNAL_EFFECT_DUPLICATE"
+        });
+      }
       return dag.updateNode(checkpointId, {
         externalEffects: [...node.externalEffects ?? [], record]
       });
@@ -2988,7 +2993,7 @@ var TimeMachineWebServer = class {
           }
           await this.handleStatic(res, pathname);
         } catch (err) {
-          const status = err?.code === "BAD_REQUEST" ? 400 : err?.code === "RESTORE_PLAN_INVALID" || err?.code === "RESTORE_MERGE_CONFLICT" || err?.code === "QUARANTINE_KEY_INVALID" || err?.code === "EXTERNAL_COMPENSATION_UNKNOWN" || err?.code === "EXTERNAL_ADAPTER_UNAVAILABLE" ? 409 : err?.code === "UNSUPPORTED_WORKSPACE_STATE" ? 422 : err?.code === "SNAPSHOT_SIZE_LIMIT" ? 413 : 500;
+          const status = err?.code === "BAD_REQUEST" ? 400 : err?.code === "RESTORE_PLAN_INVALID" || err?.code === "RESTORE_MERGE_CONFLICT" || err?.code === "QUARANTINE_KEY_INVALID" || err?.code === "EXTERNAL_COMPENSATION_UNKNOWN" || err?.code === "EXTERNAL_ADAPTER_UNAVAILABLE" || err?.code === "EXTERNAL_EFFECT_DUPLICATE" ? 409 : err?.code === "UNSUPPORTED_WORKSPACE_STATE" ? 422 : err?.code === "SNAPSHOT_SIZE_LIMIT" ? 413 : 500;
           res.writeHead(status, { "Content-Type": "application/json" });
           res.end(JSON.stringify({
             error: err.message || "Internal Server Error",
@@ -3084,6 +3089,9 @@ var TimeMachineWebServer = class {
     if (pathname === "/api/rewind" && req.method === "POST") {
       const body = await this.readJsonBody(req);
       const { sessionId, checkpointId } = body;
+      if (typeof checkpointId !== "string" || !checkpointId.trim()) {
+        throw Object.assign(new Error("checkpointId is required"), { code: "BAD_REQUEST" });
+      }
       if (!this.hooks.restartConversation) throw new Error("Conversation restart capability is unavailable; refusing workspace-only rewind.");
       const sourceSessionId = sessionId || "default";
       const result = await this.service.rewindToCheckpoint(sourceSessionId, checkpointId, {
@@ -3199,6 +3207,9 @@ var TimeMachineWebServer = class {
     if (pathname === "/api/fork" && req.method === "POST") {
       const body = await this.readJsonBody(req);
       const { sessionId, checkpointId, branchName, description } = body;
+      if (typeof checkpointId !== "string" || !checkpointId.trim() || typeof branchName !== "string" || !branchName.trim()) {
+        throw Object.assign(new Error("checkpointId and branchName are required"), { code: "BAD_REQUEST" });
+      }
       if (!this.hooks.restartConversation) throw new Error("Conversation restart capability is unavailable; refusing workspace-only fork.");
       const sourceSessionId = sessionId || "default";
       const result = await this.service.forkNewBranch({

@@ -382,6 +382,11 @@ export class TimeMachineService {
         id: effect.id?.trim() || randomUUID(),
         recordedAt: Date.now(),
       };
+      if ((node.externalEffects ?? []).some(item => item.id === record.id)) {
+        throw Object.assign(new Error(`External effect '${record.id}' already exists on checkpoint '${checkpointId}'.`), {
+          code: 'EXTERNAL_EFFECT_DUPLICATE',
+        });
+      }
       return dag.updateNode(checkpointId, {
         externalEffects: [...(node.externalEffects ?? []), record],
       });

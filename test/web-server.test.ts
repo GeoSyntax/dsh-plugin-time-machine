@@ -477,6 +477,22 @@ describe('TimeMachineWebServer', () => {
     });
     expect(malformed.status).toBe(400);
     expect((await malformed.json()).error).toContain('Invalid JSON payload');
+
+    const missingRewindTarget = await fetch(`http://localhost:${testPort}/api/rewind`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: 'missing-target' }),
+    });
+    expect(missingRewindTarget.status).toBe(400);
+    expect((await missingRewindTarget.json()).error).toContain('checkpointId is required');
+
+    const missingForkTarget = await fetch(`http://localhost:${testPort}/api/fork`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: 'missing-target' }),
+    });
+    expect(missingForkTarget.status).toBe(400);
+    expect((await missingForkTarget.json()).error).toContain('checkpointId and branchName are required');
   });
 });
 

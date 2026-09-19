@@ -100,3 +100,15 @@ with timeout and dead-owner recovery.
 
 **Remaining boundary:** packed-object repacking and true multi-Agent worktree isolation
 remain future work; the lock prevents races but does not create independent workspaces.
+
+### 2026-09-19 — API boundary and external-effect identity hardening
+
+**Changes:** explicit external-effect IDs are now unique within a checkpoint and
+duplicate declarations fail closed with `EXTERNAL_EFFECT_DUPLICATE`; Web rewind/fork
+validate required target parameters before invoking the service.
+
+**Reason:** a duplicate audit ID makes a later compensation target ambiguous, while
+client omissions should be reported as input errors rather than internal failures.
+
+**Impact:** companion clients receive deterministic HTTP 409/400 responses and can
+retry or prompt for correction without mutating the DAG or workspace.

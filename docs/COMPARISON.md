@@ -20,6 +20,7 @@ supported only when it is covered by the current implementation and tests.
 | Ledger audit surface | `/tm-agent-writes <checkpoint>` and `GET /api/agent-writes` expose path, operation, hash, and timestamp before a restore | Checkpoint UI/CLI exposes write evidence | Product-specific | Varies |
 | Unknown mutation visibility | Turn-finalization inventory records `unattributedChanges` and surfaces them in the dashboard instead of guessing authorship | Product-specific | Usually not exposed | Varies |
 | External-effect declaration surface | Service API plus `POST /api/external-effects`; declaration is audit-only, compensation remains explicit/dry-run first | Product-specific | Usually outside file undo scope | Varies |
+| External-effect identity safety | Explicit ids are unique per checkpoint; duplicates fail closed with a structured 409 | Product-specific | Product-specific | Usually absent |
 | DAG branches | Yes, persistent | No user-facing DAG | Ledger history | Usually linear |
 | Failed-tool reflection | Yes | No equivalent | No equivalent | No equivalent |
 | Rescue/compensation | Yes | Snapshot-oriented | Journal-oriented | Varies |

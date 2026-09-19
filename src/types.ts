@@ -173,6 +173,8 @@ export interface TimeMachineConfig {
   autoPreCommandSnapshot?: boolean;
   /** Tool names treated as high-risk when autoPreCommandSnapshot is enabled. */
   preCommandTools?: string[];
+  /** Maximum pre-command checkpoints per session turn; 0 means unlimited. */
+  preCommandMaxPerTurn?: number;
 }
 
 export interface RestoreOptions {

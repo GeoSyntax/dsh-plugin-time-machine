@@ -2021,7 +2021,8 @@ var TimeMachineService = class {
       allowPartialSnapshots: options.config?.allowPartialSnapshots ?? false,
       enableAgentWriteLedger: options.config?.enableAgentWriteLedger ?? false,
       autoPreCommandSnapshot: options.config?.autoPreCommandSnapshot ?? false,
-      preCommandTools: [...options.config?.preCommandTools ?? ["bash", "shell", "pwsh", "powershell", "terminal_bash", "terminal_exec", "run_code", "python"]]
+      preCommandTools: [...options.config?.preCommandTools ?? ["bash", "shell", "pwsh", "powershell", "terminal_bash", "terminal_exec", "run_code", "python"]],
+      preCommandMaxPerTurn: Math.max(0, Math.floor(options.config?.preCommandMaxPerTurn ?? 1))
     };
     this.gitEngine = new GitPlumbingEngine({
       workDir: this.workDir,
@@ -2620,6 +2621,7 @@ var TimeMachineService = class {
       agentWriteLedger: this.config.enableAgentWriteLedger,
       preCommandSnapshots: this.config.autoPreCommandSnapshot,
       preCommandTools: [...this.config.preCommandTools],
+      preCommandMaxPerTurn: this.config.preCommandMaxPerTurn,
       unattributedMutationInventory: true,
       externalEffectLedger: true,
       externalEffectAdapters: this.listExternalEffectAdapters(),
@@ -2636,6 +2638,7 @@ var TimeMachineService = class {
         enableAgentWriteLedger: this.config.enableAgentWriteLedger,
         autoPreCommandSnapshot: this.config.autoPreCommandSnapshot,
         preCommandTools: [...this.config.preCommandTools],
+        preCommandMaxPerTurn: this.config.preCommandMaxPerTurn,
         maxQuarantineBytes: this.config.maxQuarantineBytes,
         workspaceLockTimeoutMs: this.config.workspaceLockTimeoutMs
       }
@@ -3652,7 +3655,8 @@ var Config = import_schemastery.default.object({
   allowPartialSnapshots: import_schemastery.default.boolean().default(false),
   enableAgentWriteLedger: import_schemastery.default.boolean().default(false),
   autoPreCommandSnapshot: import_schemastery.default.boolean().default(false),
-  preCommandTools: import_schemastery.default.array(import_schemastery.default.string()).default(["bash", "shell", "pwsh", "powershell", "terminal_bash", "terminal_exec", "run_code", "python"])
+  preCommandTools: import_schemastery.default.array(import_schemastery.default.string()).default(["bash", "shell", "pwsh", "powershell", "terminal_bash", "terminal_exec", "run_code", "python"]),
+  preCommandMaxPerTurn: import_schemastery.default.number().step(1).min(0).default(1)
 });
 function apply(ctx, config = {}) {
   const workDir = import_node_path7.default.resolve(process.cwd());
@@ -3681,6 +3685,7 @@ function apply(ctx, config = {}) {
   const observedWrites = /* @__PURE__ */ new Map();
   const pendingLedgerWrites = /* @__PURE__ */ new Map();
   const preCommandCalls = /* @__PURE__ */ new Set();
+  const preCommandCounts = /* @__PURE__ */ new Map();
   let installAgentToolBoundary;
   if (service.config.autoPreCommandSnapshot) {
     const installedAgents = /* @__PURE__ */ new WeakSet();
@@ -3697,7 +3702,11 @@ function apply(ctx, config = {}) {
         if (!session || !toolName || !configured.includes(toolName) || !turnCheckpoint) return;
         const callKey = `${session.id}\0${execution.callId ?? toolName}\0${turn}`;
         if (preCommandCalls.has(callKey)) return;
+        const turnKey = `${session.id}\0${turn}`;
+        const maxPerTurn = service.config.preCommandMaxPerTurn;
+        if (maxPerTurn > 0 && (preCommandCounts.get(turnKey) ?? 0) >= maxPerTurn) return;
         preCommandCalls.add(callKey);
+        preCommandCounts.set(turnKey, (preCommandCounts.get(turnKey) ?? 0) + 1);
         try {
           const boundary = await service.createTurnCheckpoint({
             sessionId: session.id,
@@ -3714,6 +3723,10 @@ function apply(ctx, config = {}) {
           });
           ctx.logger.info(`[time-machine] captured pre-command checkpoint ${boundary.id} before ${toolName}`);
         } catch (error) {
+          preCommandCalls.delete(callKey);
+          const nextCount = (preCommandCounts.get(turnKey) ?? 1) - 1;
+          if (nextCount > 0) preCommandCounts.set(turnKey, nextCount);
+          else preCommandCounts.delete(turnKey);
           ctx.logger.warn(`[time-machine] pre-command checkpoint skipped for ${toolName}: ${errorMessage(error)}`);
         }
       };
@@ -3781,6 +3794,7 @@ function apply(ctx, config = {}) {
     for (const callKey of preCommandCalls) {
       if (callKey.startsWith(`${session.id}\0`) && callKey.endsWith(`\0${turn}`)) preCommandCalls.delete(callKey);
     }
+    preCommandCounts.delete(`${session.id}\0${turn}`);
     void ledgerWrites.then(() => service.finalizeTurnCheckpoint({
       sessionId: session.id,
       checkpointId,

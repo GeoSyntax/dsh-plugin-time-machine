@@ -127,6 +127,13 @@ describe('DSH Cordis plugin entry', () => {
         arguments: { command: 'rm -rf build' },
         agent,
       }, async () => ({ isError: false }));
+      await ctx.waterfall('tools/pre-execute', {
+        callId: 'second-high-risk-call',
+        name: 'bash',
+        arguments: { command: 'rm -rf dist' },
+        agent,
+      }, async () => ({ kind: 'allow' }));
+      expect(Object.values((await (ctx.get('timeMachine') as TimeMachineService).getDAGManager(session.id)).tree.nodes)).toHaveLength(2);
       const nodes = Object.values((await (ctx.get('timeMachine') as TimeMachineService).getDAGManager(session.id)).tree.nodes);
       expect(nodes).toHaveLength(2);
       expect(nodes[1]).toMatchObject({

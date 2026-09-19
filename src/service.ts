@@ -124,6 +124,7 @@ export class TimeMachineService {
       enableAgentWriteLedger: options.config?.enableAgentWriteLedger ?? false,
       autoPreCommandSnapshot: options.config?.autoPreCommandSnapshot ?? false,
       preCommandTools: [...(options.config?.preCommandTools ?? ['bash', 'shell', 'pwsh', 'powershell', 'terminal_bash', 'terminal_exec', 'run_code', 'python'])],
+      preCommandMaxPerTurn: Math.max(0, Math.floor(options.config?.preCommandMaxPerTurn ?? 1)),
     };
 
     this.gitEngine = new GitPlumbingEngine({
@@ -835,6 +836,7 @@ export class TimeMachineService {
     agentWriteLedger: boolean;
     preCommandSnapshots: boolean;
     preCommandTools: string[];
+    preCommandMaxPerTurn: number;
     unattributedMutationInventory: boolean;
     externalEffectLedger: true;
     externalEffectAdapters: string[];
@@ -851,6 +853,7 @@ export class TimeMachineService {
       enableAgentWriteLedger: boolean;
       autoPreCommandSnapshot: boolean;
       preCommandTools: string[];
+      preCommandMaxPerTurn: number;
       maxQuarantineBytes: number;
       workspaceLockTimeoutMs: number;
     };
@@ -876,6 +879,7 @@ export class TimeMachineService {
       agentWriteLedger: this.config.enableAgentWriteLedger,
       preCommandSnapshots: this.config.autoPreCommandSnapshot,
       preCommandTools: [...this.config.preCommandTools],
+      preCommandMaxPerTurn: this.config.preCommandMaxPerTurn,
       unattributedMutationInventory: true,
       externalEffectLedger: true,
       externalEffectAdapters: this.listExternalEffectAdapters(),
@@ -892,6 +896,7 @@ export class TimeMachineService {
         enableAgentWriteLedger: this.config.enableAgentWriteLedger,
         autoPreCommandSnapshot: this.config.autoPreCommandSnapshot,
         preCommandTools: [...this.config.preCommandTools],
+        preCommandMaxPerTurn: this.config.preCommandMaxPerTurn,
         maxQuarantineBytes: this.config.maxQuarantineBytes,
         workspaceLockTimeoutMs: this.config.workspaceLockTimeoutMs,
       },

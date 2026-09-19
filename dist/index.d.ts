@@ -170,6 +170,8 @@ interface TimeMachineConfig {
     autoPreCommandSnapshot?: boolean;
     /** Tool names treated as high-risk when autoPreCommandSnapshot is enabled. */
     preCommandTools?: string[];
+    /** Maximum pre-command checkpoints per session turn; 0 means unlimited. */
+    preCommandMaxPerTurn?: number;
 }
 interface RestoreOptions {
     mode?: 'safe' | 'merge' | 'force';
@@ -486,6 +488,7 @@ declare class TimeMachineService {
         agentWriteLedger: boolean;
         preCommandSnapshots: boolean;
         preCommandTools: string[];
+        preCommandMaxPerTurn: number;
         unattributedMutationInventory: boolean;
         externalEffectLedger: true;
         externalEffectAdapters: string[];
@@ -506,6 +509,7 @@ declare class TimeMachineService {
             enableAgentWriteLedger: boolean;
             autoPreCommandSnapshot: boolean;
             preCommandTools: string[];
+            preCommandMaxPerTurn: number;
             maxQuarantineBytes: number;
             workspaceLockTimeoutMs: number;
         };

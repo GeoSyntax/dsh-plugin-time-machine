@@ -148,6 +148,8 @@ dsh plugin --profile web list --depth 0
       - terminal_exec
       - run_code
       - python
+    # Match Hermes' one pre-command boundary per turn; 0 means unlimited.
+    preCommandMaxPerTurn: 1
 ```
 
 Web dashboard 只绑定 loopback，并拒绝非本机 Host 和跨 origin 请求。`/tm-rewind` 与 `/tm-fork` 需要宿主提供 `sessionController`，否则插件会拒绝只恢复文件的危险降级行为。

@@ -37,6 +37,7 @@ export const Config: Schema<Config> = Schema.object({
   enableAgentWriteLedger: Schema.boolean().default(false),
   autoPreCommandSnapshot: Schema.boolean().default(false),
   preCommandTools: Schema.array(Schema.string()).default(['bash', 'shell', 'pwsh', 'powershell', 'terminal_bash', 'terminal_exec', 'run_code', 'python']),
+  preCommandMaxPerTurn: Schema.number().step(1).min(0).default(1),
 });
 
 interface SessionEventLike {
@@ -148,6 +149,7 @@ export function apply(ctx: Context, config: Config = {}): void {
   const observedWrites = new Map<string, { sessionId: string; turn: number; paths: Map<string, 'modify' | 'delete'> }>();
   const pendingLedgerWrites = new Map<string, Promise<void>>();
   const preCommandCalls = new Set<string>();
+  const preCommandCounts = new Map<string, number>();
 
   // Hermes-style pre-destructive boundaries. DSH's pre-execute/execute
   // waterfalls are the last reliable seams before a shell/PTC tool mutates the workspace. We
@@ -171,7 +173,11 @@ export function apply(ctx: Context, config: Config = {}): void {
         if (!session || !toolName || !configured.includes(toolName) || !turnCheckpoint) return;
         const callKey = `${session.id}\0${execution.callId ?? toolName}\0${turn}`;
         if (preCommandCalls.has(callKey)) return;
+        const turnKey = `${session.id}\0${turn}`;
+        const maxPerTurn = service.config.preCommandMaxPerTurn;
+        if (maxPerTurn > 0 && (preCommandCounts.get(turnKey) ?? 0) >= maxPerTurn) return;
         preCommandCalls.add(callKey);
+        preCommandCounts.set(turnKey, (preCommandCounts.get(turnKey) ?? 0) + 1);
         try {
           const boundary = await service.createTurnCheckpoint({
             sessionId: session.id,
@@ -188,6 +194,9 @@ export function apply(ctx: Context, config: Config = {}): void {
           });
           ctx.logger.info(`[time-machine] captured pre-command checkpoint ${boundary.id} before ${toolName}`);
         } catch (error) {
+          preCommandCalls.delete(callKey);
+          const nextCount = (preCommandCounts.get(turnKey) ?? 1) - 1;
+          if (nextCount > 0) preCommandCounts.set(turnKey, nextCount); else preCommandCounts.delete(turnKey);
           ctx.logger.warn(`[time-machine] pre-command checkpoint skipped for ${toolName}: ${errorMessage(error)}`);
         }
       };
@@ -262,6 +271,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     for (const callKey of preCommandCalls) {
       if (callKey.startsWith(`${session.id}\0`) && callKey.endsWith(`\0${turn as number}`)) preCommandCalls.delete(callKey);
     }
+    preCommandCounts.delete(`${session.id}\0${turn as number}`);
     void ledgerWrites.then(() => service.finalizeTurnCheckpoint({
       sessionId: session.id,
       checkpointId,

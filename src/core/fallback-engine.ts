@@ -3,6 +3,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import type { DiffResult, FileChange } from '../types.js';
 import { SnapshotSizeError } from './git-plumbing.js';
+import { assertNoSymlinkAncestors } from './path-safety.js';
 
 export interface FallbackOptions {
   workDir: string;
@@ -147,6 +148,10 @@ export class FallbackSnapshotEngine {
     const preservePaths = options.preservePaths ?? [];
     const targetPaths = new Set(manifest.entries.filter(entry => !isPathOmitted(entry.path, preservePaths)).map(entry => entry.path));
     const currentEntries = await this.scanTree(this.workDir);
+    await assertNoSymlinkAncestors(this.workDir, [
+      ...currentEntries.map(entry => entry.path),
+      ...manifest.entries.map(entry => entry.path),
+    ]);
 
     for (const entry of currentEntries.sort(deepestFirst)) {
       if (isPathOmitted(entry.path, preservePaths)) continue;
@@ -195,6 +200,10 @@ export class FallbackSnapshotEngine {
     const selected = (entry: SnapshotEntry) => normalized.some(item => entry.path === item || entry.path.startsWith(`${item}/`));
     const currentEntries = (await this.scanTree(this.workDir)).filter(selected).sort(deepestFirst);
     const targetEntries = manifest.entries.filter(selected);
+    await assertNoSymlinkAncestors(this.workDir, [
+      ...currentEntries.map(entry => entry.path),
+      ...targetEntries.map(entry => entry.path),
+    ]);
     if (currentEntries.length === 0 && targetEntries.length === 0) {
       throw new Error(`None of the selected paths exist in the current or target snapshot: ${normalized.join(', ')}`);
     }

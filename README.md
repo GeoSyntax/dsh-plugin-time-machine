@@ -87,6 +87,7 @@ dsh plugin --profile web list --depth 0
 - **回顾失败原因:** failed turn、stderr 和失败工具会生成 fork 前的 reflection advisory，减少重复踩坑。
 - **运行在非 Git 目录:** fallback 后端使用 manifest 和内容哈希快照，支持普通文件、目录和 symlink。
 - **Hard-link fail-closed:** Git restore 会在写入前检测 `nlink > 1` 的目标文件并拒绝操作，避免覆盖共享 inode；先解除 hard link 或显式选择其他路径后再恢复。fallback 使用先删除链接再写入的安全语义。
+- **Symlink ancestor fail-closed:** 恢复前会检查所有目标、当前待清理和保留路径的祖先链；只要祖先是 symlink 或非目录，就拒绝恢复，避免通过 workspace 内的链接穿透到 workspace 外。
 - **先看再回滚:** Git 和非 Git fallback 都提供 checkpoint 间文本 diff（binary 文件显示 binary marker）；preview 还会列出导致 safe restore 拒绝覆盖的 `conflictingPaths`。
 - **显式三方合并恢复:** `/tm-rewind <checkpoint> --merge`（Web API 传 `merge: true`）以当前 checkpoint 为 base，保留与目标快照不冲突的本地修改；同一路径双方都改动时返回 `RESTORE_MERGE_CONFLICT`，默认 safe 模式行为不变。该模式要求 Git 工作区。
 - **选择性恢复:** `/tm-restore-files` 只写入指定文件/目录，并创建 rescue 和结果 checkpoint；它不会伪造会话回滚。

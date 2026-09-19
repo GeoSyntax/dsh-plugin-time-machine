@@ -296,6 +296,45 @@ var init_encrypted_shadow_store = __esm({
   }
 });
 
+// src/core/path-safety.ts
+import fs2 from "fs/promises";
+import path3 from "path";
+async function assertNoSymlinkAncestors(root, relativePaths) {
+  const unsafe = /* @__PURE__ */ new Set();
+  for (const relative of relativePaths) {
+    const normalized = relative.replaceAll("\\", "/").replace(/^\/+/, "");
+    const parts = normalized.split("/").filter(Boolean);
+    let cursor = path3.resolve(root);
+    const traversed = [];
+    for (const part of parts.slice(0, -1)) {
+      traversed.push(part);
+      cursor = path3.join(cursor, part);
+      const stat = await fs2.lstat(cursor).catch(() => void 0);
+      if (stat?.isSymbolicLink() || stat && !stat.isDirectory()) {
+        unsafe.add(traversed.join("/"));
+        break;
+      }
+    }
+  }
+  if (unsafe.size) throw new WorkspacePathSafetyError([...unsafe].sort());
+}
+var WorkspacePathSafetyError;
+var init_path_safety = __esm({
+  "src/core/path-safety.ts"() {
+    "use strict";
+    init_esm_shims();
+    WorkspacePathSafetyError = class extends Error {
+      constructor(paths) {
+        super(`Workspace restore paths traverse symbolic-link or non-directory ancestors: ${paths.join(", ")}`);
+        this.paths = paths;
+        this.name = "WorkspacePathSafetyError";
+      }
+      paths;
+      code = "UNSUPPORTED_WORKSPACE_STATE";
+    };
+  }
+});
+
 // src/core/git-plumbing.ts
 var git_plumbing_exports = {};
 __export(git_plumbing_exports, {
@@ -312,22 +351,22 @@ __export(git_plumbing_exports, {
 import { execFile, spawn } from "child_process";
 import { createCipheriv as createCipheriv2, createDecipheriv as createDecipheriv2, createHash as createHash2, randomBytes as randomBytes2, randomUUID as randomUUID2 } from "crypto";
 import { promisify } from "util";
-import path3 from "path";
-import fs2 from "fs/promises";
+import path4 from "path";
+import fs3 from "fs/promises";
 import zlib from "zlib";
 async function sumFileSizes(files) {
   let total = 0;
-  for (const file of files) total += (await fs2.stat(file).catch(() => ({ size: 0 }))).size;
+  for (const file of files) total += (await fs3.stat(file).catch(() => ({ size: 0 }))).size;
   return total;
 }
 async function directoryBytes(root) {
-  const rootStat = await fs2.stat(root).catch(() => void 0);
+  const rootStat = await fs3.stat(root).catch(() => void 0);
   if (rootStat?.isFile()) return rootStat.size;
   let total = 0;
-  for (const entry of await fs2.readdir(root, { withFileTypes: true }).catch(() => [])) {
-    const absolute = path3.join(root, entry.name);
+  for (const entry of await fs3.readdir(root, { withFileTypes: true }).catch(() => [])) {
+    const absolute = path4.join(root, entry.name);
     if (entry.isDirectory()) total += await directoryBytes(absolute);
-    else total += (await fs2.stat(absolute).catch(() => ({ size: 0 }))).size;
+    else total += (await fs3.stat(absolute).catch(() => ({ size: 0 }))).size;
   }
   return total;
 }
@@ -349,6 +388,7 @@ var init_git_plumbing = __esm({
     "use strict";
     init_esm_shims();
     init_encrypted_shadow_store();
+    init_path_safety();
     execFileAsync = promisify(execFile);
     WorkspaceDriftError = class extends Error {
       constructor(details) {
@@ -447,15 +487,15 @@ var init_git_plumbing = __esm({
       /** Last complete managed tree and the Git status signature that produced it. */
       workspaceTreeCache;
       constructor(options) {
-        this.workDir = path3.resolve(options.workDir);
+        this.workDir = path4.resolve(options.workDir);
         this.refPrefix = options.refPrefix || "refs/dsh-tm";
-        this.preservePaths = (options.preservePaths ?? []).map((item) => path3.resolve(this.workDir, item));
-        this.quarantineDir = options.quarantineDir ? path3.resolve(options.quarantineDir) : void 0;
-        this.shadowObjectDir = options.shadowObjectDir ? path3.resolve(options.shadowObjectDir) : void 0;
+        this.preservePaths = (options.preservePaths ?? []).map((item) => path4.resolve(this.workDir, item));
+        this.quarantineDir = options.quarantineDir ? path4.resolve(options.quarantineDir) : void 0;
+        this.shadowObjectDir = options.shadowObjectDir ? path4.resolve(options.shadowObjectDir) : void 0;
         if (this.shadowObjectDir && options.shadowEncryptionKey) {
           this.encryptedShadowStore = new EncryptedShadowStore(
             this.shadowObjectDir,
-            path3.join(path3.dirname(path3.dirname(this.shadowObjectDir)), "git-shadow-encrypted"),
+            path4.join(path4.dirname(path4.dirname(this.shadowObjectDir)), "git-shadow-encrypted"),
             options.shadowEncryptionKey,
             options.shadowEncryptionPreviousKey
           );
@@ -497,14 +537,14 @@ var init_git_plumbing = __esm({
       async getRepoRoot() {
         if (this.repoRootCached) return this.repoRootCached;
         const { stdout } = await this.runGit(["rev-parse", "--show-toplevel"]);
-        this.repoRootCached = await fs2.realpath(path3.resolve(stdout.trim())).catch(() => path3.resolve(stdout.trim()));
-        this.preservePaths = await Promise.all(this.preservePaths.map(async (absolute) => await fs2.realpath(absolute).catch(() => absolute)));
+        this.repoRootCached = await fs3.realpath(path4.resolve(stdout.trim())).catch(() => path4.resolve(stdout.trim()));
+        this.preservePaths = await Promise.all(this.preservePaths.map(async (absolute) => await fs3.realpath(absolute).catch(() => absolute)));
         return this.repoRootCached;
       }
       async getGitDir() {
         if (this.gitDirCached) return this.gitDirCached;
         const { stdout } = await this.runGit(["rev-parse", "--absolute-git-dir"]);
-        this.gitDirCached = path3.resolve(stdout.trim());
+        this.gitDirCached = path4.resolve(stdout.trim());
         return this.gitDirCached;
       }
       async runGit(args, extraEnv = {}, cwd = this.workDir) {
@@ -566,7 +606,7 @@ Reason: ${errorMsg}`);
             omittedPaths: treeResult.omittedPaths
           };
         } finally {
-          if (indexFile) await fs2.rm(indexFile, { force: true }).catch(() => void 0);
+          if (indexFile) await fs3.rm(indexFile, { force: true }).catch(() => void 0);
         }
       }
       /** Compute the current managed tree without publishing a commit or ref. */
@@ -575,7 +615,7 @@ Reason: ${errorMsg}`);
         try {
           return { treeOid, ignoredPaths: await this.listIgnoredPaths() };
         } finally {
-          await fs2.rm(indexFile, { force: true }).catch(() => void 0);
+          await fs3.rm(indexFile, { force: true }).catch(() => void 0);
         }
       }
       /** Read Git control-plane state without touching the user's index or refs. */
@@ -590,11 +630,11 @@ Reason: ${errorMsg}`);
           ["REVERT_HEAD", "revert"]
         ];
         for (const [file, operation] of operationFiles) {
-          if (await fs2.access(path3.join(gitDir, file)).then(() => true).catch(() => false)) return { headOid, branch, operation };
+          if (await fs3.access(path4.join(gitDir, file)).then(() => true).catch(() => false)) return { headOid, branch, operation };
         }
         const rebaseDirs = [["rebase-merge", "rebase"], ["rebase-apply", "rebase"]];
         for (const [directory, operation] of rebaseDirs) {
-          if (await fs2.access(path3.join(gitDir, directory)).then(() => true).catch(() => false)) return { headOid, branch, operation };
+          if (await fs3.access(path4.join(gitDir, directory)).then(() => true).catch(() => false)) return { headOid, branch, operation };
         }
         return { headOid, branch, operation: null };
       }
@@ -606,7 +646,7 @@ Reason: ${errorMsg}`);
         }
         const sparseConfig = await this.runGit(["config", "--bool", "--get", "core.sparseCheckout"]).then((result) => result.stdout.trim() === "true").catch(() => false);
         const gitDir = await this.getGitDir();
-        const sparseFile = await fs2.access(path3.join(gitDir, "info", "sparse-checkout")).then(() => true).catch(() => false);
+        const sparseFile = await fs3.access(path4.join(gitDir, "info", "sparse-checkout")).then(() => true).catch(() => false);
         const { stdout } = await this.runGit(["ls-files", "--stage", "-z"]).catch(() => ({ stdout: "" }));
         const submodulePaths = stdout.split("\0").filter(Boolean).map((entry) => entry.match(/^160000\s+[0-9a-f]+\s+\d+\t(.+)$/)?.[1]).filter((item) => Boolean(item));
         return { sparseCheckout: sparseConfig || sparseFile, submodulePaths, inProgressOperation: control.operation };
@@ -627,7 +667,7 @@ Reason: ${errorMsg}`);
         const current = await this.inspectWorkspace();
         const preservePaths = [...new Set((options.preservePaths ?? []).map(normalizeGitPath).filter(Boolean))];
         if (mode === "safe" && options.expectedCurrentTreeOid && current.treeOid !== options.expectedCurrentTreeOid) {
-          const details = (await this.diffNameOnly(options.expectedCurrentTreeOid, current.treeOid)).filter((item) => !preservePaths.some((path12) => item === path12 || item.startsWith(`${path12}/`)));
+          const details = (await this.diffNameOnly(options.expectedCurrentTreeOid, current.treeOid)).filter((item) => !preservePaths.some((path13) => item === path13 || item.startsWith(`${path13}/`)));
           if (details.length) throw new WorkspaceDriftError(details);
         }
         if (mode === "safe" && options.expectedCurrentIgnoredPaths) {
@@ -641,6 +681,12 @@ Reason: ${errorMsg}`);
         const targetIgnored = new Set(options.targetIgnoredPaths ?? []);
         const ignoredToDelete = current.ignoredPaths.filter((item) => !targetIgnored.has(item));
         const targetFiles = new Set(await this.listTreeFileNames(restoreTree));
+        await assertNoSymlinkAncestors(this.workDir, [
+          ...targetFiles,
+          ...current.ignoredPaths,
+          ...options.omittedPaths ?? [],
+          ...preservePaths
+        ]);
         await this.assertNoHardLinkTargets([...targetFiles]);
         const targetEntries = this.shadowObjectDir ? await this.listTreeEntries(restoreTree) : [];
         const collisions = current.ignoredPaths.filter((item) => targetFiles.has(item));
@@ -653,7 +699,7 @@ Reason: ${errorMsg}`);
             if (this.isPreservedRelative(relative)) continue;
             const absolute = await this.safeWorkspacePath(relative);
             if (options.ignoredBackupKey) await this.backupIgnoredPath(options.ignoredBackupKey, relative, absolute);
-            await fs2.rm(absolute, { recursive: true, force: true });
+            await fs3.rm(absolute, { recursive: true, force: true });
             deletedIgnoredPaths.push(relative);
           }
         }
@@ -668,59 +714,59 @@ Reason: ${errorMsg}`);
             const currentFiles = await this.listTreeFileNames(current.treeOid);
             for (const entry of targetEntries) {
               const destination = await this.safeWorkspacePath(entry.path);
-              await fs2.mkdir(path3.dirname(destination), { recursive: true });
-              await fs2.rm(destination, { recursive: true, force: true });
+              await fs3.mkdir(path4.dirname(destination), { recursive: true });
+              await fs3.rm(destination, { recursive: true, force: true });
               const content = await this.readShadowBlob(entry.oid, root);
               if (entry.mode === "120000") {
-                await fs2.symlink(content.toString("utf8"), destination);
+                await fs3.symlink(content.toString("utf8"), destination);
               } else {
-                await fs2.writeFile(destination, content);
-                await fs2.chmod(destination, Number.parseInt(entry.mode, 8) & 511).catch(() => void 0);
+                await fs3.writeFile(destination, content);
+                await fs3.chmod(destination, Number.parseInt(entry.mode, 8) & 511).catch(() => void 0);
               }
             }
             for (const relative of currentFiles.filter((file) => !targetFiles.has(file)).sort(longestFirst)) {
-              await fs2.rm(await this.safeWorkspacePath(relative), { recursive: true, force: true });
+              await fs3.rm(await this.safeWorkspacePath(relative), { recursive: true, force: true });
             }
           }
           if (omittedStash) await this.restoreStashedWorkspacePaths(omittedStash);
         } finally {
-          await fs2.rm(indexFile, { force: true }).catch(() => void 0);
-          if (omittedStash) await fs2.rm(omittedStash.root, { recursive: true, force: true }).catch(() => void 0);
+          await fs3.rm(indexFile, { force: true }).catch(() => void 0);
+          if (omittedStash) await fs3.rm(omittedStash.root, { recursive: true, force: true }).catch(() => void 0);
         }
         this.workspaceTreeCache = void 0;
         return { deletedIgnoredPaths, restoredTreeOid: restoreTree };
       }
       async stashWorkspacePaths(paths) {
-        const root = path3.join(await this.getGitDir(), `dsh-tm-omitted-${randomUUID2()}`);
+        const root = path4.join(await this.getGitDir(), `dsh-tm-omitted-${randomUUID2()}`);
         const entries = [];
         try {
           for (const relative of [...new Set(paths.map(normalizeGitPath).filter(Boolean))]) {
             const source = await this.safeWorkspacePath(relative);
-            const stat = await fs2.lstat(source).catch(() => void 0);
+            const stat = await fs3.lstat(source).catch(() => void 0);
             if (!stat) continue;
-            const destination = path3.join(root, ...relative.split("/"));
-            await fs2.mkdir(path3.dirname(destination), { recursive: true });
-            await fs2.cp(source, destination, { recursive: true, force: true, verbatimSymlinks: true });
+            const destination = path4.join(root, ...relative.split("/"));
+            await fs3.mkdir(path4.dirname(destination), { recursive: true });
+            await fs3.cp(source, destination, { recursive: true, force: true, verbatimSymlinks: true });
             entries.push(relative);
           }
           return { root, entries };
         } catch (error) {
-          await fs2.rm(root, { recursive: true, force: true }).catch(() => void 0);
+          await fs3.rm(root, { recursive: true, force: true }).catch(() => void 0);
           throw error;
         }
       }
       async restoreStashedWorkspacePaths(stash) {
         for (const relative of stash.entries) {
-          const source = path3.join(stash.root, ...relative.split("/"));
+          const source = path4.join(stash.root, ...relative.split("/"));
           const destination = await this.safeWorkspacePath(relative);
-          await fs2.mkdir(path3.dirname(destination), { recursive: true });
-          await fs2.rm(destination, { recursive: true, force: true });
-          await fs2.cp(source, destination, { recursive: true, force: true, verbatimSymlinks: true });
+          await fs3.mkdir(path4.dirname(destination), { recursive: true });
+          await fs3.rm(destination, { recursive: true, force: true });
+          await fs3.cp(source, destination, { recursive: true, force: true, verbatimSymlinks: true });
         }
       }
       async mergeWorkspaceTree(baseTree, targetTree, currentTree) {
         if (!baseTree) throw new Error("Merge restore requires the active checkpoint tree.");
-        const indexFile = path3.join(await this.getGitDir(), `dsh-tm-merge-index-${randomUUID2()}`);
+        const indexFile = path4.join(await this.getGitDir(), `dsh-tm-merge-index-${randomUUID2()}`);
         try {
           await this.runGit(["read-tree", "-m", baseTree, targetTree, currentTree], { GIT_INDEX_FILE: indexFile });
           const { stdout: conflicts } = await this.runGit(["ls-files", "-u", "-z"], { GIT_INDEX_FILE: indexFile });
@@ -729,7 +775,7 @@ Reason: ${errorMsg}`);
           const { stdout } = await this.runGit(["write-tree"], { GIT_INDEX_FILE: indexFile });
           return stdout.trim();
         } finally {
-          await fs2.rm(indexFile, { force: true }).catch(() => void 0);
+          await fs3.rm(indexFile, { force: true }).catch(() => void 0);
         }
       }
       /** Restore only selected tracked workspace paths using a disposable index. */
@@ -741,52 +787,53 @@ Reason: ${errorMsg}`);
         for (const relative of normalized) await this.safeWorkspacePath(relative);
         const mode = options.mode ?? "safe";
         const current = await this.inspectWorkspace();
-        const ignoredSelection = current.ignoredPaths.filter((file) => normalized.some((path12) => file === path12 || file.startsWith(`${path12}/`)));
+        const ignoredSelection = current.ignoredPaths.filter((file) => normalized.some((path13) => file === path13 || file.startsWith(`${path13}/`)));
         if (ignoredSelection.length) throw new WorkspaceRestoreConflictError(ignoredSelection);
         if (mode === "safe" && options.expectedCurrentTreeOid && current.treeOid !== options.expectedCurrentTreeOid) {
           const changed = await this.diffNameOnly(options.expectedCurrentTreeOid, current.treeOid);
-          const selectedDrift = changed.filter((file) => normalized.some((path12) => file === path12 || file.startsWith(`${path12}/`)));
+          const selectedDrift = changed.filter((file) => normalized.some((path13) => file === path13 || file.startsWith(`${path13}/`)));
           if (selectedDrift.length) throw new WorkspaceDriftError(selectedDrift);
         }
         const { stdout: treeStdout } = await this.runGit(["rev-parse", `${commitOrTreeOid}^{tree}`]);
         const targetTree = treeStdout.trim();
         const targetFiles = await this.listTreeFileNames(targetTree);
         const currentFiles = await this.listTreeFileNames(current.treeOid);
-        const selectedTargetFiles = targetFiles.filter((file) => normalized.some((path12) => file === path12 || file.startsWith(`${path12}/`)));
-        const selectedCurrentFiles = currentFiles.filter((file) => normalized.some((path12) => file === path12 || file.startsWith(`${path12}/`)));
+        const selectedTargetFiles = targetFiles.filter((file) => normalized.some((path13) => file === path13 || file.startsWith(`${path13}/`)));
+        const selectedCurrentFiles = currentFiles.filter((file) => normalized.some((path13) => file === path13 || file.startsWith(`${path13}/`)));
+        await assertNoSymlinkAncestors(this.workDir, [...selectedTargetFiles, ...selectedCurrentFiles, ...normalized]);
         await this.assertNoHardLinkTargets(selectedCurrentFiles);
         if (selectedTargetFiles.length === 0 && selectedCurrentFiles.length === 0) {
           throw new Error(`None of the selected paths exist in the current or target snapshot: ${normalized.join(", ")}`);
         }
-        const exportDir = path3.join(await fs2.mkdtemp(path3.join(await fs2.mkdtemp(path3.join(this.workDir, ".dsh-tm-export-")), "snapshot-")));
-        const indexFile = path3.join(await this.getGitDir(), `dsh-tm-index-${randomUUID2()}`);
+        const exportDir = path4.join(await fs3.mkdtemp(path4.join(await fs3.mkdtemp(path4.join(this.workDir, ".dsh-tm-export-")), "snapshot-")));
+        const indexFile = path4.join(await this.getGitDir(), `dsh-tm-index-${randomUUID2()}`);
         try {
-          await fs2.mkdir(exportDir, { recursive: true });
+          await fs3.mkdir(exportDir, { recursive: true });
           await this.runGit(["read-tree", targetTree], { GIT_INDEX_FILE: indexFile });
-          await this.runGit(["checkout-index", "--all", `--prefix=${exportDir}${path3.sep}`], { GIT_INDEX_FILE: indexFile });
+          await this.runGit(["checkout-index", "--all", `--prefix=${exportDir}${path4.sep}`], { GIT_INDEX_FILE: indexFile });
           const targetSet = new Set(selectedTargetFiles);
           for (const relative of selectedCurrentFiles) {
             if (targetSet.has(relative)) continue;
-            await fs2.rm(await this.safeWorkspacePath(relative), { recursive: true, force: true });
+            await fs3.rm(await this.safeWorkspacePath(relative), { recursive: true, force: true });
           }
           for (const relative of selectedTargetFiles) {
-            const source = path3.join(exportDir, ...relative.split("/"));
+            const source = path4.join(exportDir, ...relative.split("/"));
             const destination = await this.safeWorkspacePath(relative);
-            await fs2.mkdir(path3.dirname(destination), { recursive: true });
-            await fs2.rm(destination, { recursive: true, force: true });
-            await fs2.cp(source, destination, { recursive: true, force: true, verbatimSymlinks: true });
+            await fs3.mkdir(path4.dirname(destination), { recursive: true });
+            await fs3.rm(destination, { recursive: true, force: true });
+            await fs3.cp(source, destination, { recursive: true, force: true, verbatimSymlinks: true });
           }
           this.workspaceTreeCache = void 0;
           return normalized;
         } finally {
-          await fs2.rm(indexFile, { force: true }).catch(() => void 0);
-          await fs2.rm(path3.dirname(exportDir), { recursive: true, force: true }).catch(() => void 0);
+          await fs3.rm(indexFile, { force: true }).catch(() => void 0);
+          await fs3.rm(path4.dirname(exportDir), { recursive: true, force: true }).catch(() => void 0);
         }
       }
       async assertNoHardLinkTargets(paths) {
         const hardLinks = [];
         for (const relative of paths) {
-          const stat = await fs2.lstat(await this.safeWorkspacePath(relative)).catch(() => void 0);
+          const stat = await fs3.lstat(await this.safeWorkspacePath(relative)).catch(() => void 0);
           if (stat?.isFile() && stat.nlink > 1) hardLinks.push(relative);
         }
         if (hardLinks.length) throw new WorkspaceHardLinkError(hardLinks.sort());
@@ -794,8 +841,8 @@ Reason: ${errorMsg}`);
       /** Restore quarantined ignored content without ever writing it into Git objects. */
       async restoreIgnoredBackup(key) {
         if (!this.quarantineDir) return;
-        const backupRoot = path3.join(this.quarantineDir, encodeRefPart(key));
-        const encryptedManifest = await fs2.readFile(path3.join(backupRoot, ".manifest.json"), "utf8").then((raw) => JSON.parse(raw)).catch((error) => {
+        const backupRoot = path4.join(this.quarantineDir, encodeRefPart(key));
+        const encryptedManifest = await fs3.readFile(path4.join(backupRoot, ".manifest.json"), "utf8").then((raw) => JSON.parse(raw)).catch((error) => {
           if (error?.code === "ENOENT") return void 0;
           throw new QuarantineKeyError(`Encrypted quarantine manifest is invalid: ${error?.message ?? "unknown error"}`);
         });
@@ -805,18 +852,18 @@ Reason: ${errorMsg}`);
           const directories = encryptedManifest.entries.filter((entry) => entry.type === "directory").sort((a, b) => a.path.localeCompare(b.path));
           for (const entry of directories) {
             const destination = await this.safeWorkspacePath(entry.path);
-            await fs2.mkdir(destination, { recursive: true, mode: entry.mode });
+            await fs3.mkdir(destination, { recursive: true, mode: entry.mode });
           }
           for (const entry of encryptedManifest.entries.filter((item) => item.type !== "directory")) {
             const destination = await this.safeWorkspacePath(entry.path);
-            await fs2.mkdir(path3.dirname(destination), { recursive: true });
-            await fs2.rm(destination, { recursive: true, force: true });
+            await fs3.mkdir(path4.dirname(destination), { recursive: true });
+            await fs3.rm(destination, { recursive: true, force: true });
             if (entry.type === "symlink") {
-              await fs2.symlink(entry.linkTarget, destination);
+              await fs3.symlink(entry.linkTarget, destination);
               continue;
             }
             if (!entry.payload || !entry.nonce) throw new QuarantineKeyError(`Encrypted quarantine entry '${entry.path}' is incomplete.`);
-            const encrypted = await fs2.readFile(path3.join(backupRoot, entry.payload));
+            const encrypted = await fs3.readFile(path4.join(backupRoot, entry.payload));
             if (encrypted.length < 16) throw new QuarantineKeyError(`Encrypted quarantine entry '${entry.path}' is corrupt.`);
             let plaintext;
             try {
@@ -826,13 +873,13 @@ Reason: ${errorMsg}`);
             } catch {
               throw new QuarantineKeyError(`Encrypted quarantine entry '${entry.path}' failed authentication.`);
             }
-            await fs2.writeFile(destination, plaintext);
-            await fs2.chmod(destination, entry.mode).catch(() => void 0);
+            await fs3.writeFile(destination, plaintext);
+            await fs3.chmod(destination, entry.mode).catch(() => void 0);
           }
           return;
         }
         if (this.quarantineKey) {
-          const plaintextEntries = await fs2.readdir(backupRoot).catch((error) => {
+          const plaintextEntries = await fs3.readdir(backupRoot).catch((error) => {
             if (error?.code === "ENOENT") return [];
             throw error;
           });
@@ -841,27 +888,27 @@ Reason: ${errorMsg}`);
           }
         }
         const root = await this.getRepoRoot();
-        const entries = await fs2.readdir(backupRoot, { withFileTypes: true }).catch((error) => {
+        const entries = await fs3.readdir(backupRoot, { withFileTypes: true }).catch((error) => {
           if (error?.code === "ENOENT") return [];
           throw error;
         });
         for (const entry of entries) {
-          const source = path3.join(backupRoot, entry.name);
-          const destination = path3.join(root, entry.name);
-          await fs2.cp(source, destination, { recursive: true, force: true, verbatimSymlinks: true });
+          const source = path4.join(backupRoot, entry.name);
+          const destination = path4.join(root, entry.name);
+          await fs3.cp(source, destination, { recursive: true, force: true, verbatimSymlinks: true });
         }
       }
       /** Validate encrypted quarantine content before a restore mutates the workspace. */
       async validateIgnoredBackup(key) {
         if (!this.quarantineDir) return;
-        const backupRoot = path3.join(this.quarantineDir, encodeRefPart(key));
-        const manifest = await fs2.readFile(path3.join(backupRoot, ".manifest.json"), "utf8").then((raw) => JSON.parse(raw)).catch((error) => {
+        const backupRoot = path4.join(this.quarantineDir, encodeRefPart(key));
+        const manifest = await fs3.readFile(path4.join(backupRoot, ".manifest.json"), "utf8").then((raw) => JSON.parse(raw)).catch((error) => {
           if (error?.code === "ENOENT") return void 0;
           throw new QuarantineKeyError(`Encrypted quarantine manifest is invalid: ${error?.message ?? "unknown error"}`);
         });
         if (!manifest) {
           if (this.quarantineKey) {
-            const plaintextEntries = await fs2.readdir(backupRoot).catch((error) => {
+            const plaintextEntries = await fs3.readdir(backupRoot).catch((error) => {
               if (error?.code === "ENOENT") return [];
               throw error;
             });
@@ -875,7 +922,7 @@ Reason: ${errorMsg}`);
         if (manifest.version !== 1 || !Array.isArray(manifest.entries)) throw new QuarantineKeyError("Encrypted quarantine manifest version is unsupported.");
         for (const entry of manifest.entries.filter((item) => item.type === "file")) {
           if (!entry.payload || !entry.nonce) throw new QuarantineKeyError(`Encrypted quarantine entry '${entry.path}' is incomplete.`);
-          const encrypted = await fs2.readFile(path3.join(backupRoot, entry.payload));
+          const encrypted = await fs3.readFile(path4.join(backupRoot, entry.payload));
           if (encrypted.length < 16) throw new QuarantineKeyError(`Encrypted quarantine entry '${entry.path}' is corrupt.`);
           try {
             const decipher = createDecipheriv2("aes-256-gcm", this.quarantineKey, Buffer.from(entry.nonce, "base64url"));
@@ -890,9 +937,9 @@ Reason: ${errorMsg}`);
       /** Remove a quarantine backup only after the DAG no longer references its key. */
       async removeIgnoredBackup(key) {
         if (!this.quarantineDir) return 0;
-        const backupRoot = path3.join(this.quarantineDir, encodeRefPart(key));
+        const backupRoot = path4.join(this.quarantineDir, encodeRefPart(key));
         const reclaimed = await directoryBytes(backupRoot);
-        await fs2.rm(backupRoot, { recursive: true, force: true });
+        await fs3.rm(backupRoot, { recursive: true, force: true });
         return reclaimed;
       }
       async getDiffBetween(baseOid, targetOid) {
@@ -921,8 +968,8 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
       async readShadowBlob(oid, cwd) {
         return this.withShadowRuntime(async () => {
           if (this.shadowObjectDir) {
-            const loose = path3.join(this.shadowObjectDir, oid.slice(0, 2), oid.slice(2));
-            const compressed = await fs2.readFile(loose).catch(() => void 0);
+            const loose = path4.join(this.shadowObjectDir, oid.slice(0, 2), oid.slice(2));
+            const compressed = await fs3.readFile(loose).catch(() => void 0);
             if (compressed) {
               try {
                 const inflated = zlib.inflateSync(compressed);
@@ -944,14 +991,14 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
         };
         if (this.shadowObjectDir) {
           env.GIT_OBJECT_DIRECTORY = this.shadowObjectDir;
-          const primaryObjects = path3.join(this.gitDirCached ?? path3.join(this.workDir, ".git"), "objects");
-          env.GIT_ALTERNATE_OBJECT_DIRECTORIES = [primaryObjects, env.GIT_ALTERNATE_OBJECT_DIRECTORIES].filter(Boolean).map((item) => item.replace(/\\/g, "/")).join(path3.delimiter);
+          const primaryObjects = path4.join(this.gitDirCached ?? path4.join(this.workDir, ".git"), "objects");
+          env.GIT_ALTERNATE_OBJECT_DIRECTORIES = [primaryObjects, env.GIT_ALTERNATE_OBJECT_DIRECTORIES].filter(Boolean).map((item) => item.replace(/\\/g, "/")).join(path4.delimiter);
         }
         return env;
       }
       async writeWorkspaceTree(enforceSnapshotLimits = false, extraOmittedPaths = [], baseTreeOid, changedPaths = []) {
         const root = await this.getRepoRoot();
-        const indexFile = path3.join(await this.getGitDir(), `dsh-tm-index-${randomUUID2()}`);
+        const indexFile = path4.join(await this.getGitDir(), `dsh-tm-index-${randomUUID2()}`);
         const env = { GIT_INDEX_FILE: indexFile };
         try {
           try {
@@ -1008,7 +1055,7 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
           const { stdout } = await this.runGit(["write-tree"], env, root);
           return { treeOid: stdout.trim(), indexFile, omittedPaths };
         } catch (error) {
-          await fs2.rm(indexFile, { force: true }).catch(() => void 0);
+          await fs3.rm(indexFile, { force: true }).catch(() => void 0);
           throw error;
         }
       }
@@ -1049,7 +1096,7 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
         let totalBytes = 0;
         const omitted = [];
         for (const relative of files) {
-          const stat = await fs2.lstat(path3.join(root, ...relative.split("/"))).catch(() => void 0);
+          const stat = await fs3.lstat(path4.join(root, ...relative.split("/"))).catch(() => void 0);
           if (!stat?.isFile()) continue;
           if (this.maxSnapshotFileBytes > 0 && stat.size > this.maxSnapshotFileBytes) {
             if (this.allowPartialSnapshots) {
@@ -1123,7 +1170,7 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
       }
       protectedRepoPaths(repoRoot) {
         return this.preservePaths.flatMap((absolute) => {
-          const relative = normalizeGitPath(path3.relative(repoRoot, absolute));
+          const relative = normalizeGitPath(path4.relative(repoRoot, absolute));
           return relative && relative !== ".." && !relative.startsWith("../") ? [relative] : [];
         });
       }
@@ -1131,15 +1178,15 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
         const normalized = normalizeGitPath(relative);
         const repoRoot = this.repoRootCached ?? this.workDir;
         return this.preservePaths.some((absolute) => {
-          const candidate = normalizeGitPath(path3.relative(repoRoot, absolute));
+          const candidate = normalizeGitPath(path4.relative(repoRoot, absolute));
           return candidate === normalized || normalized.startsWith(`${candidate}/`);
         });
       }
       async safeWorkspacePath(relative) {
         const root = await this.getRepoRoot();
-        const absolute = path3.resolve(root, relative);
-        const relation = path3.relative(root, absolute);
-        if (!relation || relation === ".." || relation.startsWith(`..${path3.sep}`) || path3.isAbsolute(relation)) {
+        const absolute = path4.resolve(root, relative);
+        const relation = path4.relative(root, absolute);
+        if (!relation || relation === ".." || relation.startsWith(`..${path4.sep}`) || path4.isAbsolute(relation)) {
           throw new Error(`Unsafe workspace path: ${relative}`);
         }
         return absolute;
@@ -1150,32 +1197,32 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
           await this.backupIgnoredPathEncrypted(key, relative, absolute);
           return;
         }
-        const destination = path3.join(this.quarantineDir, encodeRefPart(key), ...relative.split("/"));
+        const destination = path4.join(this.quarantineDir, encodeRefPart(key), ...relative.split("/"));
         if (this.maxQuarantineBytes > 0) {
           const currentBytes = await directoryBytes(this.quarantineDir);
           const incomingBytes = await directoryBytes(absolute);
-          const existingBytes = await directoryBytes(path3.dirname(destination));
+          const existingBytes = await directoryBytes(path4.dirname(destination));
           const requiredBytes = currentBytes - existingBytes + incomingBytes;
           if (requiredBytes > this.maxQuarantineBytes) throw new QuarantineQuotaError(this.maxQuarantineBytes, requiredBytes);
         }
-        await fs2.mkdir(path3.dirname(destination), { recursive: true });
-        await fs2.cp(absolute, destination, { recursive: true, force: true, verbatimSymlinks: true });
+        await fs3.mkdir(path4.dirname(destination), { recursive: true });
+        await fs3.cp(absolute, destination, { recursive: true, force: true, verbatimSymlinks: true });
       }
       async backupIgnoredPathEncrypted(key, relative, absolute) {
-        const root = path3.join(this.quarantineDir, encodeRefPart(key));
-        const manifestPath = path3.join(root, ".manifest.json");
-        const existing = await fs2.readFile(manifestPath, "utf8").then((raw) => JSON.parse(raw)).catch(async (error) => {
+        const root = path4.join(this.quarantineDir, encodeRefPart(key));
+        const manifestPath = path4.join(root, ".manifest.json");
+        const existing = await fs3.readFile(manifestPath, "utf8").then((raw) => JSON.parse(raw)).catch(async (error) => {
           if (error?.code === "ENOENT") {
-            const entries = await fs2.readdir(root).catch(() => []);
+            const entries = await fs3.readdir(root).catch(() => []);
             if (entries.length) throw new QuarantineKeyError("Plaintext quarantine exists; refusing to mix it with encrypted backups.");
             return { version: 1, entries: [] };
           }
           throw new QuarantineKeyError(`Encrypted quarantine manifest is invalid: ${error?.message ?? "unknown error"}`);
         });
         if (existing.version !== 1 || !Array.isArray(existing.entries)) throw new QuarantineKeyError("Encrypted quarantine manifest version is unsupported.");
-        const staging = path3.join(root, `.staging-${randomUUID2()}`);
-        const payloadDir = path3.join(staging, "payload");
-        await fs2.mkdir(payloadDir, { recursive: true });
+        const staging = path4.join(root, `.staging-${randomUUID2()}`);
+        const payloadDir = path4.join(staging, "payload");
+        await fs3.mkdir(payloadDir, { recursive: true });
         const added = [];
         try {
           await this.collectEncryptedQuarantineEntries(absolute, relative, payloadDir, added);
@@ -1187,21 +1234,21 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
           if (this.maxQuarantineBytes > 0 && requiredBytes > this.maxQuarantineBytes) {
             throw new QuarantineQuotaError(this.maxQuarantineBytes, requiredBytes);
           }
-          await fs2.mkdir(path3.join(root, "payload"), { recursive: true });
+          await fs3.mkdir(path4.join(root, "payload"), { recursive: true });
           for (const entry of added) {
-            const source = path3.join(payloadDir, entry.payload);
-            const destination = path3.join(root, "payload", entry.payload);
-            await fs2.rename(source, destination);
-            entry.payload = path3.posix.join("payload", entry.payload);
+            const source = path4.join(payloadDir, entry.payload);
+            const destination = path4.join(root, "payload", entry.payload);
+            await fs3.rename(source, destination);
+            entry.payload = path4.posix.join("payload", entry.payload);
           }
-          await fs2.rm(staging, { recursive: true, force: true });
+          await fs3.rm(staging, { recursive: true, force: true });
           const next = { version: 1, entries: [...existing.entries, ...added] };
           const temporaryManifest = `${manifestPath}.${randomUUID2()}.tmp`;
-          await fs2.writeFile(temporaryManifest, `${JSON.stringify(next, null, 2)}
+          await fs3.writeFile(temporaryManifest, `${JSON.stringify(next, null, 2)}
 `, "utf8");
-          await fs2.rename(temporaryManifest, manifestPath);
+          await fs3.rename(temporaryManifest, manifestPath);
         } catch (error) {
-          await fs2.rm(staging, { recursive: true, force: true }).catch(() => void 0);
+          await fs3.rm(staging, { recursive: true, force: true }).catch(() => void 0);
           throw error;
         }
       }
@@ -1209,9 +1256,9 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
       async migrateIgnoredBackup(key) {
         if (!this.quarantineDir) throw new Error("Ignored-path migration requires a quarantineDir.");
         if (!this.quarantineKey) throw new QuarantineKeyError("Encrypted quarantine migration requires the configured key.");
-        const root = path3.join(this.quarantineDir, encodeRefPart(key));
-        const manifestPath = path3.join(root, ".manifest.json");
-        const existingManifest = await fs2.readFile(manifestPath, "utf8").then((raw) => JSON.parse(raw)).catch((error) => {
+        const root = path4.join(this.quarantineDir, encodeRefPart(key));
+        const manifestPath = path4.join(root, ".manifest.json");
+        const existingManifest = await fs3.readFile(manifestPath, "utf8").then((raw) => JSON.parse(raw)).catch((error) => {
           if (error?.code === "ENOENT") return void 0;
           throw new QuarantineKeyError(`Encrypted quarantine manifest is invalid: ${error?.message ?? "unknown error"}`);
         });
@@ -1221,20 +1268,20 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
           }
           return { migrated: false, bytesRewritten: 0, entryCount: existingManifest.entries.length };
         }
-        const entries = await fs2.readdir(root, { withFileTypes: true }).catch((error) => {
+        const entries = await fs3.readdir(root, { withFileTypes: true }).catch((error) => {
           if (error?.code === "ENOENT") return [];
           throw error;
         });
         if (entries.length === 0) return { migrated: false, bytesRewritten: 0, entryCount: 0 };
         const legacyRoot = `${root}.legacy-${randomUUID2()}`;
-        const stagingRoot = path3.join(path3.dirname(root), `.migration-${randomUUID2()}`);
-        const payloadDir = path3.join(stagingRoot, "payload");
-        await fs2.rename(root, legacyRoot);
+        const stagingRoot = path4.join(path4.dirname(root), `.migration-${randomUUID2()}`);
+        const payloadDir = path4.join(stagingRoot, "payload");
+        await fs3.rename(root, legacyRoot);
         try {
-          await fs2.mkdir(payloadDir, { recursive: true });
+          await fs3.mkdir(payloadDir, { recursive: true });
           const encryptedEntries = [];
           for (const entry of entries) {
-            await this.collectEncryptedQuarantineEntries(path3.join(legacyRoot, entry.name), entry.name, payloadDir, encryptedEntries);
+            await this.collectEncryptedQuarantineEntries(path4.join(legacyRoot, entry.name), entry.name, payloadDir, encryptedEntries);
           }
           const manifest = { version: 1, entries: encryptedEntries };
           const manifestBytes = Buffer.byteLength(JSON.stringify(manifest));
@@ -1245,47 +1292,47 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
           if (this.maxQuarantineBytes > 0 && requiredBytes > this.maxQuarantineBytes) {
             throw new QuarantineQuotaError(this.maxQuarantineBytes, requiredBytes);
           }
-          await fs2.mkdir(path3.join(root, "payload"), { recursive: true });
+          await fs3.mkdir(path4.join(root, "payload"), { recursive: true });
           for (const entry of encryptedEntries) {
-            const source = path3.join(payloadDir, entry.payload);
-            const destination = path3.join(root, "payload", entry.payload);
-            await fs2.rename(source, destination);
-            entry.payload = path3.posix.join("payload", entry.payload);
+            const source = path4.join(payloadDir, entry.payload);
+            const destination = path4.join(root, "payload", entry.payload);
+            await fs3.rename(source, destination);
+            entry.payload = path4.posix.join("payload", entry.payload);
           }
-          await fs2.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}
+          await fs3.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}
 `, "utf8");
           const rewrittenBytes = await directoryBytes(root);
-          await fs2.rm(stagingRoot, { recursive: true, force: true });
-          await fs2.rm(legacyRoot, { recursive: true, force: true });
+          await fs3.rm(stagingRoot, { recursive: true, force: true });
+          await fs3.rm(legacyRoot, { recursive: true, force: true });
           return { migrated: true, bytesRewritten: rewrittenBytes, entryCount: encryptedEntries.length };
         } catch (error) {
-          await fs2.rm(root, { recursive: true, force: true }).catch(() => void 0);
-          await fs2.rm(stagingRoot, { recursive: true, force: true }).catch(() => void 0);
-          await fs2.rename(legacyRoot, root).catch(() => void 0);
+          await fs3.rm(root, { recursive: true, force: true }).catch(() => void 0);
+          await fs3.rm(stagingRoot, { recursive: true, force: true }).catch(() => void 0);
+          await fs3.rename(legacyRoot, root).catch(() => void 0);
           throw error;
         }
       }
       async collectEncryptedQuarantineEntries(source, relative, payloadDir, output) {
-        const stat = await fs2.lstat(source);
+        const stat = await fs3.lstat(source);
         if (stat.isDirectory()) {
           output.push({ path: normalizeGitPath(relative), type: "directory", mode: stat.mode & 511 });
-          for (const child of await fs2.readdir(source)) {
-            await this.collectEncryptedQuarantineEntries(path3.join(source, child), path3.posix.join(relative, child), payloadDir, output);
+          for (const child of await fs3.readdir(source)) {
+            await this.collectEncryptedQuarantineEntries(path4.join(source, child), path4.posix.join(relative, child), payloadDir, output);
           }
           return;
         }
         if (stat.isSymbolicLink()) {
-          output.push({ path: normalizeGitPath(relative), type: "symlink", mode: stat.mode & 511, linkTarget: await fs2.readlink(source) });
+          output.push({ path: normalizeGitPath(relative), type: "symlink", mode: stat.mode & 511, linkTarget: await fs3.readlink(source) });
           return;
         }
         if (!stat.isFile()) throw new QuarantineKeyError(`Unsupported ignored backup entry: ${relative}`);
-        const plaintext = await fs2.readFile(source);
+        const plaintext = await fs3.readFile(source);
         const nonce = randomBytes2(12);
         const cipher = createCipheriv2("aes-256-gcm", this.quarantineKey, nonce);
         const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
         const tag = cipher.getAuthTag();
         const payload = randomUUID2();
-        await fs2.writeFile(path3.join(payloadDir, payload), Buffer.concat([ciphertext, tag]));
+        await fs3.writeFile(path4.join(payloadDir, payload), Buffer.concat([ciphertext, tag]));
         output.push({
           path: normalizeGitPath(relative),
           type: "file",
@@ -1337,25 +1384,25 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
           }
           let removedObjects = 0;
           let reclaimedBytes = 0;
-          const entries = await fs2.readdir(shadowObjectDir, { withFileTypes: true }).catch(() => []);
+          const entries = await fs3.readdir(shadowObjectDir, { withFileTypes: true }).catch(() => []);
           let packedObjectsSkipped = false;
           for (const entry of entries) {
             if (entry.name === "pack" && entry.isDirectory()) {
-              packedObjectsSkipped = (await fs2.readdir(path3.join(shadowObjectDir, entry.name)).catch(() => [])).length > 0;
+              packedObjectsSkipped = (await fs3.readdir(path4.join(shadowObjectDir, entry.name)).catch(() => [])).length > 0;
               continue;
             }
             if (!entry.isDirectory() || !/^[0-9a-f]{2}$/.test(entry.name)) continue;
-            const directory = path3.join(shadowObjectDir, entry.name);
-            for (const object of await fs2.readdir(directory, { withFileTypes: true }).catch(() => [])) {
+            const directory = path4.join(shadowObjectDir, entry.name);
+            for (const object of await fs3.readdir(directory, { withFileTypes: true }).catch(() => [])) {
               if (!object.isFile() || !/^[0-9a-f]{38}$/.test(object.name)) continue;
               const oid = `${entry.name}${object.name}`;
               if (reachable.has(oid)) continue;
-              const file = path3.join(directory, object.name);
-              reclaimedBytes += (await fs2.stat(file).catch(() => ({ size: 0 }))).size;
-              await fs2.rm(file, { force: true });
+              const file = path4.join(directory, object.name);
+              reclaimedBytes += (await fs3.stat(file).catch(() => ({ size: 0 }))).size;
+              await fs3.rm(file, { force: true });
               removedObjects += 1;
             }
-            await fs2.rmdir(directory).catch(() => void 0);
+            await fs3.rmdir(directory).catch(() => void 0);
           }
           return { removedObjects, reclaimedBytes, packedObjectsSkipped };
         });
@@ -1367,55 +1414,55 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
         return this.withShadowRuntime(async () => {
           const { stdout: refsOutput } = await this.runGit(["for-each-ref", "--format=%(objectname)", this.refPrefix]).catch(() => ({ stdout: "", stderr: "" }));
           const refs = refsOutput.split("\n").map((item) => item.trim()).filter((item) => /^[0-9a-f]{40}$/.test(item));
-          const packDir = path3.join(shadowObjectDir, "pack");
-          const existing = await fs2.readdir(packDir, { withFileTypes: true }).catch(() => []);
+          const packDir = path4.join(shadowObjectDir, "pack");
+          const existing = await fs3.readdir(packDir, { withFileTypes: true }).catch(() => []);
           const existingPackFiles = existing.filter((entry) => entry.isFile() && /^pack-[0-9a-f]{40}\.(pack|idx|bitmap|rev|mtimes)$/.test(entry.name));
           const lockedPack = existing.some((entry) => entry.isFile() && /^pack-[0-9a-f]{40}\.keep$/.test(entry.name));
           if (lockedPack) return { repacked: false, removedPackFiles: 0, reclaimedBytes: 0, reachableRefs: refs.length, skippedReason: "shadow pack contains a .keep file" };
-          const existingBytes = await sumFileSizes(existingPackFiles.map((entry) => path3.join(packDir, entry.name)));
-          const tempDir = path3.join(shadowObjectDir, `.repack-${randomUUID2()}`);
-          await fs2.mkdir(tempDir, { recursive: true });
+          const existingBytes = await sumFileSizes(existingPackFiles.map((entry) => path4.join(packDir, entry.name)));
+          const tempDir = path4.join(shadowObjectDir, `.repack-${randomUUID2()}`);
+          await fs3.mkdir(tempDir, { recursive: true });
           let generatedFiles = [];
           try {
             if (refs.length) {
-              const prefix = path3.join(tempDir, "pack");
+              const prefix = path4.join(tempDir, "pack");
               await this.runGitInput(["pack-objects", "--revs", "--no-reuse-object", "--delta-base-offset", prefix], `${refs.join("\n")}
 `);
-              generatedFiles = (await fs2.readdir(tempDir, { withFileTypes: true })).filter((entry) => entry.isFile() && /^(pack-[0-9a-f]{40})\.(pack|idx)$/.test(entry.name)).map((entry) => entry.name);
+              generatedFiles = (await fs3.readdir(tempDir, { withFileTypes: true })).filter((entry) => entry.isFile() && /^(pack-[0-9a-f]{40})\.(pack|idx)$/.test(entry.name)).map((entry) => entry.name);
             }
-            await fs2.mkdir(packDir, { recursive: true });
+            await fs3.mkdir(packDir, { recursive: true });
             for (const file of generatedFiles) {
-              const destination = path3.join(packDir, file);
-              const source = path3.join(tempDir, file);
-              const alreadyPresent = await fs2.access(destination).then(() => true).catch(() => false);
-              if (alreadyPresent) await fs2.rm(source, { force: true });
-              else await fs2.rename(source, destination);
+              const destination = path4.join(packDir, file);
+              const source = path4.join(tempDir, file);
+              const alreadyPresent = await fs3.access(destination).then(() => true).catch(() => false);
+              if (alreadyPresent) await fs3.rm(source, { force: true });
+              else await fs3.rename(source, destination);
             }
             const keep = new Set(generatedFiles);
             let removedPackFiles = 0;
             let reclaimedBytes = 0;
             for (const entry of existingPackFiles) {
               if (keep.has(entry.name)) continue;
-              const file = path3.join(packDir, entry.name);
-              reclaimedBytes += (await fs2.stat(file).catch(() => ({ size: 0 }))).size;
-              await fs2.rm(file, { force: true });
+              const file = path4.join(packDir, entry.name);
+              reclaimedBytes += (await fs3.stat(file).catch(() => ({ size: 0 }))).size;
+              await fs3.rm(file, { force: true });
               removedPackFiles += 1;
             }
-            await fs2.rm(path3.join(shadowObjectDir, "info", "packs"), { force: true }).catch(() => void 0);
+            await fs3.rm(path4.join(shadowObjectDir, "info", "packs"), { force: true }).catch(() => void 0);
             return {
               repacked: refs.length > 0 && generatedFiles.length > 0,
               removedPackFiles,
-              reclaimedBytes: Math.max(reclaimedBytes, existingBytes - await sumFileSizes(generatedFiles.map((file) => path3.join(packDir, file)))),
+              reclaimedBytes: Math.max(reclaimedBytes, existingBytes - await sumFileSizes(generatedFiles.map((file) => path4.join(packDir, file)))),
               reachableRefs: refs.length
             };
           } finally {
-            await fs2.rm(tempDir, { recursive: true, force: true }).catch(() => void 0);
+            await fs3.rm(tempDir, { recursive: true, force: true }).catch(() => void 0);
           }
         });
       }
       async ensureShadowStore() {
         if (!this.shadowObjectDir) return;
-        this.shadowReady ??= fs2.mkdir(this.shadowObjectDir, { recursive: true }).then(() => void 0);
+        this.shadowReady ??= fs3.mkdir(this.shadowObjectDir, { recursive: true }).then(() => void 0);
         await this.shadowReady;
       }
       async withShadowRuntime(operation) {
@@ -1449,7 +1496,7 @@ Reason: ${err || out || `exit ${code}`}`));
 
 // src/index.ts
 init_esm_shims();
-import path11 from "path";
+import path12 from "path";
 import { createHash as createHash6 } from "crypto";
 import Schema from "@deepseek-ai/schemastery";
 import pc2 from "picocolors";
@@ -1457,16 +1504,17 @@ import pc2 from "picocolors";
 // src/service.ts
 init_esm_shims();
 init_git_plumbing();
-import path7 from "path";
-import fs6 from "fs/promises";
+import path8 from "path";
+import fs7 from "fs/promises";
 import { createHash as createHash5, randomUUID as randomUUID6 } from "crypto";
 
 // src/core/fallback-engine.ts
 init_esm_shims();
 init_git_plumbing();
+init_path_safety();
 import { createHash as createHash3, randomUUID as randomUUID3 } from "crypto";
-import path4 from "path";
-import fs3 from "fs/promises";
+import path5 from "path";
+import fs4 from "fs/promises";
 var FallbackSnapshotEngine = class {
   workDir;
   storageDir;
@@ -1474,39 +1522,39 @@ var FallbackSnapshotEngine = class {
   maxSnapshotFileBytes;
   maxSnapshotBytes;
   constructor(options) {
-    this.workDir = path4.resolve(options.workDir);
-    this.storageDir = path4.resolve(options.storageDir);
-    this.preservePaths = [this.storageDir, ...(options.preservePaths ?? []).map((item) => path4.resolve(this.workDir, item))];
+    this.workDir = path5.resolve(options.workDir);
+    this.storageDir = path5.resolve(options.storageDir);
+    this.preservePaths = [this.storageDir, ...(options.preservePaths ?? []).map((item) => path5.resolve(this.workDir, item))];
     this.maxSnapshotFileBytes = Math.max(0, Math.floor(options.maxSnapshotFileBytes ?? 0));
     this.maxSnapshotBytes = Math.max(0, Math.floor(options.maxSnapshotBytes ?? 0));
   }
   getCheckpointDir(sessionId, checkpointId) {
     const sessionKey = Buffer.from(sessionId, "utf8").toString("base64url") || "_";
     const checkpointKey2 = Buffer.from(checkpointId, "utf8").toString("base64url") || "_";
-    return path4.join(this.storageDir, sessionKey, checkpointKey2);
+    return path5.join(this.storageDir, sessionKey, checkpointKey2);
   }
   async createSnapshot(params) {
     const targetDir = this.getCheckpointDir(params.sessionId, params.checkpointId);
     const temporary = `${targetDir}.${randomUUID3()}.tmp`;
-    const filesDir = path4.join(temporary, "files");
-    await fs3.mkdir(filesDir, { recursive: true });
+    const filesDir = path5.join(temporary, "files");
+    await fs4.mkdir(filesDir, { recursive: true });
     try {
       const plannedEntries = await this.scanTree(this.workDir);
       await this.assertSnapshotSize(plannedEntries);
       const entries = await this.captureTree(this.workDir, filesDir, plannedEntries);
       const treeOid = await hashSnapshot(filesDir, entries);
       const manifest = { version: 1, entries, treeOid };
-      await fs3.writeFile(path4.join(temporary, "manifest.json"), `${JSON.stringify(manifest, null, 2)}
+      await fs4.writeFile(path5.join(temporary, "manifest.json"), `${JSON.stringify(manifest, null, 2)}
 `, "utf8");
-      await fs3.mkdir(path4.dirname(targetDir), { recursive: true });
-      await fs3.rename(temporary, targetDir);
+      await fs4.mkdir(path5.dirname(targetDir), { recursive: true });
+      await fs4.rename(temporary, targetDir);
       return {
         treeOid: `fallback_${treeOid}`,
         commitOid: `fallback_${treeOid}`,
         changedFiles: entries.filter((entry) => entry.type !== "directory").map((entry) => ({ path: entry.path, status: "modified" }))
       };
     } catch (error) {
-      await fs3.rm(temporary, { recursive: true, force: true }).catch(() => void 0);
+      await fs4.rm(temporary, { recursive: true, force: true }).catch(() => void 0);
       throw error;
     }
   }
@@ -1522,9 +1570,9 @@ var FallbackSnapshotEngine = class {
   /** Compare a persisted fallback manifest with the current workspace. */
   async getChangedFiles(sessionId, checkpointId) {
     const snapshotDir = this.getCheckpointDir(sessionId, checkpointId);
-    const raw = await fs3.readFile(path4.join(snapshotDir, "manifest.json"));
+    const raw = await fs4.readFile(path5.join(snapshotDir, "manifest.json"));
     const manifest = parseManifest(raw.toString("utf8"));
-    const filesDir = path4.join(snapshotDir, "files");
+    const filesDir = path5.join(snapshotDir, "files");
     const current = await this.scanTree(this.workDir);
     const targetByPath = new Map(manifest.entries.filter((entry) => entry.type !== "directory").map((entry) => [entry.path, entry]));
     const currentByPath = new Map(current.filter((entry) => entry.type !== "directory").map((entry) => [entry.path, entry]));
@@ -1568,35 +1616,39 @@ var FallbackSnapshotEngine = class {
   }
   async restoreSnapshot(sessionId, checkpointId, options = {}) {
     const snapshotDir = this.getCheckpointDir(sessionId, checkpointId);
-    const raw = await fs3.readFile(path4.join(snapshotDir, "manifest.json"), "utf8").catch((error) => {
+    const raw = await fs4.readFile(path5.join(snapshotDir, "manifest.json"), "utf8").catch((error) => {
       if (error?.code === "ENOENT") throw new Error(`Fallback snapshot '${checkpointId}' is missing or uses an unsupported legacy format.`);
       throw error;
     });
     const manifest = parseManifest(raw);
-    const filesDir = path4.join(snapshotDir, "files");
+    const filesDir = path5.join(snapshotDir, "files");
     const preservePaths = options.preservePaths ?? [];
     const targetPaths = new Set(manifest.entries.filter((entry) => !isPathOmitted(entry.path, preservePaths)).map((entry) => entry.path));
     const currentEntries = await this.scanTree(this.workDir);
+    await assertNoSymlinkAncestors(this.workDir, [
+      ...currentEntries.map((entry) => entry.path),
+      ...manifest.entries.map((entry) => entry.path)
+    ]);
     for (const entry of currentEntries.sort(deepestFirst)) {
       if (isPathOmitted(entry.path, preservePaths)) continue;
       if (targetPaths.has(entry.path)) continue;
-      await fs3.rm(this.resolveSafe(entry.path), { recursive: true, force: true });
+      await fs4.rm(this.resolveSafe(entry.path), { recursive: true, force: true });
     }
     for (const entry of manifest.entries.filter((item) => item.type === "directory" && !isPathOmitted(item.path, preservePaths)).sort(shallowestFirst)) {
       const destination = this.resolveSafe(entry.path);
-      const stat = await fs3.lstat(destination).catch(() => void 0);
-      if (stat && !stat.isDirectory()) await fs3.rm(destination, { recursive: true, force: true });
-      await fs3.mkdir(destination, { recursive: true, mode: entry.mode });
+      const stat = await fs4.lstat(destination).catch(() => void 0);
+      if (stat && !stat.isDirectory()) await fs4.rm(destination, { recursive: true, force: true });
+      await fs4.mkdir(destination, { recursive: true, mode: entry.mode });
     }
     for (const entry of manifest.entries.filter((item) => item.type !== "directory" && !isPathOmitted(item.path, preservePaths))) {
       const destination = this.resolveSafe(entry.path);
-      await fs3.mkdir(path4.dirname(destination), { recursive: true });
-      await fs3.rm(destination, { recursive: true, force: true });
+      await fs4.mkdir(path5.dirname(destination), { recursive: true });
+      await fs4.rm(destination, { recursive: true, force: true });
       if (entry.type === "file") {
-        await fs3.copyFile(path4.join(filesDir, ...entry.path.split("/")), destination);
-        await fs3.chmod(destination, entry.mode).catch(() => void 0);
+        await fs4.copyFile(path5.join(filesDir, ...entry.path.split("/")), destination);
+        await fs4.chmod(destination, entry.mode).catch(() => void 0);
       } else {
-        await fs3.symlink(entry.linkTarget, destination);
+        await fs4.symlink(entry.linkTarget, destination);
       }
     }
   }
@@ -1610,32 +1662,36 @@ var FallbackSnapshotEngine = class {
         throw new Error(`Workspace changed after the latest checkpoint: expected ${options.expectedCurrentTreeOid}, observed ${currentTree}`);
       }
     }
-    const raw = await fs3.readFile(path4.join(snapshotDir, "manifest.json"), "utf8");
+    const raw = await fs4.readFile(path5.join(snapshotDir, "manifest.json"), "utf8");
     const manifest = parseManifest(raw);
-    const filesDir = path4.join(snapshotDir, "files");
+    const filesDir = path5.join(snapshotDir, "files");
     const selected = (entry) => normalized.some((item) => entry.path === item || entry.path.startsWith(`${item}/`));
     const currentEntries = (await this.scanTree(this.workDir)).filter(selected).sort(deepestFirst);
     const targetEntries = manifest.entries.filter(selected);
+    await assertNoSymlinkAncestors(this.workDir, [
+      ...currentEntries.map((entry) => entry.path),
+      ...targetEntries.map((entry) => entry.path)
+    ]);
     if (currentEntries.length === 0 && targetEntries.length === 0) {
       throw new Error(`None of the selected paths exist in the current or target snapshot: ${normalized.join(", ")}`);
     }
     const targetPaths = new Set(targetEntries.map((entry) => entry.path));
     for (const entry of currentEntries) {
-      if (!targetPaths.has(entry.path)) await fs3.rm(this.resolveSafe(entry.path), { recursive: true, force: true });
+      if (!targetPaths.has(entry.path)) await fs4.rm(this.resolveSafe(entry.path), { recursive: true, force: true });
     }
     for (const entry of targetEntries.filter((item) => item.type === "directory").sort(shallowestFirst)) {
       const destination = this.resolveSafe(entry.path);
-      await fs3.mkdir(destination, { recursive: true, mode: entry.mode });
+      await fs4.mkdir(destination, { recursive: true, mode: entry.mode });
     }
     for (const entry of targetEntries.filter((item) => item.type !== "directory")) {
       const destination = this.resolveSafe(entry.path);
-      await fs3.mkdir(path4.dirname(destination), { recursive: true });
-      await fs3.rm(destination, { recursive: true, force: true });
+      await fs4.mkdir(path5.dirname(destination), { recursive: true });
+      await fs4.rm(destination, { recursive: true, force: true });
       if (entry.type === "file") {
-        await fs3.copyFile(path4.join(filesDir, ...entry.path.split("/")), destination);
-        await fs3.chmod(destination, entry.mode).catch(() => void 0);
+        await fs4.copyFile(path5.join(filesDir, ...entry.path.split("/")), destination);
+        await fs4.chmod(destination, entry.mode).catch(() => void 0);
       } else {
-        await fs3.symlink(entry.linkTarget, destination);
+        await fs4.symlink(entry.linkTarget, destination);
       }
     }
     return normalized;
@@ -1643,19 +1699,19 @@ var FallbackSnapshotEngine = class {
   async removeSnapshot(sessionId, checkpointId) {
     const target = this.getCheckpointDir(sessionId, checkpointId);
     const before = await directorySize(target);
-    await fs3.rm(target, { recursive: true, force: true });
+    await fs4.rm(target, { recursive: true, force: true });
     return before;
   }
   async captureTree(sourceRoot, destinationRoot, plannedEntries) {
     const entries = plannedEntries ?? await this.scanTree(sourceRoot);
     for (const entry of entries) {
-      const source = path4.join(sourceRoot, ...entry.path.split("/"));
-      const destination = path4.join(destinationRoot, ...entry.path.split("/"));
+      const source = path5.join(sourceRoot, ...entry.path.split("/"));
+      const destination = path5.join(destinationRoot, ...entry.path.split("/"));
       if (entry.type === "directory") {
-        await fs3.mkdir(destination, { recursive: true, mode: entry.mode });
+        await fs4.mkdir(destination, { recursive: true, mode: entry.mode });
       } else if (entry.type === "file") {
-        await fs3.mkdir(path4.dirname(destination), { recursive: true });
-        await fs3.copyFile(source, destination);
+        await fs4.mkdir(path5.dirname(destination), { recursive: true });
+        await fs4.copyFile(source, destination);
       }
     }
     return entries;
@@ -1664,17 +1720,17 @@ var FallbackSnapshotEngine = class {
     if (target.type !== live.type || target.mode !== live.mode) return false;
     if (target.type === "symlink") return target.linkTarget === live.linkTarget;
     if (target.type !== "file") return true;
-    const expected = await fs3.readFile(path4.join(filesDir, ...target.path.split("/"))).catch(() => void 0);
-    const actual = await fs3.readFile(path4.join(this.workDir, ...live.path.split("/"))).catch(() => void 0);
+    const expected = await fs4.readFile(path5.join(filesDir, ...target.path.split("/"))).catch(() => void 0);
+    const actual = await fs4.readFile(path5.join(this.workDir, ...live.path.split("/"))).catch(() => void 0);
     return Boolean(expected && actual && expected.equals(actual));
   }
   async readSnapshot(sessionId, checkpointId) {
     const snapshotDir = this.getCheckpointDir(sessionId, checkpointId);
-    const manifest = parseManifest(await fs3.readFile(path4.join(snapshotDir, "manifest.json"), "utf8"));
-    return { manifest, filesDir: path4.join(snapshotDir, "files") };
+    const manifest = parseManifest(await fs4.readFile(path5.join(snapshotDir, "manifest.json"), "utf8"));
+    return { manifest, filesDir: path5.join(snapshotDir, "files") };
   }
   async entryContent(entry, filesDir) {
-    if (entry.type === "file") return fs3.readFile(path4.join(filesDir, ...entry.path.split("/")));
+    if (entry.type === "file") return fs4.readFile(path5.join(filesDir, ...entry.path.split("/")));
     if (entry.type === "symlink") return Buffer.from(`symlink -> ${entry.linkTarget ?? ""}
 `, "utf8");
     return Buffer.alloc(0);
@@ -1684,7 +1740,7 @@ var FallbackSnapshotEngine = class {
     let totalBytes = 0;
     for (const entry of entries) {
       if (entry.type !== "file") continue;
-      const stat = await fs3.stat(path4.join(this.workDir, ...entry.path.split("/")));
+      const stat = await fs4.stat(path5.join(this.workDir, ...entry.path.split("/")));
       if (this.maxSnapshotFileBytes > 0 && stat.size > this.maxSnapshotFileBytes) {
         throw new SnapshotSizeError({ file: entry.path, fileBytes: stat.size, limitBytes: this.maxSnapshotFileBytes });
       }
@@ -1697,16 +1753,16 @@ var FallbackSnapshotEngine = class {
   async scanTree(root, omitPaths = []) {
     const entries = [];
     const visit = async (directory, relative = "") => {
-      for (const dirent of await fs3.readdir(directory, { withFileTypes: true })) {
-        const absolute = path4.join(directory, dirent.name);
+      for (const dirent of await fs4.readdir(directory, { withFileTypes: true })) {
+        const absolute = path5.join(directory, dirent.name);
         if (this.isPreserved(absolute)) continue;
         const childRelative = relative ? `${relative}/${dirent.name}` : dirent.name;
         validateRelativePath(childRelative);
         if (isPathOmitted(childRelative, omitPaths)) continue;
-        const stat = await fs3.lstat(absolute);
+        const stat = await fs4.lstat(absolute);
         const mode = stat.mode & 511;
         if (stat.isSymbolicLink()) {
-          entries.push({ path: childRelative, type: "symlink", mode, linkTarget: await fs3.readlink(absolute) });
+          entries.push({ path: childRelative, type: "symlink", mode, linkTarget: await fs4.readlink(absolute) });
         } else if (stat.isDirectory()) {
           entries.push({ path: childRelative, type: "directory", mode });
           await visit(absolute, childRelative);
@@ -1719,14 +1775,14 @@ var FallbackSnapshotEngine = class {
     return entries.sort((left, right) => left.path.localeCompare(right.path));
   }
   isPreserved(absolute) {
-    const resolved = path4.resolve(absolute);
-    return this.preservePaths.some((base) => resolved === base || resolved.startsWith(`${base}${path4.sep}`));
+    const resolved = path5.resolve(absolute);
+    return this.preservePaths.some((base) => resolved === base || resolved.startsWith(`${base}${path5.sep}`));
   }
   resolveSafe(relative) {
     validateRelativePath(relative);
-    const absolute = path4.resolve(this.workDir, ...relative.split("/"));
-    const relation = path4.relative(this.workDir, absolute);
-    if (!relation || relation === ".." || relation.startsWith(`..${path4.sep}`) || path4.isAbsolute(relation)) {
+    const absolute = path5.resolve(this.workDir, ...relative.split("/"));
+    const relation = path5.relative(this.workDir, absolute);
+    if (!relation || relation === ".." || relation.startsWith(`..${path5.sep}`) || path5.isAbsolute(relation)) {
       throw new Error(`Unsafe snapshot path '${relative}'.`);
     }
     if (this.isPreserved(absolute)) throw new Error(`Snapshot path overlaps protected storage: '${relative}'.`);
@@ -1740,7 +1796,7 @@ async function hashSnapshot(root, entries) {
   const hash = createHash3("sha256");
   for (const entry of entries) {
     hash.update(`${entry.type}\0${entry.path}\0${entry.mode}\0${entry.linkTarget ?? ""}\0`);
-    if (entry.type === "file") hash.update(await fs3.readFile(path4.join(root, ...entry.path.split("/"))));
+    if (entry.type === "file") hash.update(await fs4.readFile(path5.join(root, ...entry.path.split("/"))));
   }
   return hash.digest("hex");
 }
@@ -1757,7 +1813,7 @@ function parseManifest(raw) {
   return parsed;
 }
 function validateRelativePath(value) {
-  if (!value || value.includes("\0") || value.includes("\\") || path4.posix.isAbsolute(value) || value.split("/").some((part) => part === "" || part === "." || part === "..")) {
+  if (!value || value.includes("\0") || value.includes("\\") || path5.posix.isAbsolute(value) || value.split("/").some((part) => part === "" || part === "." || part === "..")) {
     throw new Error(`Unsafe relative path '${value}'.`);
   }
 }
@@ -1816,10 +1872,10 @@ function sharedSuffix(left, right, prefix) {
 async function directorySize(root) {
   let total = 0;
   const visit = async (directory) => {
-    for (const entry of await fs3.readdir(directory, { withFileTypes: true }).catch(() => [])) {
-      const absolute = path4.join(directory, entry.name);
+    for (const entry of await fs4.readdir(directory, { withFileTypes: true }).catch(() => [])) {
+      const absolute = path5.join(directory, entry.name);
       if (entry.isDirectory()) await visit(absolute);
-      else total += (await fs3.stat(absolute).catch(() => ({ size: 0 }))).size;
+      else total += (await fs4.stat(absolute).catch(() => ({ size: 0 }))).size;
     }
   };
   await visit(root);
@@ -1828,8 +1884,8 @@ async function directorySize(root) {
 
 // src/core/dag-manager.ts
 init_esm_shims();
-import path5 from "path";
-import fs4 from "fs/promises";
+import path6 from "path";
+import fs5 from "fs/promises";
 import { createCipheriv as createCipheriv3, createDecipheriv as createDecipheriv3, createHash as createHash4, randomBytes as randomBytes3, randomUUID as randomUUID4 } from "crypto";
 import pc from "picocolors";
 var DAG_FORMAT_VERSION = 1;
@@ -1867,14 +1923,14 @@ var DAGStateManager = class {
       }
     };
     const safeSessionKey = Buffer.from(options.sessionId, "utf8").toString("base64url") || "_";
-    this.storageFile = path5.join(options.storageDir, `dag_${safeSessionKey}.json`);
+    this.storageFile = path6.join(options.storageDir, `dag_${safeSessionKey}.json`);
   }
   /**
    * 初始化并尝试从本地恢复树结构
    */
   async init() {
     try {
-      const content = await fs4.readFile(this.storageFile, "utf-8");
+      const content = await fs5.readFile(this.storageFile, "utf-8");
       const decoded = this.decode(content);
       const { tree, migrated } = this.migrateTree(decoded.tree);
       this.assertTree(tree);
@@ -1888,13 +1944,13 @@ var DAGStateManager = class {
    * 持久化当前 DAG 树到本地 JSON
    */
   async persist() {
-    await fs4.mkdir(path5.dirname(this.storageFile), { recursive: true });
+    await fs5.mkdir(path6.dirname(this.storageFile), { recursive: true });
     const temporary = `${this.storageFile}.${randomUUID4()}.tmp`;
     try {
-      await fs4.writeFile(temporary, this.encode(this.tree), { encoding: "utf-8", flag: "wx" });
-      await fs4.rename(temporary, this.storageFile);
+      await fs5.writeFile(temporary, this.encode(this.tree), { encoding: "utf-8", flag: "wx" });
+      await fs5.rename(temporary, this.storageFile);
     } finally {
-      await fs4.rm(temporary, { force: true }).catch(() => void 0);
+      await fs5.rm(temporary, { force: true }).catch(() => void 0);
     }
   }
   /**
@@ -2364,8 +2420,8 @@ var KeyedOperationLock = class {
 
 // src/core/workspace-lock.ts
 init_esm_shims();
-import fs5 from "fs/promises";
-import path6 from "path";
+import fs6 from "fs/promises";
+import path7 from "path";
 import os from "os";
 import { randomUUID as randomUUID5 } from "crypto";
 var WorkspaceBusyError = class extends Error {
@@ -2381,7 +2437,7 @@ var WorkspaceFileLock = class {
   retryMs;
   staleMs;
   constructor(lockPath, options = {}) {
-    this.lockPath = path6.resolve(lockPath);
+    this.lockPath = path7.resolve(lockPath);
     this.timeoutMs = Math.max(0, Math.floor(options.timeoutMs ?? 3e4));
     this.retryMs = Math.max(5, Math.floor(options.retryMs ?? 25));
     this.staleMs = Math.max(this.retryMs, Math.floor(options.staleMs ?? 12e4));
@@ -2397,11 +2453,11 @@ var WorkspaceFileLock = class {
     }
   }
   async acquire(token) {
-    await fs5.mkdir(path6.dirname(this.lockPath), { recursive: true });
+    await fs6.mkdir(path7.dirname(this.lockPath), { recursive: true });
     const startedAt = Date.now();
     while (true) {
       try {
-        const handle = await fs5.open(this.lockPath, "wx");
+        const handle = await fs6.open(this.lockPath, "wx");
         await handle.writeFile(JSON.stringify({ token, pid: process.pid, host: os.hostname(), createdAt: Date.now() }), "utf8");
         return handle;
       } catch (error) {
@@ -2413,24 +2469,24 @@ var WorkspaceFileLock = class {
     }
   }
   async removeDeadOwner() {
-    const stat = await fs5.stat(this.lockPath).catch(() => void 0);
+    const stat = await fs6.stat(this.lockPath).catch(() => void 0);
     if (!stat) return;
-    const owner = await fs5.readFile(this.lockPath, "utf8").then((value) => JSON.parse(value)).catch(() => ({}));
+    const owner = await fs6.readFile(this.lockPath, "utf8").then((value) => JSON.parse(value)).catch(() => ({}));
     const age = Date.now() - (owner.createdAt ?? stat.mtimeMs);
     if (owner.pid && owner.pid !== process.pid) {
       try {
         process.kill(owner.pid, 0);
         return;
       } catch {
-        await fs5.rm(this.lockPath, { force: true }).catch(() => void 0);
+        await fs6.rm(this.lockPath, { force: true }).catch(() => void 0);
         return;
       }
     }
-    if (age > this.staleMs) await fs5.rm(this.lockPath, { force: true }).catch(() => void 0);
+    if (age > this.staleMs) await fs6.rm(this.lockPath, { force: true }).catch(() => void 0);
   }
   async release(token) {
-    const owner = await fs5.readFile(this.lockPath, "utf8").then((value) => JSON.parse(value)).catch(() => void 0);
-    if (owner?.token === token) await fs5.rm(this.lockPath, { force: true }).catch(() => void 0);
+    const owner = await fs6.readFile(this.lockPath, "utf8").then((value) => JSON.parse(value)).catch(() => void 0);
+    if (owner?.token === token) await fs6.rm(this.lockPath, { force: true }).catch(() => void 0);
   }
 };
 
@@ -2464,9 +2520,9 @@ var TimeMachineService = class {
   restorePlans = /* @__PURE__ */ new Map();
   externalEffectAdapters = /* @__PURE__ */ new Map();
   constructor(options) {
-    this.workDir = path7.resolve(options.workDir);
-    this.storageDir = options.storageDir ? path7.resolve(options.storageDir) : path7.join(this.workDir, ".dsh", "time-machine");
-    this.journalDir = path7.join(this.storageDir, "restore-journals");
+    this.workDir = path8.resolve(options.workDir);
+    this.storageDir = options.storageDir ? path8.resolve(options.storageDir) : path8.join(this.workDir, ".dsh", "time-machine");
+    this.journalDir = path8.join(this.storageDir, "restore-journals");
     this.config = {
       autoSnapshot: options.config?.autoSnapshot ?? true,
       enableReflectionAdvisor: options.config?.enableReflectionAdvisor ?? true,
@@ -2504,8 +2560,8 @@ var TimeMachineService = class {
       workDir: this.workDir,
       refPrefix: this.config.refPrefix,
       preservePaths: [this.storageDir, ...this.config.preservePaths],
-      quarantineDir: path7.join(this.storageDir, "ignored-quarantine"),
-      shadowObjectDir: this.config.shadowStore ? path7.join(this.storageDir, "git-shadow", "objects") : void 0,
+      quarantineDir: path8.join(this.storageDir, "ignored-quarantine"),
+      shadowObjectDir: this.config.shadowStore ? path8.join(this.storageDir, "git-shadow", "objects") : void 0,
       shadowEncryptionKey: this.config.shadowStoreEncryptionKeyEnv ? process.env[this.config.shadowStoreEncryptionKeyEnv] : void 0,
       shadowEncryptionPreviousKey: this.config.shadowStoreEncryptionPreviousKeyEnv ? process.env[this.config.shadowStoreEncryptionPreviousKeyEnv] : void 0,
       maxQuarantineBytes: this.config.maxQuarantineBytes,
@@ -2516,12 +2572,12 @@ var TimeMachineService = class {
     });
     this.fallbackEngine = new FallbackSnapshotEngine({
       workDir: this.workDir,
-      storageDir: path7.join(this.storageDir, "fallback_backups"),
+      storageDir: path8.join(this.storageDir, "fallback_backups"),
       preservePaths: [this.storageDir, ...this.config.preservePaths],
       maxSnapshotFileBytes: this.config.maxSnapshotFileBytes,
       maxSnapshotBytes: this.config.maxSnapshotBytes
     });
-    this.workspaceLock = new WorkspaceFileLock(path7.join(this.storageDir, ".workspace.lock"), {
+    this.workspaceLock = new WorkspaceFileLock(path8.join(this.storageDir, ".workspace.lock"), {
       timeoutMs: this.config.workspaceLockTimeoutMs
     });
   }
@@ -3086,7 +3142,7 @@ var TimeMachineService = class {
         ...driftDiffs.map((diff) => diff.file),
         ...symmetricDifference2(expectedIgnored, currentState.ignoredPaths).map((item) => `(ignored) ${item}`)
       ])].sort();
-      const conflictingPaths = allConflictingPaths.filter((file) => !preservedHandEditPaths.some((path12) => file === path12 || file.startsWith(`${path12}/`)));
+      const conflictingPaths = allConflictingPaths.filter((file) => !preservedHandEditPaths.some((path13) => file === path13 || file.startsWith(`${path13}/`)));
       const currentLineage = current ? dag.getLineage(current.id) : [];
       const targetIndex = currentLineage.findIndex((node) => node.id === checkpointId);
       const externalEffects = currentLineage.slice(targetIndex >= 0 ? targetIndex + 1 : 0).flatMap((node) => node.externalEffects ?? []).map((effect) => cloneJson2(effect));
@@ -3206,7 +3262,7 @@ var TimeMachineService = class {
   }
   /** Enumerate persisted sessions without creating a new empty DAG. */
   async listSessions() {
-    const entries = await fs6.readdir(this.storageDir, { withFileTypes: true }).catch(() => []);
+    const entries = await fs7.readdir(this.storageDir, { withFileTypes: true }).catch(() => []);
     const summaries = [];
     for (const entry of entries) {
       if (!entry.isFile() || !entry.name.startsWith("dag_") || !entry.name.endsWith(".json")) continue;
@@ -3399,9 +3455,9 @@ var TimeMachineService = class {
       }
     };
     for (const manager of this.dagManagers.values()) collect(manager.tree);
-    for (const entry of await fs6.readdir(this.storageDir, { withFileTypes: true }).catch(() => [])) {
+    for (const entry of await fs7.readdir(this.storageDir, { withFileTypes: true }).catch(() => [])) {
       if (!entry.isFile() || !entry.name.startsWith("dag_") || !entry.name.endsWith(".json")) continue;
-      const raw = await fs6.readFile(path7.join(this.storageDir, entry.name), "utf8").then((value) => JSON.parse(value)).catch(() => void 0);
+      const raw = await fs7.readFile(path8.join(this.storageDir, entry.name), "utf8").then((value) => JSON.parse(value)).catch(() => void 0);
       if (raw) collect(raw);
     }
     return keys;
@@ -3442,7 +3498,7 @@ var TimeMachineService = class {
       const expectedIgnored = current.settledIgnoredPaths ?? current.ignoredPaths ?? [];
       if (actual.treeOid !== expectedTree || !sameStrings(actual.ignoredPaths, expectedIgnored)) {
         const { WorkspaceDriftError: WorkspaceDriftError2 } = await Promise.resolve().then(() => (init_git_plumbing(), git_plumbing_exports));
-        const changed = actual.treeOid === expectedTree ? [] : (isGit ? (await this.gitEngine.getDiffBetween(expectedTree, actual.treeOid)).map((item) => item.file) : current ? (await this.fallbackEngine.getChangedFiles(dag.tree.sessionId, current.id)).map((item) => item.path) : []).filter((file) => !preservedPaths.some((path12) => file === path12 || file.startsWith(`${path12}/`)));
+        const changed = actual.treeOid === expectedTree ? [] : (isGit ? (await this.gitEngine.getDiffBetween(expectedTree, actual.treeOid)).map((item) => item.file) : current ? (await this.fallbackEngine.getChangedFiles(dag.tree.sessionId, current.id)).map((item) => item.path) : []).filter((file) => !preservedPaths.some((path13) => file === path13 || file.startsWith(`${path13}/`)));
         const ignoredDrift = !sameStrings(actual.ignoredPaths, expectedIgnored);
         if (changed.length || ignoredDrift) {
           const details = actual.treeOid === expectedTree ? ["workspace no longer matches the active checkpoint"] : [`managed tree changed (expected ${expectedTree}, observed ${actual.treeOid})${changed.length ? `: ${changed.join(", ")}` : ""}`];
@@ -3516,7 +3572,7 @@ var TimeMachineService = class {
       const verified2 = await this.gitEngine.inspectWorkspace({ omitPaths: [...target.omittedPaths ?? [], ...preservePaths2] });
       const expectedTree2 = options.mode === "merge" ? result.restoredTreeOid : target.gitTreeOid;
       const treeMismatch = verified2.treeOid !== expectedTree2;
-      const allowedMismatch = treeMismatch && preservePaths2.length ? (await this.gitEngine.getDiffBetween(expectedTree2, verified2.treeOid)).every((item) => preservePaths2.some((path12) => item.file === path12 || item.file.startsWith(`${path12}/`))) : false;
+      const allowedMismatch = treeMismatch && preservePaths2.length ? (await this.gitEngine.getDiffBetween(expectedTree2, verified2.treeOid)).every((item) => preservePaths2.some((path13) => item.file === path13 || item.file.startsWith(`${path13}/`))) : false;
       if (treeMismatch && !allowedMismatch || !sameStrings(verified2.ignoredPaths, target.ignoredPaths ?? [])) {
         throw new Error(`Workspace integrity check failed after restoring checkpoint '${target.id}'.`);
       }
@@ -3547,64 +3603,64 @@ var TimeMachineService = class {
     return preserved;
   }
   async hashWorkspacePath(relative) {
-    const absolute = path7.resolve(this.workDir, relative);
-    if (!absolute.startsWith(`${path7.resolve(this.workDir)}${path7.sep}`)) throw new Error("Path escapes workspace.");
-    const stat = await fs6.lstat(absolute);
+    const absolute = path8.resolve(this.workDir, relative);
+    if (!absolute.startsWith(`${path8.resolve(this.workDir)}${path8.sep}`)) throw new Error("Path escapes workspace.");
+    const stat = await fs7.lstat(absolute);
     const hash = createHash5("sha256");
-    if (stat.isSymbolicLink()) hash.update(`symlink:${await fs6.readlink(absolute)}`);
-    else if (stat.isFile()) hash.update(await fs6.readFile(absolute));
+    if (stat.isSymbolicLink()) hash.update(`symlink:${await fs7.readlink(absolute)}`);
+    else if (stat.isFile()) hash.update(await fs7.readFile(absolute));
     else throw new Error(`Agent write path '${relative}' is not a regular file or symlink.`);
     return hash.digest("hex");
   }
   async completeRestoreJournal(journalId) {
     if (!journalId) return;
-    await fs6.rm(path7.join(this.journalDir, `${journalId}.json`), { force: true }).catch(() => void 0);
+    await fs7.rm(path8.join(this.journalDir, `${journalId}.json`), { force: true }).catch(() => void 0);
   }
   async createRestoreJournal(params) {
     const id = `restore_${randomUUID6().replace(/-/g, "")}`;
     const journal = { version: 1, id, phase: "prepared", createdAt: Date.now(), ...params };
-    await fs6.mkdir(this.journalDir, { recursive: true });
-    const file = path7.join(this.journalDir, `${id}.json`);
+    await fs7.mkdir(this.journalDir, { recursive: true });
+    const file = path8.join(this.journalDir, `${id}.json`);
     const temporary = `${file}.${randomUUID6()}.tmp`;
     try {
-      await fs6.writeFile(temporary, `${JSON.stringify(journal, null, 2)}
+      await fs7.writeFile(temporary, `${JSON.stringify(journal, null, 2)}
 `, { encoding: "utf8", flag: "wx" });
-      await fs6.rename(temporary, file);
+      await fs7.rename(temporary, file);
     } finally {
-      await fs6.rm(temporary, { force: true }).catch(() => void 0);
+      await fs7.rm(temporary, { force: true }).catch(() => void 0);
     }
     return id;
   }
   async updateRestoreJournal(journalId, phase) {
     if (!journalId) return;
-    const file = path7.join(this.journalDir, `${journalId}.json`);
-    const raw = await fs6.readFile(file, "utf8").catch(() => void 0);
+    const file = path8.join(this.journalDir, `${journalId}.json`);
+    const raw = await fs7.readFile(file, "utf8").catch(() => void 0);
     if (!raw) return;
     const journal = JSON.parse(raw);
     journal.phase = phase;
-    await fs6.writeFile(file, `${JSON.stringify(journal, null, 2)}
+    await fs7.writeFile(file, `${JSON.stringify(journal, null, 2)}
 `, "utf8");
   }
   async recoverInterruptedRestores(sessionId, dag) {
-    const entries = await fs6.readdir(this.journalDir, { withFileTypes: true }).catch(() => []);
+    const entries = await fs7.readdir(this.journalDir, { withFileTypes: true }).catch(() => []);
     for (const entry of entries) {
       if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
-      const file = path7.join(this.journalDir, entry.name);
+      const file = path8.join(this.journalDir, entry.name);
       let journal;
       try {
-        journal = JSON.parse(await fs6.readFile(file, "utf8"));
+        journal = JSON.parse(await fs7.readFile(file, "utf8"));
       } catch {
         continue;
       }
       if (journal.version !== 1 || journal.sessionId !== sessionId) continue;
       const rescue = dag.getNode(journal.rescueCheckpointId);
       if (!rescue) {
-        await fs6.rm(file, { force: true });
+        await fs7.rm(file, { force: true });
         continue;
       }
       await this.restoreNode(rescue, void 0, { mode: "force", createRescuePoint: false });
       await dag.rewindTo(rescue.id);
-      await fs6.rm(file, { force: true });
+      await fs7.rm(file, { force: true });
     }
   }
 };
@@ -3629,10 +3685,10 @@ function symmetricDifference2(left, right) {
 async function directoryBytes2(root) {
   let total = 0;
   const visit = async (directory) => {
-    for (const entry of await fs6.readdir(directory, { withFileTypes: true }).catch(() => [])) {
-      const absolute = path7.join(directory, entry.name);
+    for (const entry of await fs7.readdir(directory, { withFileTypes: true }).catch(() => [])) {
+      const absolute = path8.join(directory, entry.name);
       if (entry.isDirectory()) await visit(absolute);
-      else total += (await fs6.stat(absolute).catch(() => ({ size: 0 }))).size;
+      else total += (await fs7.stat(absolute).catch(() => ({ size: 0 }))).size;
     }
   };
   await visit(root);
@@ -3641,8 +3697,8 @@ async function directoryBytes2(root) {
 async function countFiles(root) {
   let total = 0;
   const visit = async (directory) => {
-    for (const entry of await fs6.readdir(directory, { withFileTypes: true }).catch(() => [])) {
-      const absolute = path7.join(directory, entry.name);
+    for (const entry of await fs7.readdir(directory, { withFileTypes: true }).catch(() => [])) {
+      const absolute = path8.join(directory, entry.name);
       if (entry.isDirectory()) await visit(absolute);
       else total += 1;
     }
@@ -3654,25 +3710,25 @@ async function countFiles(root) {
 // src/web/server.ts
 init_esm_shims();
 import http from "http";
-import path9 from "path";
-import fs8 from "fs/promises";
+import path10 from "path";
+import fs9 from "fs/promises";
 import { URL } from "url";
 
 // src/core/workspace-route.ts
 init_esm_shims();
-import fs7 from "fs/promises";
-import path8 from "path";
+import fs8 from "fs/promises";
+import path9 from "path";
 async function validateWorkspaceRoute(route) {
   if (!route || typeof route.workspaceId !== "string" || !route.workspaceId.trim() || /[\0\r\n]/.test(route.workspaceId)) {
     throw Object.assign(new Error("Workspace route workspaceId is invalid."), { code: "BAD_REQUEST" });
   }
-  if (typeof route.cwd !== "string" || !path8.isAbsolute(route.cwd) || /[\0\r\n]/.test(route.cwd)) {
+  if (typeof route.cwd !== "string" || !path9.isAbsolute(route.cwd) || /[\0\r\n]/.test(route.cwd)) {
     throw Object.assign(new Error("Workspace route cwd must be an absolute path."), { code: "BAD_REQUEST" });
   }
   try {
-    const canonical = await fs7.realpath(route.cwd);
-    const canonicalPath = path8.resolve(canonical);
-    const requestedPath = path8.resolve(route.cwd);
+    const canonical = await fs8.realpath(route.cwd);
+    const canonicalPath = path9.resolve(canonical);
+    const requestedPath = path9.resolve(route.cwd);
     const samePath = process.platform === "win32" ? canonicalPath.toLowerCase() === requestedPath.toLowerCase() : canonicalPath === requestedPath;
     if (!samePath) throw Object.assign(new Error("Workspace route cwd must be a canonical real path."), { code: "BAD_REQUEST" });
   } catch (error) {
@@ -4158,21 +4214,21 @@ var TimeMachineWebServer = class {
       res.end("Not found");
       return;
     }
-    const currentFileDir = path9.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
+    const currentFileDir = path10.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
     const candidateDirs = [
-      path9.join(currentFileDir, "client"),
-      path9.join(currentFileDir, "../src/web/client"),
-      path9.join(currentFileDir, "web/client"),
-      path9.join(process.cwd(), "src/web/client"),
-      path9.join(process.cwd(), "dist/client")
+      path10.join(currentFileDir, "client"),
+      path10.join(currentFileDir, "../src/web/client"),
+      path10.join(currentFileDir, "web/client"),
+      path10.join(process.cwd(), "src/web/client"),
+      path10.join(process.cwd(), "dist/client")
     ];
     let fullPath = "";
     for (const dir of candidateDirs) {
-      const candidate = path9.resolve(dir, filePath);
-      const relative = path9.relative(path9.resolve(dir), candidate);
-      if (relative.startsWith("..") || path9.isAbsolute(relative)) continue;
+      const candidate = path10.resolve(dir, filePath);
+      const relative = path10.relative(path10.resolve(dir), candidate);
+      if (relative.startsWith("..") || path10.isAbsolute(relative)) continue;
       try {
-        await fs8.access(candidate);
+        await fs9.access(candidate);
         fullPath = candidate;
         break;
       } catch {
@@ -4180,8 +4236,8 @@ var TimeMachineWebServer = class {
     }
     try {
       if (!fullPath) throw new Error("Asset not found");
-      const content = await fs8.readFile(fullPath);
-      const ext = path9.extname(fullPath);
+      const content = await fs9.readFile(fullPath);
+      const ext = path10.extname(fullPath);
       const contentTypes = {
         ".html": "text/html; charset=utf-8",
         ".css": "text/css; charset=utf-8",
@@ -4696,11 +4752,11 @@ async function compensate(service, sessionId, rescueCheckpointId) {
 
 // src/core/workspace-host.ts
 init_esm_shims();
-import path10 from "path";
+import path11 from "path";
 async function forkThroughWorkspaceHost(host, sourceSessionId, atSeq, configuredRoot) {
   const route = await validateWorkspaceRoute(await host.resolveSessionWorkspace(sourceSessionId));
-  const configured = path10.resolve(configuredRoot);
-  const routed = path10.resolve(route.cwd);
+  const configured = path11.resolve(configuredRoot);
+  const routed = path11.resolve(route.cwd);
   const sameRoot = process.platform === "win32" ? configured.toLowerCase() === routed.toLowerCase() : configured === routed;
   if (!sameRoot) {
     throw Object.assign(new Error(`Workspace route '${route.workspaceId}' resolves outside the configured single-root service.`), { code: "WORKSPACE_ROUTE_MISMATCH" });
@@ -4982,7 +5038,7 @@ function boundedToolError(result) {
   return void 0;
 }
 function apply(ctx, config = {}) {
-  const workDir = path11.resolve(process.cwd());
+  const workDir = path12.resolve(process.cwd());
   const service = new TimeMachineService({ workDir, storageDir: config.storageDir, config });
   ctx.provide("timeMachine", service);
   let workspaceHost;
@@ -5221,7 +5277,7 @@ function apply(ctx, config = {}) {
       if (!service.config.autoSnapshot || step !== 1) return next();
       installAgentToolBoundary?.(agent);
       const session = agent.session;
-      const cwd = session.header.cwd ? path11.resolve(session.header.cwd) : workDir;
+      const cwd = session.header.cwd ? path12.resolve(session.header.cwd) : workDir;
       if (cwd !== service.workDir) {
         scope.logger.warn(`[time-machine] skipped session ${session.id}: cwd ${cwd} differs from configured workspace ${service.workDir}`);
         return next();
@@ -5264,10 +5320,10 @@ function isNativeWriteTool(name2) {
   return name2 === "write" || name2 === "edit" || name2 === "str_replace_editor";
 }
 function workspaceRelativePath(workDir, displayPath) {
-  const absolute = path11.resolve(workDir, displayPath);
-  const root = path11.resolve(workDir);
-  const relative = path11.relative(root, absolute).replace(/\\/g, "/");
-  if (!relative || relative === ".." || relative.startsWith("../") || path11.isAbsolute(relative)) return void 0;
+  const absolute = path12.resolve(workDir, displayPath);
+  const root = path12.resolve(workDir);
+  const relative = path12.relative(root, absolute).replace(/\\/g, "/");
+  if (!relative || relative === ".." || relative.startsWith("../") || path12.isAbsolute(relative)) return void 0;
   return relative;
 }
 function executionIdentity(execution, identities, allocate) {

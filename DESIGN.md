@@ -91,7 +91,7 @@ This is compensating transaction semantics, not a filesystem-wide ACID transacti
 - Plugin storage and configured preserved paths are removed from the temporary index.
 - `git clean` is not used. The temporary current-state index gives `read-tree --reset -u` the information needed to remove managed paths absent from the target.
 - Ignored contents are excluded from Git objects. Explicit ignored-path deletion copies content to a plugin quarantine first; rescue restoration copies it back.
-- Before Git restore or selective restore, the engine rejects regular-file targets with `nlink > 1`; this prevents checkout from mutating another hard-linked path. Fallback restore removes the destination link before writing, while symlinks remain explicit entries.
+- Before Git restore or selective restore, the engine rejects regular-file targets with `nlink > 1`; this prevents checkout from mutating another hard-linked path. It also checks every restore/cleanup path's ancestor chain and fails closed on symlink or non-directory ancestors. Fallback restore removes the destination link before writing, while symlinks remain explicit entries.
 
 The shadow store is opt-in. Loose unreachable objects are reclaimed after plugin refs are deleted. Explicit shadow repack rebuilds packs only from `refs/dsh-tm/*`; no repository-wide Git GC is invoked. Repack is never automatic.
 
@@ -109,7 +109,7 @@ The shadow store is opt-in. Loose unreachable objects are reclaimed after plugin
 | Threat | Control |
 |---|---|
 | Path traversal through Session/checkpoint IDs | IDs are base64url-encoded before filesystem/ref use; manifests validate relative paths. |
-| Symlink escape | Directory scans use `lstat` and never recurse through symlinks. Restore destinations are resolved beneath the workspace root. |
+| Symlink escape | Directory scans use `lstat` and never recurse through symlinks. Restore destinations are resolved beneath the workspace root, and ancestor symlinks/non-directories are rejected before mutation. |
 | Loss of staged changes | Capture and restore use isolated indexes; regression test compares cached diff before/after restore. |
 | Overwriting hand edits | Safe mode compares the current tree and ignored-name set with the active settled signature. |
 | Irrecoverable ignored-file deletion | Deletion is explicit and quarantines contents outside Git before removal. |

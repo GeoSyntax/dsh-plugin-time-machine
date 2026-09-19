@@ -6,6 +6,7 @@ import fs from 'node:fs/promises';
 import zlib from 'node:zlib';
 import type { FileChange, DiffResult } from '../types.js';
 import { EncryptedShadowStore, ShadowStoreKeyError } from './encrypted-shadow-store.js';
+import { assertNoSymlinkAncestors } from './path-safety.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -454,6 +455,12 @@ export class GitPlumbingEngine {
     const targetIgnored = new Set(options.targetIgnoredPaths ?? []);
     const ignoredToDelete = current.ignoredPaths.filter(item => !targetIgnored.has(item));
     const targetFiles = new Set(await this.listTreeFileNames(restoreTree));
+    await assertNoSymlinkAncestors(this.workDir, [
+      ...targetFiles,
+      ...current.ignoredPaths,
+      ...(options.omittedPaths ?? []),
+      ...preservePaths,
+    ]);
     await this.assertNoHardLinkTargets([...targetFiles]);
     const targetEntries = this.shadowObjectDir ? await this.listTreeEntries(restoreTree) : [];
     const collisions = current.ignoredPaths.filter(item => targetFiles.has(item));
@@ -587,6 +594,7 @@ export class GitPlumbingEngine {
     const currentFiles = await this.listTreeFileNames(current.treeOid);
     const selectedTargetFiles = targetFiles.filter(file => normalized.some(path => file === path || file.startsWith(`${path}/`)));
     const selectedCurrentFiles = currentFiles.filter(file => normalized.some(path => file === path || file.startsWith(`${path}/`)));
+    await assertNoSymlinkAncestors(this.workDir, [...selectedTargetFiles, ...selectedCurrentFiles, ...normalized]);
     await this.assertNoHardLinkTargets(selectedCurrentFiles);
     if (selectedTargetFiles.length === 0 && selectedCurrentFiles.length === 0) {
       throw new Error(`None of the selected paths exist in the current or target snapshot: ${normalized.join(', ')}`);

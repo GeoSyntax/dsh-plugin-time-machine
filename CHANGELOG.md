@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Fail closed before restore when any workspace path traverses a symlink or
+  non-directory ancestor, closing the workspace-escape gap identified in
+  comparable rewind plugins.
+
 - Keep delayed `tools/result` events attributable after `turn/end` by matching
   the pre-command boundary by call id or execution identity; pending entries
   expire after five minutes without keeping the Node process alive.

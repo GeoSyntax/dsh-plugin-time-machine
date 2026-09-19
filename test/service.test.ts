@@ -674,6 +674,18 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
     expect(result.reflectionAdvisory.suggestedPromptPrefix).toContain('Failed tool [shell]');
   });
 
+  it('exposes reflection lessons as a read-only query', async () => {
+    const sessionId = 'reflection-query';
+    const checkpoint = await service.createTurnCheckpoint({
+      sessionId, turnIndex: 1, prompt: 'failed query boundary', sessionState: { sessionId, messages: [] },
+      status: 'success', failedTools: [{ toolName: 'shell', input: {}, error: 'command failed' }],
+    });
+    const reflection = await service.getReflection(sessionId, checkpoint.id);
+    expect(reflection.hasPastFailures).toBe(true);
+    expect(reflection.suggestedPromptPrefix).toContain('Failed tool [shell]');
+    expect((await service.getDAGManager(sessionId)).getCurrentNode()?.id).toBe(checkpoint.id);
+  });
+
   it('persists external effect declarations and warns on a fork', async () => {
     const sessionId = 'external-effect-ledger';
     const file = path.join(tmpDir, 'external-effect.txt');

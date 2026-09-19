@@ -394,6 +394,7 @@ declare class TimeMachineClient {
     recordExternalEffect(request: ExternalEffectRequest): Promise<unknown>;
     compensateExternalEffect(request: ExternalCompensationRequest): Promise<unknown>;
     externalEffects(sessionId: string, checkpointId?: string, unresolvedOnly?: boolean): Promise<unknown>;
+    reflection(sessionId: string, checkpointId: string): Promise<unknown>;
     prune(request: PruneRequest): Promise<unknown>;
     diff(sessionId: string, baseCheckpointId: string, targetCheckpointId: string): Promise<unknown>;
     agentWrites(sessionId: string, checkpointId: string): Promise<unknown>;

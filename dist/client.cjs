@@ -132,6 +132,10 @@ var TimeMachineClient = class {
     if (checkpointId) params.set("checkpoint", checkpointId);
     return this.get(`/api/external-effects?${params}`);
   }
+  async reflection(sessionId, checkpointId) {
+    if (!sessionId.trim() || !checkpointId.trim()) throw new Error("reflection requires sessionId and checkpointId.");
+    return this.get(`/api/reflection?sessionId=${encodeURIComponent(sessionId)}&checkpoint=${encodeURIComponent(checkpointId)}`);
+  }
   async prune(request) {
     if (!request.sessionId) throw new Error("prune requires sessionId.");
     if (request.keepLatest !== void 0 && (!Number.isInteger(request.keepLatest) || request.keepLatest < 0)) {

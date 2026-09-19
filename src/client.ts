@@ -222,6 +222,11 @@ export class TimeMachineClient {
     return this.get(`/api/external-effects?${params}`);
   }
 
+  async reflection(sessionId: string, checkpointId: string): Promise<unknown> {
+    if (!sessionId.trim() || !checkpointId.trim()) throw new Error('reflection requires sessionId and checkpointId.');
+    return this.get(`/api/reflection?sessionId=${encodeURIComponent(sessionId)}&checkpoint=${encodeURIComponent(checkpointId)}`);
+  }
+
   async prune(request: PruneRequest): Promise<unknown> {
     if (!request.sessionId) throw new Error('prune requires sessionId.');
     if (request.keepLatest !== undefined && (!Number.isInteger(request.keepLatest) || request.keepLatest < 0)) {

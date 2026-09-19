@@ -11,6 +11,9 @@
   be reviewed before any DAG, quarantine, or Git-object deletion occurs.
 - Expose the same prune policy through the typed `TimeMachineClient.prune()`
   companion method.
+- Add read-only reflection queries via `/tm-reflection`, `GET /api/reflection`,
+  and `TimeMachineClient.reflection()` so users can inspect abandoned-branch
+  lessons before starting another exploration.
 - Extend `/tm-doctor` to surface the shared-lock workspace boundary and the
   current plaintext-at-rest status of Shadow Git objects, with actionable
   warnings for community installations.

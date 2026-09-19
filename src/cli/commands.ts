@@ -206,6 +206,21 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
     });
 
     scope.commands.register({
+      name: 'tm-reflection',
+      description: 'Show failure and external-effect lessons before a new branch',
+      input: { hint: '<checkpoint>' },
+      handler: async ({ agent, rawInput }: CommandInvocationLike): Promise<CommandResult> => {
+        const checkpointId = rawInput.trim().split(/\s+/).filter(Boolean)[0];
+        if (!checkpointId) return { kind: 'error', text: 'Usage: /tm-reflection <checkpoint>' };
+        const reflection = await service.getReflection(agent.session.id, checkpointId);
+        if (!reflection.hasPastFailures && !reflection.hasExternalEffects) {
+          return { kind: 'success', text: reflection.summaryNote || 'No abandoned-branch failures or external-effect warnings were recorded.' };
+        }
+        return { kind: 'success', text: `${reflection.summaryNote || 'Reflection advisory available.'}\n\n${reflection.suggestedPromptPrefix}` };
+      },
+    });
+
+    scope.commands.register({
       name: 'tm-external-record',
       description: 'Record an external side effect without executing compensation',
       input: { hint: '<checkpoint> <adapter> <operation> [--reversible] [--failure=<text>] [--compensation=<text>]' },

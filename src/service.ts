@@ -717,6 +717,23 @@ export class TimeMachineService {
     });
   }
 
+  /** Read the reflection advisory for branches abandoned after a checkpoint without mutating state. */
+  async getReflection(sessionId: string, checkpointId: string): Promise<ReflectionSummary> {
+    const dag = await this.getDAGManager(sessionId);
+    const forkPoint = dag.getNode(checkpointId);
+    if (!forkPoint) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
+    if (!this.config.enableReflectionAdvisor) {
+      return { hasPastFailures: false, failedNodeCount: 0, summaryNote: '', suggestedPromptPrefix: '' };
+    }
+    const abandonedNodes = dag.getAbandonedSubtrees(checkpointId, dag.tree.currentBranch);
+    const forkPointHasFailure = forkPoint.status === 'failed'
+      || forkPoint.errorMessage !== undefined
+      || (forkPoint.failedTools?.length ?? 0) > 0;
+    return this.advisor.generateReflectionNote(
+      forkPointHasFailure ? [forkPoint, ...abandonedNodes] : abandonedNodes,
+    );
+  }
+
   /**
    * 获取指定快照与当前（或另一快照）的代码差异
    */

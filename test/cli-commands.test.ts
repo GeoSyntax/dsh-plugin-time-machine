@@ -45,7 +45,7 @@ describe('registered DSH time-machine commands', () => {
   });
 
   it('registers tm-tree, tm-list, tm-doctor, tm-fork, tm-rewind, tm-undo, and tm-restore handlers', () => {
-    expect(Object.keys(handlers)).toEqual(expect.arrayContaining(['tm-tree', 'tm-list', 'tm-doctor', 'tm-fork', 'tm-rewind', 'tm-undo', 'tm-restore', 'tm-agent-writes', 'tm-unattributed', 'tm-quarantine-migrate', 'tm-external-record', 'tm-external-compensate', 'tm-external-list']));
+    expect(Object.keys(handlers)).toEqual(expect.arrayContaining(['tm-tree', 'tm-list', 'tm-doctor', 'tm-fork', 'tm-rewind', 'tm-undo', 'tm-restore', 'tm-agent-writes', 'tm-unattributed', 'tm-quarantine-migrate', 'tm-external-record', 'tm-external-compensate', 'tm-external-list', 'tm-reflection']));
   });
 
   it('diagnoses dual-track readiness and actionable warnings', async () => {
@@ -169,6 +169,17 @@ describe('registered DSH time-machine commands', () => {
     expect(result.kind).toBe('success');
     expect(result.text).toContain('unresolved');
     expect(result.text).toContain('redis:create-namespace');
+  });
+
+  it('shows reflection lessons without mutating the workspace', async () => {
+    const sessionId = 'cli-reflection';
+    const checkpoint = await service.createTurnCheckpoint({
+      sessionId, turnIndex: 1, prompt: 'failed command', sessionState: { sessionId, messages: [] },
+      status: 'success', failedTools: [{ toolName: 'shell', input: {}, error: 'exit code 7' }],
+    });
+    const result = await handlers['tm-reflection']({ agent: { session: { id: sessionId } }, rawInput: checkpoint.id });
+    expect(result.kind).toBe('success');
+    expect(result.text).toContain('Failed tool [shell]');
   });
 
   it('runs tm-tree and tm-fork through the real service and session controller contract', async () => {

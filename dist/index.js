@@ -2555,6 +2555,20 @@ var TimeMachineService = class {
       };
     });
   }
+  /** Read the reflection advisory for branches abandoned after a checkpoint without mutating state. */
+  async getReflection(sessionId, checkpointId) {
+    const dag = await this.getDAGManager(sessionId);
+    const forkPoint = dag.getNode(checkpointId);
+    if (!forkPoint) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
+    if (!this.config.enableReflectionAdvisor) {
+      return { hasPastFailures: false, failedNodeCount: 0, summaryNote: "", suggestedPromptPrefix: "" };
+    }
+    const abandonedNodes = dag.getAbandonedSubtrees(checkpointId, dag.tree.currentBranch);
+    const forkPointHasFailure = forkPoint.status === "failed" || forkPoint.errorMessage !== void 0 || (forkPoint.failedTools?.length ?? 0) > 0;
+    return this.advisor.generateReflectionNote(
+      forkPointHasFailure ? [forkPoint, ...abandonedNodes] : abandonedNodes
+    );
+  }
   /**
    * 获取指定快照与当前（或另一快照）的代码差异
    */
@@ -3258,6 +3272,16 @@ var TimeMachineWebServer = class {
       res.end(JSON.stringify({ capabilities: { ...capabilities, rewindSessionMode: this.hooks.rewindSessionMode?.() ?? capabilities.rewindSessionMode } }));
       return;
     }
+    if (pathname === "/api/reflection" && req.method === "GET") {
+      const sessionId = this.requireSessionId(query.get("sessionId"));
+      const checkpointId = query.get("checkpoint") || "";
+      if (!checkpointId) throw Object.assign(new Error("Missing checkpoint query parameter"), { code: "BAD_REQUEST" });
+      await this.requirePersistedSession(sessionId);
+      const reflection = await this.service.getReflection(sessionId, checkpointId);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ sessionId, checkpointId, reflection }));
+      return;
+    }
     if (pathname === "/api/agent-writes" && req.method === "GET") {
       const sessionId = this.requireSessionId(query.get("sessionId"));
       const checkpointId = query.get("checkpoint") || "";
@@ -3854,6 +3878,22 @@ ${effects.map((effect) => `${effect.status} ${effect.id} ${effect.adapter}:${eff
       }
     });
     scope.commands.register({
+      name: "tm-reflection",
+      description: "Show failure and external-effect lessons before a new branch",
+      input: { hint: "<checkpoint>" },
+      handler: async ({ agent, rawInput }) => {
+        const checkpointId = rawInput.trim().split(/\s+/).filter(Boolean)[0];
+        if (!checkpointId) return { kind: "error", text: "Usage: /tm-reflection <checkpoint>" };
+        const reflection = await service.getReflection(agent.session.id, checkpointId);
+        if (!reflection.hasPastFailures && !reflection.hasExternalEffects) {
+          return { kind: "success", text: reflection.summaryNote || "No abandoned-branch failures or external-effect warnings were recorded." };
+        }
+        return { kind: "success", text: `${reflection.summaryNote || "Reflection advisory available."}
+
+${reflection.suggestedPromptPrefix}` };
+      }
+    });
+    scope.commands.register({
       name: "tm-external-record",
       description: "Record an external side effect without executing compensation",
       input: { hint: "<checkpoint> <adapter> <operation> [--reversible] [--failure=<text>] [--compensation=<text>]" },
@@ -4173,6 +4213,10 @@ var TimeMachineClient = class {
     const params = new URLSearchParams({ sessionId, unresolved: String(unresolvedOnly) });
     if (checkpointId) params.set("checkpoint", checkpointId);
     return this.get(`/api/external-effects?${params}`);
+  }
+  async reflection(sessionId, checkpointId) {
+    if (!sessionId.trim() || !checkpointId.trim()) throw new Error("reflection requires sessionId and checkpointId.");
+    return this.get(`/api/reflection?sessionId=${encodeURIComponent(sessionId)}&checkpoint=${encodeURIComponent(checkpointId)}`);
   }
   async prune(request) {
     if (!request.sessionId) throw new Error("prune requires sessionId.");

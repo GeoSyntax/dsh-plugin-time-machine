@@ -270,6 +270,19 @@ describe('TimeMachineWebServer', () => {
     expect(body.effects).toEqual([expect.objectContaining({ adapter: 'cloud', operation: 'create-resource', status: 'unresolved' })]);
   });
 
+  it('exposes a read-only reflection advisory endpoint', async () => {
+    const sessionId = 'web-reflection';
+    const checkpoint = await service.createTurnCheckpoint({
+      sessionId, turnIndex: 1, prompt: 'failed web command', sessionState: { sessionId, messages: [] },
+      status: 'success', failedTools: [{ toolName: 'shell', input: {}, error: 'exit code 7' }],
+    });
+    const response = await fetch(`http://localhost:${testPort}/api/reflection?sessionId=${sessionId}&checkpoint=${checkpoint.id}`);
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.reflection.hasPastFailures).toBe(true);
+    expect(body.reflection.suggestedPromptPrefix).toContain('Failed tool [shell]');
+  });
+
   it('rejects malformed external effect declarations before touching the DAG', async () => {
     const sessionId = 'web-invalid-effect';
     const checkpoint = await service.createTurnCheckpoint({

@@ -57,6 +57,17 @@ describe('TimeMachineClient companion contract', () => {
     await expect(client.prune({ sessionId: 's', keepLatest: -1 })).rejects.toThrow('non-negative integer');
   });
 
+  it('forwards read-only reflection queries for companions', async () => {
+    const client = new TimeMachineClient({
+      baseUrl: 'http://127.0.0.1:3088',
+      fetch: async (url) => {
+        expect(String(url)).toContain('/api/reflection?sessionId=s&checkpoint=c');
+        return new Response(JSON.stringify({ reflection: { hasPastFailures: true } }), { status: 200 });
+      },
+    });
+    await expect(client.reflection('s', 'c')).resolves.toEqual({ reflection: { hasPastFailures: true } });
+  });
+
   it('resolves a finalized assistant message to its checkpoint', async () => {
     const client = new TimeMachineClient({
       baseUrl: 'http://127.0.0.1:3088',

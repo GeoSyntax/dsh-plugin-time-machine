@@ -151,6 +151,17 @@ export class TimeMachineWebServer {
       return;
     }
 
+    if (pathname === '/api/reflection' && req.method === 'GET') {
+      const sessionId = this.requireSessionId(query.get('sessionId'));
+      const checkpointId = query.get('checkpoint') || '';
+      if (!checkpointId) throw Object.assign(new Error('Missing checkpoint query parameter'), { code: 'BAD_REQUEST' });
+      await this.requirePersistedSession(sessionId);
+      const reflection = await this.service.getReflection(sessionId, checkpointId);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ sessionId, checkpointId, reflection }));
+      return;
+    }
+
     if (pathname === '/api/agent-writes' && req.method === 'GET') {
       const sessionId = this.requireSessionId(query.get('sessionId'));
       const checkpointId = query.get('checkpoint') || '';

@@ -44,8 +44,16 @@ describe('registered DSH time-machine commands', () => {
     await fs.rm(root, { recursive: true, force: true });
   });
 
-  it('registers tm-tree, tm-fork, and tm-rewind handlers', () => {
-    expect(Object.keys(handlers)).toEqual(expect.arrayContaining(['tm-tree', 'tm-fork', 'tm-rewind', 'tm-agent-writes', 'tm-unattributed', 'tm-quarantine-migrate', 'tm-external-record', 'tm-external-compensate']));
+  it('registers tm-tree, tm-doctor, tm-fork, and tm-rewind handlers', () => {
+    expect(Object.keys(handlers)).toEqual(expect.arrayContaining(['tm-tree', 'tm-doctor', 'tm-fork', 'tm-rewind', 'tm-agent-writes', 'tm-unattributed', 'tm-quarantine-migrate', 'tm-external-record', 'tm-external-compensate']));
+  });
+
+  it('diagnoses dual-track readiness and actionable warnings', async () => {
+    const result = await handlers['tm-doctor']({ agent: { session: { id: 'doctor-session' } }, rawInput: '' });
+    expect(result.kind).toBe('success');
+    expect(result.text).toContain('Conversation fork/rewind: available');
+    expect(result.text).toContain('Pre-command checkpoints: disabled');
+    expect(result.text).toContain('enable autoPreCommandSnapshot');
   });
 
   it('exposes a read-only Agent-write ledger view', async () => {

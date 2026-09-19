@@ -3492,6 +3492,39 @@ function registerCliCommands(ctx, service) {
       })
     });
     scope.commands.register({
+      name: "tm-doctor",
+      description: "Diagnose Time Machine profile capabilities and recovery readiness",
+      recordInput: false,
+      handler: async ({ agent }) => {
+        const sessionId = agent.session.id;
+        const capabilities = await service.getCapabilities();
+        const storage = await service.getStorageStatus(sessionId);
+        let sessionController = false;
+        try {
+          sessionController = Boolean(scope.get("sessionController"));
+        } catch {
+          sessionController = false;
+        }
+        const lines = [
+          `Session: ${sessionId}`,
+          `Workspace engine: ${capabilities.git ? "Git plumbing" : "fallback snapshots"}`,
+          `Conversation fork/rewind: ${sessionController ? "available" : "unavailable (no sessionController)"}`,
+          `Web dashboard: ${service.config.enableWebUI === false ? "disabled" : `available on ${service.config.webHost ?? "127.0.0.1"}:${service.config.webPort ?? 3088}`}`,
+          `Pre-command checkpoints: ${service.config.autoPreCommandSnapshot ? "enabled" : "disabled"}`,
+          `Agent-write ledger: ${service.config.enableAgentWriteLedger ? "enabled" : "disabled"}`,
+          `Storage: ${formatBytes(storage.bytes)} in ${storage.files} files; ${storage.checkpoints} checkpoints`
+        ];
+        const warnings = [];
+        if (!capabilities.git) warnings.push("Git is unavailable; restores use fallback snapshots and textual diffs only.");
+        if (!sessionController) warnings.push("Workspace restore can run, but the conversation cannot be switched automatically.");
+        if (!service.config.autoPreCommandSnapshot) warnings.push("High-risk tool boundaries are not captured; enable autoPreCommandSnapshot for stronger crash recovery.");
+        if (warnings.length > 0) lines.push(`Warnings:
+- ${warnings.join("\n- ")}`);
+        else lines.push("Status: ready for dual-track checkpoint, rewind, and fork workflows.");
+        return { kind: "success", text: lines.join("\n") };
+      }
+    });
+    scope.commands.register({
       name: "tm-storage",
       description: "Show Time Machine snapshot storage usage",
       recordInput: false,

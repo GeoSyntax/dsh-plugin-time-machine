@@ -43,6 +43,20 @@ describe('TimeMachineClient companion contract', () => {
     await expect(client.sessions()).resolves.toEqual([expect.objectContaining({ sessionId: 's', checkpointCount: 2 })]);
   });
 
+  it('validates and forwards prune dry-run requests for companions', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const client = new TimeMachineClient({
+      baseUrl: 'http://127.0.0.1:3088',
+      fetch: async (url, init) => {
+        calls.push({ url: String(url), init });
+        return new Response(JSON.stringify({ success: true, result: { dryRun: true, wouldRemoveCheckpointIds: ['c-1'] } }), { status: 200 });
+      },
+    });
+    await client.prune({ sessionId: 's', keepLatest: 0, compactHistory: true, dryRun: true });
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ sessionId: 's', keepLatest: 0, compactHistory: true, dryRun: true });
+    await expect(client.prune({ sessionId: 's', keepLatest: -1 })).rejects.toThrow('non-negative integer');
+  });
+
   it('resolves a finalized assistant message to its checkpoint', async () => {
     const client = new TimeMachineClient({
       baseUrl: 'http://127.0.0.1:3088',

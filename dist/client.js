@@ -106,6 +106,16 @@ var TimeMachineClient = class {
     if (checkpointId) params.set("checkpoint", checkpointId);
     return this.get(`/api/external-effects?${params}`);
   }
+  async prune(request) {
+    if (!request.sessionId) throw new Error("prune requires sessionId.");
+    if (request.keepLatest !== void 0 && (!Number.isInteger(request.keepLatest) || request.keepLatest < 0)) {
+      throw new Error("prune keepLatest must be a non-negative integer.");
+    }
+    if (request.olderThanMs !== void 0 && (!Number.isSafeInteger(request.olderThanMs) || request.olderThanMs <= 0)) {
+      throw new Error("prune olderThanMs must be a positive integer.");
+    }
+    return this.post("/api/prune", request);
+  }
   async diff(sessionId, baseCheckpointId, targetCheckpointId) {
     return this.get(`/api/diff?sessionId=${encodeURIComponent(sessionId)}&base=${encodeURIComponent(baseCheckpointId)}&target=${encodeURIComponent(targetCheckpointId)}`);
   }

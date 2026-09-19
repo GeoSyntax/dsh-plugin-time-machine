@@ -9,6 +9,8 @@
   unresolved external effects without accidentally invoking compensation.
 - Add prune dry-run support for CLI and Web API so retention/branch cleanup can
   be reviewed before any DAG, quarantine, or Git-object deletion occurs.
+- Expose the same prune policy through the typed `TimeMachineClient.prune()`
+  companion method.
 - Extend `/tm-doctor` to surface the shared-lock workspace boundary and the
   current plaintext-at-rest status of Shadow Git objects, with actionable
   warnings for community installations.

@@ -117,6 +117,7 @@ dsh plugin --profile web list --depth 0
 - **回滚前外部副作用提示:** restore preview/API 会列出目标之后当前活动链路上登记的数据库、网络或云资源副作用；文件恢复不会假装撤销这些远端变更，Dashboard 会在确认框中明确提示。
 - **外部副作用清单:** `/tm-external-list` 或 `GET /api/external-effects?unresolved=true` 只读列出当前链路尚未补偿的远端变更；它不会自动执行任何 adapter。
 - **安全清理预览:** `/tm-prune --dry-run` 或 Web API `dryRun: true` 只计算将被删除的 checkpoint，不修改 DAG、quarantine 或 Git objects。
+- **Companion 清理 API:** `TimeMachineClient.prune({ sessionId, dryRun: true })` 提供与 CLI/Web 相同的类型化 retention 预览与执行入口。
 
 ## Safety model
 

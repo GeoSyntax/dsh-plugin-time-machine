@@ -78,6 +78,16 @@ export interface ExternalCompensationRequest {
   idempotencyKey?: string;
 }
 
+export interface PruneRequest {
+  sessionId: string;
+  keepLatest?: number;
+  olderThanMs?: number;
+  abandonedBranches?: boolean;
+  compactHistory?: boolean;
+  repackShadowObjects?: boolean;
+  dryRun?: boolean;
+}
+
 export interface PreviewBoundAction {
   readonly sessionId: string;
   readonly checkpointId: string;
@@ -210,6 +220,17 @@ export class TimeMachineClient {
     const params = new URLSearchParams({ sessionId, unresolved: String(unresolvedOnly) });
     if (checkpointId) params.set('checkpoint', checkpointId);
     return this.get(`/api/external-effects?${params}`);
+  }
+
+  async prune(request: PruneRequest): Promise<unknown> {
+    if (!request.sessionId) throw new Error('prune requires sessionId.');
+    if (request.keepLatest !== undefined && (!Number.isInteger(request.keepLatest) || request.keepLatest < 0)) {
+      throw new Error('prune keepLatest must be a non-negative integer.');
+    }
+    if (request.olderThanMs !== undefined && (!Number.isSafeInteger(request.olderThanMs) || request.olderThanMs <= 0)) {
+      throw new Error('prune olderThanMs must be a positive integer.');
+    }
+    return this.post('/api/prune', request);
   }
 
   async diff(sessionId: string, baseCheckpointId: string, targetCheckpointId: string): Promise<unknown> {

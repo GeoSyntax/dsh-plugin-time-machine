@@ -30,7 +30,11 @@
   limit, call-id deduplication, and a live source smoke assertion.
 - Dependency-free `TimeMachineClient` companion contract for status,
   capabilities, storage, DAG, diff, preview-bound rewind/fork, selective
-  restore, and audit reads; Web fork now consumes the same restore-plan fence.
+  restore, audit reads, and persisted `sessions()` discovery; Web fork now
+  consumes the same restore-plan fence.
+- Dashboard session discovery and switching through `GET /api/sessions`, with
+  URL-bound selection and no implicit `default` DAG creation.
+- Pre-command deduplication fallback for DSH adapters that omit `callId`.
 
 ### Safety boundaries
 

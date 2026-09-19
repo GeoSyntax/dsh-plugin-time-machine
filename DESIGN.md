@@ -112,3 +112,22 @@ client omissions should be reported as input errors rather than internal failure
 
 **Impact:** companion clients receive deterministic HTTP 409/400 responses and can
 retry or prompt for correction without mutating the DAG or workspace.
+
+### 2026-09-19 — anonymous tool execution compatibility
+
+**Changes:** pre-command deduplication uses the host `callId` when present;
+otherwise it assigns a process-local identity to the execution object. The same
+anonymous object crossing both waterfalls is captured once, while distinct calls
+are not collapsed by tool name.
+
+### 2026-09-19 — persisted session discovery
+
+**Changes:** added a read-only `listSessions()` service boundary and
+`GET /api/sessions`; the dashboard and companion client can select real persisted
+session IDs instead of assuming `default`. The DAG endpoint rejects missing or
+unknown IDs without creating an empty DAG.
+
+**Reason:** DSH checkpoints are keyed by the host's session ID. A fixed `default`
+Dashboard hid valid timelines and made post-fork sessions appear to disappear.
+
+**Impact:** session discovery is restart-safe and does not alter restore semantics.

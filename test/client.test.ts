@@ -24,6 +24,14 @@ describe('TimeMachineClient companion contract', () => {
     expect(JSON.parse(String(calls[3].init?.body))).toMatchObject({ sessionId: 's', checkpointId: 'c', restorePlanId: 'plan-1', paths: ['src/app.ts'], force: true });
   });
 
+  it('discovers persisted sessions for a native companion selector', async () => {
+    const client = new TimeMachineClient({
+      baseUrl: 'http://127.0.0.1:3088',
+      fetch: async () => new Response(JSON.stringify({ sessions: [{ sessionId: 's', checkpointCount: 2, currentBranch: 'main', currentCheckpointId: 'c', updatedAt: 1 }] }), { status: 200 }),
+    });
+    await expect(client.sessions()).resolves.toEqual([expect.objectContaining({ sessionId: 's', checkpointCount: 2 })]);
+  });
+
   it('rejects malformed preview bindings and exposes structured HTTP errors', async () => {
     const client = new TimeMachineClient({
       baseUrl: 'http://127.0.0.1:3088',

@@ -1,6 +1,6 @@
 const API_BASE = window.location.origin;
 
-let currentSessionId = 'default';
+let currentSessionId = new URLSearchParams(window.location.search).get('sessionId');
 let dagData = null;
 let selectedNodeId = null;
 
@@ -8,6 +8,7 @@ const timelineFlow = document.getElementById('timeline-flow');
 const nodeCountBadge = document.getElementById('node-count');
 const currentBranchBadge = document.getElementById('current-branch-badge');
 const sessionBadge = document.getElementById('session-badge');
+const sessionSelector = document.getElementById('session-selector');
 const inspectorContent = document.getElementById('inspector-content');
 const inspectorStatusBadge = document.getElementById('inspector-status-badge');
 const btnRefresh = document.getElementById('btn-refresh');
@@ -36,6 +37,12 @@ async function requestJson(url, options) {
 }
 
 async function loadDag() {
+  if (!currentSessionId) {
+    dagData = null;
+    sessionBadge.textContent = 'none';
+    showEmpty(timelineFlow, 'No persisted DSH sessions yet. Run a prompt to create the first checkpoint.');
+    return;
+  }
   try {
     dagData = await requestJson(`${API_BASE}/api/dag?sessionId=${encodeURIComponent(currentSessionId)}`);
     renderTimeline();
@@ -44,12 +51,55 @@ async function loadDag() {
   }
 }
 
+function syncSessionUrl() {
+  const url = new URL(window.location.href);
+  if (currentSessionId) url.searchParams.set('sessionId', currentSessionId);
+  else url.searchParams.delete('sessionId');
+  window.history.replaceState({}, '', url);
+}
+
+function renderSessionSelector(sessions) {
+  sessionSelector.replaceChildren();
+  for (const session of sessions) {
+    const option = document.createElement('option');
+    option.value = String(session.sessionId);
+    option.textContent = `${session.sessionId} · ${session.checkpointCount} checkpoint(s)`;
+    sessionSelector.append(option);
+  }
+  sessionSelector.disabled = sessions.length === 0;
+  if (currentSessionId && sessions.some(item => item.sessionId === currentSessionId)) {
+    sessionSelector.value = currentSessionId;
+  }
+}
+
+async function loadSessions() {
+  try {
+    const body = await requestJson(`${API_BASE}/api/sessions`);
+    const sessions = Array.isArray(body.sessions) ? body.sessions : [];
+    const requested = currentSessionId;
+    if (!sessions.some(item => item.sessionId === requested)) currentSessionId = sessions[0]?.sessionId ?? null;
+    renderSessionSelector(sessions);
+    syncSessionUrl();
+    await loadDag();
+  } catch (error) {
+    showEmpty(timelineFlow, `Failed to discover DSH sessions: ${error.message}`, true);
+  }
+}
+
+sessionSelector.addEventListener('change', async () => {
+  currentSessionId = sessionSelector.value || null;
+  selectedNodeId = null;
+  syncSessionUrl();
+  await loadDag();
+});
+
 function adoptConversation(result) {
   const nextSessionId = result?.conversation?.sessionId;
   if (typeof nextSessionId !== 'string' || nextSessionId.length === 0) return false;
   currentSessionId = nextSessionId;
   selectedNodeId = null;
   sessionBadge.textContent = currentSessionId;
+  syncSessionUrl();
   return true;
 }
 
@@ -267,7 +317,7 @@ modalConfirmFork.addEventListener('click', async () => {
     });
     forkModal.classList.add('hidden');
     adoptConversation(result);
-    await loadDag();
+    await loadSessions();
     alert(`✔ Branch ${branchName} restored. Continue in DSH session: ${result.conversation.sessionId}`);
   } catch (error) {
     alert(`Fork failed: ${error.message}`);
@@ -309,7 +359,7 @@ async function triggerRewind(nodeId, turnIndex) {
       body: JSON.stringify({ sessionId: currentSessionId, checkpointId: nodeId, restorePlanId: preview.restorePlanId, ...(merge ? { merge: true } : {}) }),
     });
     adoptConversation(result);
-    await loadDag();
+    await loadSessions();
     alert(`✔ Restored Turn #${turnIndex}. Continue in DSH session: ${result.conversation.sessionId}`);
   } catch (error) {
     alert(`Rewind failed: ${error.message}`);
@@ -362,4 +412,4 @@ function statusPresentation(status) {
   return { className: 'badge-success', text: '✔ SUCCESS' };
 }
 
-void loadDag();
+void loadSessions();

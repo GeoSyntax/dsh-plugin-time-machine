@@ -86,6 +86,21 @@ multiple calls in one turn respect the limit; a new turn resets the limit;
 failed capture does not block the tool; and a real DSH source smoke persists a
 `pre-command` node before a shell failure.
 
+Adapters that omit `callId` are supported as well: the same execution object is
+deduplicated across both waterfalls, while distinct anonymous calls remain
+distinct when `preCommandMaxPerTurn: 0` is used.
+
+### Web session discovery — implemented
+
+The dashboard now discovers persisted DSH sessions through `GET /api/sessions`,
+selects the most recently updated session by default, supports `?sessionId=...`,
+and lets operators switch timelines without manufacturing a `default` DAG. The
+companion client exposes the same `sessions()` read API.
+
+**Acceptance:** multiple sessions survive service restart and remain selectable;
+unknown or missing session IDs return a structured 404/400 instead of creating a
+ghost timeline.
+
 ### Agent-write ledger for hand-edit preservation — implemented (opt-in)
 
 Hermes records hashes for successful agent writes and preserves later user edits

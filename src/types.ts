@@ -130,6 +130,15 @@ export interface DAGTree {
   }>;
 }
 
+/** Read-only summary used by dashboards to discover persisted DSH sessions. */
+export interface SessionSummary {
+  sessionId: string;
+  checkpointCount: number;
+  currentBranch: string;
+  currentCheckpointId: string | null;
+  updatedAt: number | null;
+}
+
 export interface TimeMachineConfig {
   autoSnapshot?: boolean;
   enableReflectionAdvisor?: boolean;

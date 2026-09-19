@@ -16,6 +16,8 @@ assistant 的 `messageId`，并且按 session 注入；它不是一个可以从�
 - 已提供：无 React/浏览器依赖的 `TimeMachineClient` companion contract；它封装
   status、capabilities、storage、DAG、diff、preview、rewind、fork、选择性恢复和审计读取，并在客户端
   强制校验一次性 restore-plan 绑定。它不是原生 slot UI，也不会自动注入按钮。
+- 已提供：`GET /api/sessions` 与 `TimeMachineClient.sessions()`，用于原生 companion
+  在多个真实 DSH session 之间发现和切换；Dashboard 也不再隐式创建 `default` DAG。
 
 ## 推荐的 client companion 设计
 

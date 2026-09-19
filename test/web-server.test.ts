@@ -42,10 +42,12 @@ describe('TimeMachineWebServer', () => {
     expect(statusData.version).toBe('0.2.0');
 
     // 2. 测试 DAG 数据接口
+    const sessionsRes = await fetch(`http://localhost:${testPort}/api/sessions`);
+    expect(sessionsRes.status).toBe(200);
+    expect((await sessionsRes.json()).sessions).toEqual([]);
     const dagRes = await fetch(`http://localhost:${testPort}/api/dag?sessionId=default`);
-    expect(dagRes.status).toBe(200);
-    const dagData = await dagRes.json();
-    expect(dagData.currentBranch).toBe('main');
+    expect(dagRes.status).toBe(404);
+    expect((await dagRes.json()).code).toBe('SESSION_NOT_FOUND');
 
     const capabilitiesRes = await fetch(`http://localhost:${testPort}/api/capabilities`);
     expect(capabilitiesRes.status).toBe(200);
@@ -85,6 +87,7 @@ describe('TimeMachineWebServer', () => {
     const htmlText = await htmlRes.text();
     expect(htmlText).toContain('DSH Time Machine');
     expect(htmlText).toContain('Coordinated Session Fork');
+    expect(htmlText).toContain('session-selector');
 
     const clientRes = await fetch(`http://localhost:${testPort}/app.js`);
     expect(clientRes.status).toBe(200);
@@ -94,6 +97,24 @@ describe('TimeMachineWebServer', () => {
       headers: { Origin: 'https://attacker.example' },
     });
     expect(blocked.status).toBe(403);
+  });
+
+  it('discovers and switches between real persisted sessions without a default ghost', async () => {
+    const first = await service.createTurnCheckpoint({
+      sessionId: 'web-session-alpha', turnIndex: 1, prompt: 'alpha', sessionState: { sessionId: 'web-session-alpha', messages: [] },
+    });
+    await service.createTurnCheckpoint({
+      sessionId: 'web-session-beta', turnIndex: 1, prompt: 'beta', sessionState: { sessionId: 'web-session-beta', messages: [] },
+    });
+    const sessions = await fetch(`http://localhost:${testPort}/api/sessions`);
+    expect((await sessions.json()).sessions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ sessionId: 'web-session-alpha', checkpointCount: 1, currentCheckpointId: first.id }),
+      expect.objectContaining({ sessionId: 'web-session-beta', checkpointCount: 1 }),
+    ]));
+    const dag = await fetch(`http://localhost:${testPort}/api/dag?sessionId=web-session-alpha`);
+    expect((await dag.json()).sessionId).toBe('web-session-alpha');
+    const unknown = await fetch(`http://localhost:${testPort}/api/dag?sessionId=does-not-exist`);
+    expect(unknown.status).toBe(404);
   });
 
   it('exposes a read-only Agent-write ledger endpoint', async () => {

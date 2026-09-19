@@ -24,7 +24,10 @@
         </div>
         <div class="metric-chip">
           <span class="label">SESSION:</span>
-          <span id="session-badge" class="value">default</span>
+          <select id="session-selector" class="session-selector" aria-label="Select DSH session" disabled>
+            <option value="">No persisted sessions</option>
+          </select>
+          <span id="session-badge" class="value">none</span>
         </div>
         <button id="btn-refresh" class="btn btn-secondary">🔄 Refresh</button>
       </div>

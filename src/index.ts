@@ -150,6 +150,11 @@ export function apply(ctx: Context, config: Config = {}): void {
   const pendingLedgerWrites = new Map<string, Promise<void>>();
   const preCommandCalls = new Set<string>();
   const preCommandCounts = new Map<string, number>();
+  // Some host adapters omit callId. Keep identity-based deduplication for the
+  // same execution object crossing both waterfalls, without collapsing two
+  // distinct anonymous calls that happen to use the same tool name.
+  const anonymousExecutionIds = new WeakMap<object, number>();
+  let nextAnonymousExecutionId = 0;
 
   // Hermes-style pre-destructive boundaries. DSH's pre-execute/execute
   // waterfalls are the last reliable seams before a shell/PTC tool mutates the workspace. We
@@ -171,7 +176,8 @@ export function apply(ctx: Context, config: Config = {}): void {
           : undefined;
         const configured = service.config.preCommandTools ?? [];
         if (!session || !toolName || !configured.includes(toolName) || !turnCheckpoint) return;
-        const callKey = `${session.id}\0${execution.callId ?? toolName}\0${turn}`;
+        const callIdentity = execution.callId?.trim() || `anonymous:${executionIdentity(execution, anonymousExecutionIds, () => nextAnonymousExecutionId++)}`;
+        const callKey = `${session.id}\0${callIdentity}\0${turn}`;
         if (preCommandCalls.has(callKey)) return;
         const turnKey = `${session.id}\0${turn}`;
         const maxPerTurn = service.config.preCommandMaxPerTurn;
@@ -337,6 +343,19 @@ function workspaceRelativePath(workDir: string, displayPath: string): string | u
   const relative = path.relative(root, absolute).replace(/\\/g, '/');
   if (!relative || relative === '..' || relative.startsWith('../') || path.isAbsolute(relative)) return undefined;
   return relative;
+}
+
+function executionIdentity(
+  execution: ToolExecutionLike,
+  identities: WeakMap<object, number>,
+  allocate: () => number,
+): number {
+  const object = execution as object;
+  const existing = identities.get(object);
+  if (existing !== undefined) return existing;
+  const next = allocate();
+  identities.set(object, next);
+  return next;
 }
 
 function currentSessionTurn(session: SessionLike): number | undefined {

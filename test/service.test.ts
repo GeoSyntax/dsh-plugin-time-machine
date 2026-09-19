@@ -783,4 +783,22 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
       await fs.rm(fallbackRoot, { recursive: true, force: true });
     }
   });
+
+  it('discovers persisted sessions without creating ghost DAGs and survives restart', async () => {
+    const first = await service.createTurnCheckpoint({
+      sessionId: 'session-alpha', turnIndex: 1, prompt: 'alpha', sessionState: { sessionId: 'session-alpha', messages: [] },
+    });
+    await service.createTurnCheckpoint({
+      sessionId: 'session-beta', turnIndex: 1, prompt: 'beta', sessionState: { sessionId: 'session-beta', messages: [] },
+    });
+    const discovered = await service.listSessions();
+    expect(discovered.map(item => item.sessionId).sort()).toEqual(['session-alpha', 'session-beta']);
+    expect(discovered.find(item => item.sessionId === 'session-alpha')).toMatchObject({
+      checkpointCount: 1,
+      currentBranch: 'main',
+      currentCheckpointId: first.id,
+    });
+    const restarted = new TimeMachineService({ workDir: tmpDir, storageDir: path.join(tmpDir, '.dsh-tm') });
+    expect((await restarted.listSessions()).map(item => item.sessionId).sort()).toEqual(['session-alpha', 'session-beta']);
+  });
 });

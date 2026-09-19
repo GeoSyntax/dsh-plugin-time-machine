@@ -3,7 +3,7 @@
  * It deliberately knows the restore-plan fence, but does not render UI.
  */
 
-import type { CheckpointNode, DAGTree, RestorePreview } from './types.js';
+import type { CheckpointNode, DAGTree, RestorePreview, SessionSummary } from './types.js';
 
 export interface TimeMachineClientOptions {
   baseUrl: string;
@@ -86,6 +86,11 @@ export class TimeMachineClient {
     return this.get(`/api/dag?sessionId=${encodeURIComponent(sessionId)}`) as Promise<DAGTree>;
   }
 
+  async sessions(): Promise<SessionSummary[]> {
+    const body = await this.get('/api/sessions');
+    return objectField(body, 'sessions') as SessionSummary[];
+  }
+
   async preview(sessionId: string, checkpointId: string): Promise<PreviewBoundAction> {
     const body = await this.get(`/api/preview?sessionId=${encodeURIComponent(sessionId)}&checkpoint=${encodeURIComponent(checkpointId)}`);
     const preview = objectField(body, 'preview') as unknown as RestorePreview;
@@ -155,4 +160,4 @@ function objectField(value: unknown, field: string): any {
   return (value as Record<string, unknown>)[field];
 }
 
-export type { CheckpointNode, DAGTree, RestorePreview };
+export type { CheckpointNode, DAGTree, RestorePreview, SessionSummary };

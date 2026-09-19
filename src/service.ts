@@ -23,6 +23,7 @@ import type {
   SelectiveRestoreResult,
   PruneResult,
   StorageStatus,
+  SessionSummary,
   SessionState,
   TimeMachineConfig,
 } from './types.js';
@@ -804,7 +805,7 @@ export class TimeMachineService {
   }
 
   async getStorageStatus(sessionId?: string): Promise<StorageStatus> {
-    const sessions = sessionId ? [sessionId] : await this.listStoredSessions();
+    const sessions = sessionId ? [sessionId] : (await this.listSessions()).map(item => item.sessionId);
     const managers = await Promise.all(sessions.map(item => this.getDAGManager(item)));
     const checkpoints = managers.reduce((sum, manager) => sum + Object.keys(manager.tree.nodes).length, 0);
     const leaves = managers.reduce((sum, manager) => sum + this.pruneCandidates(manager).length, 0);
@@ -821,6 +822,28 @@ export class TimeMachineService {
       gitObjectsEncrypted: false,
       quarantineEncrypted: Boolean(this.config.quarantineEncryptionKeyEnv && process.env[this.config.quarantineEncryptionKeyEnv]),
     };
+  }
+
+  /** Enumerate persisted sessions without creating a new empty DAG. */
+  async listSessions(): Promise<SessionSummary[]> {
+    const entries = await fs.readdir(this.storageDir, { withFileTypes: true }).catch(() => [] as import('node:fs').Dirent[]);
+    const summaries: SessionSummary[] = [];
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.startsWith('dag_') || !entry.name.endsWith('.json')) continue;
+      try {
+        const tree = JSON.parse(await fs.readFile(path.join(this.storageDir, entry.name), 'utf8')) as DAGTree;
+        if (typeof tree.sessionId !== 'string') continue;
+        const nodes = Object.values(tree.nodes ?? {}) as CheckpointNode[];
+        summaries.push({
+          sessionId: tree.sessionId,
+          checkpointCount: nodes.length,
+          currentBranch: tree.currentBranch,
+          currentCheckpointId: tree.currentCheckpointId,
+          updatedAt: nodes.length ? Math.max(...nodes.map(node => node.timestamp)) : null,
+        });
+      } catch { /* ignore corrupt/partial files in best-effort discovery */ }
+    }
+    return summaries.sort((left, right) => (right.updatedAt ?? 0) - (left.updatedAt ?? 0) || left.sessionId.localeCompare(right.sessionId));
   }
 
   /** Report runtime capabilities so Web/CLI integrations can fail early. */
@@ -1024,19 +1047,6 @@ export class TimeMachineService {
     ]);
     const parents = new Set(Object.values(dag.tree.nodes).map(node => node.parentId).filter((id): id is string => Boolean(id)));
     return Object.values(dag.tree.nodes).filter(node => !protectedIds.has(node.id) && !parents.has(node.id));
-  }
-
-  private async listStoredSessions(): Promise<string[]> {
-    const entries = await fs.readdir(this.storageDir, { withFileTypes: true }).catch(() => [] as import('node:fs').Dirent[]);
-    const sessions = new Set<string>();
-    for (const entry of entries) {
-      if (!entry.isFile() || !entry.name.startsWith('dag_') || !entry.name.endsWith('.json')) continue;
-      try {
-        const tree = JSON.parse(await fs.readFile(path.join(this.storageDir, entry.name), 'utf8')) as DAGTree;
-        if (typeof tree.sessionId === 'string') sessions.add(tree.sessionId);
-      } catch { /* status must remain best-effort for corrupt/partial storage */ }
-    }
-    return [...sessions];
   }
 
   private async enforceStorageQuota(dag: DAGStateManager): Promise<void> {

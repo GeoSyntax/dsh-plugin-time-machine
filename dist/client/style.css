@@ -93,6 +93,20 @@ body.dark-theme {
   color: var(--text-muted);
 }
 
+.session-selector {
+  max-width: 18rem;
+  min-width: 8rem;
+  border: 0;
+  background: transparent;
+  color: var(--text-main);
+  font: inherit;
+  outline: none;
+}
+
+.session-selector:disabled {
+  color: var(--text-muted);
+}
+
 .badge-branch {
   color: #a78bfa;
   font-weight: 600;

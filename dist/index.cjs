@@ -2590,7 +2590,7 @@ var TimeMachineService = class {
     return dag.renderAsciiTree();
   }
   async getStorageStatus(sessionId) {
-    const sessions = sessionId ? [sessionId] : await this.listStoredSessions();
+    const sessions = sessionId ? [sessionId] : (await this.listSessions()).map((item) => item.sessionId);
     const managers = await Promise.all(sessions.map((item) => this.getDAGManager(item)));
     const checkpoints = managers.reduce((sum, manager) => sum + Object.keys(manager.tree.nodes).length, 0);
     const leaves = managers.reduce((sum, manager) => sum + this.pruneCandidates(manager).length, 0);
@@ -2607,6 +2607,28 @@ var TimeMachineService = class {
       gitObjectsEncrypted: false,
       quarantineEncrypted: Boolean(this.config.quarantineEncryptionKeyEnv && process.env[this.config.quarantineEncryptionKeyEnv])
     };
+  }
+  /** Enumerate persisted sessions without creating a new empty DAG. */
+  async listSessions() {
+    const entries = await import_promises5.default.readdir(this.storageDir, { withFileTypes: true }).catch(() => []);
+    const summaries = [];
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.startsWith("dag_") || !entry.name.endsWith(".json")) continue;
+      try {
+        const tree = JSON.parse(await import_promises5.default.readFile(import_node_path5.default.join(this.storageDir, entry.name), "utf8"));
+        if (typeof tree.sessionId !== "string") continue;
+        const nodes = Object.values(tree.nodes ?? {});
+        summaries.push({
+          sessionId: tree.sessionId,
+          checkpointCount: nodes.length,
+          currentBranch: tree.currentBranch,
+          currentCheckpointId: tree.currentCheckpointId,
+          updatedAt: nodes.length ? Math.max(...nodes.map((node) => node.timestamp)) : null
+        });
+      } catch {
+      }
+    }
+    return summaries.sort((left, right) => (right.updatedAt ?? 0) - (left.updatedAt ?? 0) || left.sessionId.localeCompare(right.sessionId));
   }
   /** Report runtime capabilities so Web/CLI integrations can fail early. */
   async getCapabilities() {
@@ -2751,19 +2773,6 @@ var TimeMachineService = class {
     ]);
     const parents = new Set(Object.values(dag.tree.nodes).map((node) => node.parentId).filter((id) => Boolean(id)));
     return Object.values(dag.tree.nodes).filter((node) => !protectedIds.has(node.id) && !parents.has(node.id));
-  }
-  async listStoredSessions() {
-    const entries = await import_promises5.default.readdir(this.storageDir, { withFileTypes: true }).catch(() => []);
-    const sessions = /* @__PURE__ */ new Set();
-    for (const entry of entries) {
-      if (!entry.isFile() || !entry.name.startsWith("dag_") || !entry.name.endsWith(".json")) continue;
-      try {
-        const tree = JSON.parse(await import_promises5.default.readFile(import_node_path5.default.join(this.storageDir, entry.name), "utf8"));
-        if (typeof tree.sessionId === "string") sessions.add(tree.sessionId);
-      } catch {
-      }
-    }
-    return [...sessions];
   }
   async enforceStorageQuota(dag) {
     if (this.config.maxSnapshots > 0 && Object.keys(dag.tree.nodes).length >= this.config.maxSnapshots) {
@@ -3042,7 +3051,7 @@ var TimeMachineWebServer = class {
           }
           await this.handleStatic(res, pathname);
         } catch (err) {
-          const status = err?.code === "BAD_REQUEST" ? 400 : err?.code === "RESTORE_PLAN_INVALID" || err?.code === "RESTORE_MERGE_CONFLICT" || err?.code === "QUARANTINE_KEY_INVALID" || err?.code === "EXTERNAL_COMPENSATION_UNKNOWN" || err?.code === "EXTERNAL_ADAPTER_UNAVAILABLE" || err?.code === "EXTERNAL_EFFECT_DUPLICATE" ? 409 : err?.code === "UNSUPPORTED_WORKSPACE_STATE" ? 422 : err?.code === "SNAPSHOT_SIZE_LIMIT" ? 413 : 500;
+          const status = err?.code === "BAD_REQUEST" ? 400 : err?.code === "SESSION_NOT_FOUND" ? 404 : err?.code === "RESTORE_PLAN_INVALID" || err?.code === "RESTORE_MERGE_CONFLICT" || err?.code === "QUARANTINE_KEY_INVALID" || err?.code === "EXTERNAL_COMPENSATION_UNKNOWN" || err?.code === "EXTERNAL_ADAPTER_UNAVAILABLE" || err?.code === "EXTERNAL_EFFECT_DUPLICATE" ? 409 : err?.code === "UNSUPPORTED_WORKSPACE_STATE" ? 422 : err?.code === "SNAPSHOT_SIZE_LIMIT" ? 413 : 500;
           res.writeHead(status, { "Content-Type": "application/json" });
           res.end(JSON.stringify({
             error: err.message || "Internal Server Error",
@@ -3081,10 +3090,19 @@ var TimeMachineWebServer = class {
       return;
     }
     if (pathname === "/api/dag" && req.method === "GET") {
-      const sessionId = query.get("sessionId") || "default";
+      const sessionId = query.get("sessionId");
+      if (!sessionId?.trim()) throw Object.assign(new Error("sessionId is required"), { code: "BAD_REQUEST" });
+      if (!(await this.service.listSessions()).some((item) => item.sessionId === sessionId)) {
+        throw Object.assign(new Error(`Session '${sessionId}' does not exist.`), { code: "SESSION_NOT_FOUND" });
+      }
       const dag = await this.service.getDAGManager(sessionId);
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(dag.tree));
+      return;
+    }
+    if (pathname === "/api/sessions" && req.method === "GET") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ sessions: await this.service.listSessions() }));
       return;
     }
     if (pathname === "/api/storage" && req.method === "GET") {
@@ -3683,6 +3701,10 @@ var TimeMachineClient = class {
   async dag(sessionId) {
     return this.get(`/api/dag?sessionId=${encodeURIComponent(sessionId)}`);
   }
+  async sessions() {
+    const body = await this.get("/api/sessions");
+    return objectField(body, "sessions");
+  }
   async preview(sessionId, checkpointId) {
     const body = await this.get(`/api/preview?sessionId=${encodeURIComponent(sessionId)}&checkpoint=${encodeURIComponent(checkpointId)}`);
     const preview = objectField(body, "preview");
@@ -3797,6 +3819,8 @@ function apply(ctx, config = {}) {
   const pendingLedgerWrites = /* @__PURE__ */ new Map();
   const preCommandCalls = /* @__PURE__ */ new Set();
   const preCommandCounts = /* @__PURE__ */ new Map();
+  const anonymousExecutionIds = /* @__PURE__ */ new WeakMap();
+  let nextAnonymousExecutionId = 0;
   let installAgentToolBoundary;
   if (service.config.autoPreCommandSnapshot) {
     const installedAgents = /* @__PURE__ */ new WeakSet();
@@ -3811,7 +3835,8 @@ function apply(ctx, config = {}) {
         const turnCheckpoint = session && Number.isSafeInteger(turn) ? checkpoints.get(checkpointKey(session.id, turn)) : void 0;
         const configured = service.config.preCommandTools ?? [];
         if (!session || !toolName || !configured.includes(toolName) || !turnCheckpoint) return;
-        const callKey = `${session.id}\0${execution.callId ?? toolName}\0${turn}`;
+        const callIdentity = execution.callId?.trim() || `anonymous:${executionIdentity(execution, anonymousExecutionIds, () => nextAnonymousExecutionId++)}`;
+        const callKey = `${session.id}\0${callIdentity}\0${turn}`;
         if (preCommandCalls.has(callKey)) return;
         const turnKey = `${session.id}\0${turn}`;
         const maxPerTurn = service.config.preCommandMaxPerTurn;
@@ -3964,6 +3989,14 @@ function workspaceRelativePath(workDir, displayPath) {
   const relative = import_node_path7.default.relative(root, absolute).replace(/\\/g, "/");
   if (!relative || relative === ".." || relative.startsWith("../") || import_node_path7.default.isAbsolute(relative)) return void 0;
   return relative;
+}
+function executionIdentity(execution, identities, allocate) {
+  const object = execution;
+  const existing = identities.get(object);
+  if (existing !== void 0) return existing;
+  const next = allocate();
+  identities.set(object, next);
+  return next;
 }
 function currentSessionTurn(session) {
   const events = getEvents(session);

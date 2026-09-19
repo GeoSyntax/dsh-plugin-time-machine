@@ -127,6 +127,14 @@ interface DAGTree {
         description?: string;
     }>;
 }
+/** Read-only summary used by dashboards to discover persisted DSH sessions. */
+interface SessionSummary {
+    sessionId: string;
+    checkpointCount: number;
+    currentBranch: string;
+    currentCheckpointId: string | null;
+    updatedAt: number | null;
+}
 interface TimeMachineConfig {
     autoSnapshot?: boolean;
     enableReflectionAdvisor?: boolean;
@@ -469,6 +477,8 @@ declare class TimeMachineService {
      */
     renderTree(sessionId: string): Promise<string>;
     getStorageStatus(sessionId?: string): Promise<StorageStatus>;
+    /** Enumerate persisted sessions without creating a new empty DAG. */
+    listSessions(): Promise<SessionSummary[]>;
     /** Report runtime capabilities so Web/CLI integrations can fail early. */
     getCapabilities(): Promise<{
         version: 1;
@@ -526,7 +536,6 @@ declare class TimeMachineService {
     private reclaimNodes;
     private referencedIgnoredBackupKeys;
     private pruneCandidates;
-    private listStoredSessions;
     private enforceStorageQuota;
     private restoreWithRescue;
     private restoreNode;
@@ -847,6 +856,7 @@ declare class TimeMachineClient {
     status(): Promise<Record<string, unknown>>;
     storage(sessionId?: string): Promise<Record<string, unknown>>;
     dag(sessionId: string): Promise<DAGTree>;
+    sessions(): Promise<SessionSummary[]>;
     preview(sessionId: string, checkpointId: string): Promise<PreviewBoundAction>;
     rewind(action: PreviewBoundAction, options?: Omit<RewindRequest, 'sessionId' | 'checkpointId' | 'restorePlanId'>): Promise<unknown>;
     fork(action: PreviewBoundAction, branchName: string, options?: Omit<ForkRequest, 'sessionId' | 'checkpointId' | 'restorePlanId' | 'branchName'>): Promise<unknown>;
@@ -961,4 +971,4 @@ declare class TimeMachinePlugin {
     constructor(ctx: Context, config?: Config);
 }
 
-export { type AgentWriteRecord, type CheckpointNode, Config, type DAGManagerOptions, DAGStateManager, type DAGTree, type DiffResult, type ExternalEffectAdapter, type ExternalEffectCompensationContext, type ExternalEffectCompensationResult, type ExternalEffectRecord, type FallbackOptions, FallbackSnapshotEngine, type FileChange, type ForkRequest, GitPlumbingEngine, type GitPlumbingOptions, type GitRestoreOptions, type GitSelectiveRestoreOptions, type GitSnapshot, type PreviewBoundAction, type PruneResult, QuarantineKeyError, type QuarantineMigrationResult, QuarantineQuotaError, ReflectionAdvisor, type ReflectionSummary, type RestoreFilesRequest, type RestoreOptions, RestorePlanError, type RestorePreview, type RestoreResult, type RewindRequest, type SelectiveRestoreResult, type SessionMessage, type SessionState, type ShadowGcResult, type ShadowRepackResult, SnapshotSizeError, StorageQuotaError, type StorageStatus, TimeMachineClient, TimeMachineClientError, type TimeMachineClientOptions, type TimeMachineConfig, TimeMachinePlugin, TimeMachineService, type TimeMachineServiceOptions, UnsupportedWorkspaceStateError, type WorkspaceCapabilities, WorkspaceDriftError, WorkspaceMergeConflictError, WorkspaceRestoreConflictError, apply, collectFailedTools, TimeMachinePlugin as default, name };
+export { type AgentWriteRecord, type CheckpointNode, Config, type DAGManagerOptions, DAGStateManager, type DAGTree, type DiffResult, type ExternalEffectAdapter, type ExternalEffectCompensationContext, type ExternalEffectCompensationResult, type ExternalEffectRecord, type FallbackOptions, FallbackSnapshotEngine, type FileChange, type ForkRequest, GitPlumbingEngine, type GitPlumbingOptions, type GitRestoreOptions, type GitSelectiveRestoreOptions, type GitSnapshot, type PreviewBoundAction, type PruneResult, QuarantineKeyError, type QuarantineMigrationResult, QuarantineQuotaError, ReflectionAdvisor, type ReflectionSummary, type RestoreFilesRequest, type RestoreOptions, RestorePlanError, type RestorePreview, type RestoreResult, type RewindRequest, type SelectiveRestoreResult, type SessionMessage, type SessionState, type SessionSummary, type ShadowGcResult, type ShadowRepackResult, SnapshotSizeError, StorageQuotaError, type StorageStatus, TimeMachineClient, TimeMachineClientError, type TimeMachineClientOptions, type TimeMachineConfig, TimeMachinePlugin, TimeMachineService, type TimeMachineServiceOptions, UnsupportedWorkspaceStateError, type WorkspaceCapabilities, WorkspaceDriftError, WorkspaceMergeConflictError, WorkspaceRestoreConflictError, apply, collectFailedTools, TimeMachinePlugin as default, name };

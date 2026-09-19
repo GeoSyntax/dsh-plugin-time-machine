@@ -55,7 +55,7 @@ export class TimeMachineWebServer {
           // 静态资源处理
           await this.handleStatic(res, pathname);
         } catch (err: any) {
-          const status = err?.code === 'BAD_REQUEST' ? 400 : err?.code === 'RESTORE_PLAN_INVALID' || err?.code === 'RESTORE_MERGE_CONFLICT' || err?.code === 'QUARANTINE_KEY_INVALID' || err?.code === 'EXTERNAL_COMPENSATION_UNKNOWN' || err?.code === 'EXTERNAL_ADAPTER_UNAVAILABLE' || err?.code === 'EXTERNAL_EFFECT_DUPLICATE' ? 409 : err?.code === 'UNSUPPORTED_WORKSPACE_STATE' ? 422 : err?.code === 'SNAPSHOT_SIZE_LIMIT' ? 413 : 500;
+          const status = err?.code === 'BAD_REQUEST' ? 400 : err?.code === 'SESSION_NOT_FOUND' ? 404 : err?.code === 'RESTORE_PLAN_INVALID' || err?.code === 'RESTORE_MERGE_CONFLICT' || err?.code === 'QUARANTINE_KEY_INVALID' || err?.code === 'EXTERNAL_COMPENSATION_UNKNOWN' || err?.code === 'EXTERNAL_ADAPTER_UNAVAILABLE' || err?.code === 'EXTERNAL_EFFECT_DUPLICATE' ? 409 : err?.code === 'UNSUPPORTED_WORKSPACE_STATE' ? 422 : err?.code === 'SNAPSHOT_SIZE_LIMIT' ? 413 : 500;
           res.writeHead(status, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
             error: err.message || 'Internal Server Error',
@@ -99,10 +99,20 @@ export class TimeMachineWebServer {
     }
 
     if (pathname === '/api/dag' && req.method === 'GET') {
-      const sessionId = query.get('sessionId') || 'default';
+      const sessionId = query.get('sessionId');
+      if (!sessionId?.trim()) throw Object.assign(new Error('sessionId is required'), { code: 'BAD_REQUEST' });
+      if (!(await this.service.listSessions()).some(item => item.sessionId === sessionId)) {
+        throw Object.assign(new Error(`Session '${sessionId}' does not exist.`), { code: 'SESSION_NOT_FOUND' });
+      }
       const dag = await this.service.getDAGManager(sessionId);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(dag.tree));
+      return;
+    }
+
+    if (pathname === '/api/sessions' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ sessions: await this.service.listSessions() }));
       return;
     }
 

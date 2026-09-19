@@ -1497,6 +1497,7 @@ Reason: ${err || out || `exit ${code}`}`));
 // src/index.ts
 init_esm_shims();
 import path12 from "path";
+import fs10 from "fs/promises";
 import { createHash as createHash6 } from "crypto";
 import Schema from "@deepseek-ai/schemastery";
 import pc2 from "picocolors";
@@ -5311,7 +5312,11 @@ function apply(ctx, config = {}) {
       installAgentToolBoundary?.(agent);
       const session = agent.session;
       const cwd = session.header.cwd ? path12.resolve(session.header.cwd) : workDir;
-      if (cwd !== service.workDir) {
+      const [canonicalCwd, canonicalRoot] = await Promise.all([
+        fs10.realpath(cwd).catch(() => cwd),
+        fs10.realpath(service.workDir).catch(() => service.workDir)
+      ]);
+      if (canonicalCwd !== canonicalRoot) {
         scope.logger.warn(`[time-machine] skipped session ${session.id}: cwd ${cwd} differs from configured workspace ${service.workDir}`);
         return next();
       }

@@ -1551,6 +1551,7 @@ __export(index_exports, {
 module.exports = __toCommonJS(index_exports);
 init_cjs_shims();
 var import_node_path11 = __toESM(require("path"), 1);
+var import_promises10 = __toESM(require("fs/promises"), 1);
 var import_node_crypto7 = require("crypto");
 var import_schemastery = __toESM(require("@deepseek-ai/schemastery"), 1);
 var import_picocolors2 = __toESM(require("picocolors"), 1);
@@ -5365,7 +5366,11 @@ function apply(ctx, config = {}) {
       installAgentToolBoundary?.(agent);
       const session = agent.session;
       const cwd = session.header.cwd ? import_node_path11.default.resolve(session.header.cwd) : workDir;
-      if (cwd !== service.workDir) {
+      const [canonicalCwd, canonicalRoot] = await Promise.all([
+        import_promises10.default.realpath(cwd).catch(() => cwd),
+        import_promises10.default.realpath(service.workDir).catch(() => service.workDir)
+      ]);
+      if (canonicalCwd !== canonicalRoot) {
         scope.logger.warn(`[time-machine] skipped session ${session.id}: cwd ${cwd} differs from configured workspace ${service.workDir}`);
         return next();
       }

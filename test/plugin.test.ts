@@ -59,6 +59,41 @@ describe('DSH Cordis plugin entry', () => {
     }
   });
 
+  it('accepts a symlink alias of the configured workspace root', async () => {
+    const previousCwd = process.cwd();
+    const workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-plugin-canonical-root-'));
+    const aliasParent = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-plugin-canonical-alias-'));
+    const alias = path.join(aliasParent, 'workspace-alias');
+    let ctx: Context | undefined;
+    let eventScope: Context | undefined;
+    try {
+      await fs.symlink(workDir, alias, process.platform === 'win32' ? 'junction' : 'dir');
+      process.chdir(workDir);
+      ctx = new Context();
+      ctx.provide('agents', {} as never);
+      ctx.provide('sessions', {} as never);
+      new TimeMachinePlugin(ctx, { enableWebUI: false, storageDir: path.join(workDir, '.dsh-tm') });
+      await ctx.inject(['agents', 'sessions'], (scope: Context) => { eventScope = scope; });
+      const session = {
+        id: 'canonical-alias-session',
+        header: { cwd: alias },
+        events: [{ type: 'turn/start', seq: 1, data: { turn: 1 } }],
+        snapshotEvents() { return this.events; },
+        deriveMessages() { return []; },
+      } as any;
+      await eventScope!.waterfall('agent/pre-step', {
+        agent: { session }, turn: 1, step: 1, signal: new AbortController().signal,
+      }, async () => undefined);
+      const nodes = Object.values((await (ctx.get('timeMachine') as TimeMachineService).getDAGManager(session.id)).tree.nodes);
+      expect(nodes).toHaveLength(1);
+    } finally {
+      await (ctx?.fiber?.dispose?.() ?? Promise.resolve());
+      process.chdir(previousCwd);
+      await fs.rm(workDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      await fs.rm(aliasParent, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
+  });
+
   it('waits for native write ledger evidence before turn finalization', async () => {
     const previousCwd = process.cwd();
     const workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-plugin-native-ledger-'));

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Compare workspace roots by canonical `realpath` before attaching DSH turns,
+  so macOS `/var`/`/private/var` aliases and other symlinked workspace roots do
+  not silently skip checkpoints or native tool ledgers.
+
 - Add an opt-in strict external-effect restore gate. Preview reports unresolved
   effect IDs, and rewind/fork/restore can fail closed until explicit adapter
   compensation marks them resolved.

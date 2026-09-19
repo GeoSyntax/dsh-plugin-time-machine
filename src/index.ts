@@ -1,4 +1,5 @@
 import path from 'node:path';
+import fs from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import type { Context } from '@deepseek-ai/cordis';
 import Schema from '@deepseek-ai/schemastery';
@@ -400,7 +401,11 @@ export function apply(ctx: Context, config: Config = {}): void {
       installAgentToolBoundary?.(agent);
       const session = agent.session;
       const cwd = session.header.cwd ? path.resolve(session.header.cwd) : workDir;
-      if (cwd !== service.workDir) {
+      const [canonicalCwd, canonicalRoot] = await Promise.all([
+        fs.realpath(cwd).catch(() => cwd),
+        fs.realpath(service.workDir).catch(() => service.workDir),
+      ]);
+      if (canonicalCwd !== canonicalRoot) {
         scope.logger.warn(`[time-machine] skipped session ${session.id}: cwd ${cwd} differs from configured workspace ${service.workDir}`);
         return next();
       }

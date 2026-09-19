@@ -10,6 +10,7 @@ interface CommandInvocationLike {
 interface SessionControllerLike {
   create(request: { readonly cwd?: string }): Promise<{ readonly sessionId: string }>;
   fork(request: { readonly sessionId: string; readonly atSeq?: number }): Promise<{ readonly sessionId: string }>;
+  rewind?(request: { readonly sessionId: string; readonly atSeq?: number }): Promise<{ readonly sessionId: string }>;
 }
 
 type CommandResult = { kind: 'success' | 'error'; text: string };
@@ -25,6 +26,26 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
         kind: 'success',
         text: await service.renderTree(agent.session.id),
       }),
+    });
+
+    scope.commands.register({
+      name: 'tm-list',
+      description: 'List recent checkpoints with relative undo numbers',
+      input: { hint: '[limit]' },
+      recordInput: false,
+      handler: async ({ agent, rawInput }: CommandInvocationLike): Promise<CommandResult> => {
+        const rawLimit = rawInput.trim().split(/\s+/).filter(Boolean)[0];
+        const limit = rawLimit === undefined ? 10 : Number(rawLimit);
+        if (!Number.isInteger(limit) || limit < 1 || limit > 100) return { kind: 'error', text: 'Usage: /tm-list [limit 1-100]' };
+        const lineage = await service.listRelativeTurnCheckpoints(agent.session.id, limit);
+        if (lineage.length === 0) return { kind: 'success', text: 'No completed checkpoints recorded for this session yet.' };
+        const lines = lineage.map((node, index) => {
+          const undo = index === 0 ? 'current' : `undo ${index}`;
+          const summary = node.summary || node.prompt || node.status;
+          return `${String(index).padStart(2, ' ')}  ${undo.padEnd(8, ' ')} turn=${node.turnIndex} ${node.id}  ${summary}`;
+        });
+        return { kind: 'success', text: `Recent checkpoints for ${agent.session.id}:\n${lines.join('\n')}\nUse /tm-undo N to restore and fork from the numbered active-lineage checkpoint.` };
+      },
     });
 
     scope.commands.register({
@@ -45,14 +66,25 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
           `Session: ${sessionId}`,
           `Workspace engine: ${capabilities.git ? 'Git plumbing' : 'fallback snapshots'}`,
           `Conversation fork/rewind: ${sessionController ? 'available' : 'unavailable (no sessionController)'}`,
+          `Workspace isolation: ${capabilities.workspaceIsolation}`,
+          `Workspace routing: ${capabilities.workspaceRouting}`,
+          `Shadow Git object encryption: ${capabilities.shadowStoreEncryption ? 'enabled' : capabilities.shadowStoreMigrationRequired ? 'migration required (legacy plaintext objects detected)' : 'not available (objects are plaintext at rest)'}`,
+          `Shadow Git key rotation: ${capabilities.shadowStoreKeyRotation ? 'ready (current + previous keys configured)' : 'not configured'}`,
+          `DAG/session metadata encryption: ${capabilities.dagStateEncryption ? 'enabled' : 'disabled (metadata is plaintext at rest)'}`,
+          `DAG/session key rotation: ${capabilities.dagStateKeyRotation ? 'ready (current + previous keys configured)' : 'not configured'}`,
           `Web dashboard: ${service.config.enableWebUI === false ? 'disabled' : `available on ${service.config.webHost ?? '127.0.0.1'}:${service.config.webPort ?? 3088}`}`,
           `Pre-command checkpoints: ${service.config.autoPreCommandSnapshot ? 'enabled' : 'disabled'}`,
-          `Agent-write ledger: ${service.config.enableAgentWriteLedger ? 'enabled' : 'disabled'}`,
+          `Agent-write ledger: ${service.config.enableAgentWriteLedger ? (service.config.preserveVerifiedHandEditsByDefault ? 'enabled (preserve hand-edits by default)' : 'enabled') : 'disabled'}`,
           `Storage: ${formatBytes(storage.bytes)} in ${storage.files} files; ${storage.checkpoints} checkpoints`,
         ];
         const warnings: string[] = [];
         if (!capabilities.git) warnings.push('Git is unavailable; restores use fallback snapshots and textual diffs only.');
         if (!sessionController) warnings.push('Workspace restore can run, but the conversation cannot be switched automatically.');
+        if (capabilities.workspaceIsolation === 'shared-lock') warnings.push('Forked sessions share the configured workspace; this is not an isolated Git worktree or container.');
+        if (capabilities.workspaceRouting === 'single-root') warnings.push('Sessions whose cwd differs from the configured workspace are skipped; run one plugin instance per workspace.');
+        if (capabilities.shadowStoreMigrationRequired) warnings.push('Legacy plaintext Shadow Git objects detected; run /tm-shadow-migrate before creating new checkpoints.');
+        if (!capabilities.shadowStoreEncryption && capabilities.shadowStore) warnings.push('Shadow Git objects are plaintext at rest; protect the storage directory with OS-level encryption and permissions.');
+        if (!capabilities.dagStateEncryption) warnings.push('DAG/session metadata is plaintext at rest; set stateEncryptionKeyEnv when prompts or tool inputs are sensitive.');
         if (!service.config.autoPreCommandSnapshot) warnings.push('High-risk tool boundaries are not captured; enable autoPreCommandSnapshot for stronger crash recovery.');
         if (warnings.length > 0) lines.push(`Warnings:\n- ${warnings.join('\n- ')}`);
         else lines.push('Status: ready for dual-track checkpoint, rewind, and fork workflows.');
@@ -99,9 +131,23 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
     });
 
     scope.commands.register({
+      name: 'tm-tool-mutations',
+      description: 'Show per-tool workspace mutation evidence for a checkpoint',
+      input: { hint: '<checkpoint>' },
+      handler: async ({ agent, rawInput }: CommandInvocationLike): Promise<CommandResult> => {
+        const checkpointId = rawInput.trim().split(/\s+/).filter(Boolean)[0];
+        if (!checkpointId) return { kind: 'error', text: 'Usage: /tm-tool-mutations <checkpoint>' };
+        const records = await service.getToolMutationLedger(agent.session.id, checkpointId);
+        if (records.length === 0) return { kind: 'success', text: `No tool mutation evidence recorded for ${checkpointId}.` };
+        const lines = records.map(item => `${item.status} ${item.toolName}${item.callId ? ` [${item.callId}]` : ''}: ${item.changedFiles.map(change => `${change.status} ${change.path}`).join(', ') || 'no workspace delta'}${item.error ? ` — ${item.error}` : ''}`);
+        return { kind: 'success', text: `Tool mutation evidence for ${checkpointId}:\n${lines.join('\n')}` };
+      },
+    });
+
+    scope.commands.register({
       name: 'tm-prune',
       description: 'Prune old non-head Time Machine checkpoints',
-      input: { hint: '[keep-latest] [--older-than=<duration>] [--abandoned-branches] [--compact-history] [--repack-shadow]' },
+      input: { hint: '[keep-latest] [--older-than=<duration>] [--abandoned-branches] [--compact-history] [--repack-shadow] [--dry-run]' },
       handler: async ({ agent, rawInput }: CommandInvocationLike): Promise<CommandResult> => {
         const args = rawInput.trim().split(/\s+/).filter(Boolean);
         const keepArg = args.find(arg => !arg.startsWith('--'));
@@ -116,11 +162,13 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
           abandonedBranches: args.includes('--abandoned-branches'),
           compactHistory: args.includes('--compact-history'),
           repackShadowObjects: args.includes('--repack-shadow'),
+          dryRun: args.includes('--dry-run'),
         });
         const quarantine = result.quarantineReclaimedBytes ? ` Quarantine reclaimed ${formatBytes(result.quarantineReclaimedBytes)}.` : '';
         const shadow = result.shadowObjectsReclaimedBytes ? ` Shadow packs reclaimed ${formatBytes(result.shadowObjectsReclaimedBytes)}.` : '';
         const warning = result.shadowRepackSkippedReason ? ` Shadow repack skipped: ${result.shadowRepackSkippedReason}.` : '';
-        return { kind: 'success', text: `Pruned ${result.removedCheckpointIds.length} checkpoint(s), reclaimed ${formatBytes(result.reclaimedBytes)}.${quarantine}${shadow}${warning} ${result.note}` };
+        const planned = result.dryRun ? ` Would remove: ${(result.wouldRemoveCheckpointIds ?? []).join(', ') || '(none)'}.` : '';
+        return { kind: 'success', text: `${result.dryRun ? 'Dry run.' : `Pruned ${result.removedCheckpointIds.length} checkpoint(s), reclaimed ${formatBytes(result.reclaimedBytes)}.`}${planned}${quarantine}${shadow}${warning} ${result.note}` };
       },
     });
 
@@ -137,6 +185,21 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
           text: result.migrated
             ? `Encrypted quarantine backup ${key}: ${result.entryCount} ${result.entryCount === 1 ? 'entry' : 'entries'} rewritten (${formatBytes(result.bytesRewritten)}).`
             : `Quarantine backup ${key} is already encrypted or empty.`,
+        };
+      },
+    });
+
+    scope.commands.register({
+      name: 'tm-shadow-migrate',
+      description: 'Encrypt the existing plaintext Git shadow object store',
+      recordInput: false,
+      handler: async (): Promise<CommandResult> => {
+        const result = await service.migrateShadowStore();
+        return {
+          kind: 'success',
+          text: result.migrated
+            ? `Encrypted shadow store: ${result.entries} ${result.entries === 1 ? 'file' : 'files'} rewritten (${formatBytes(result.bytes)}).`
+            : 'Shadow store is empty or already encrypted.',
         };
       },
     });
@@ -163,6 +226,37 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
     });
 
     scope.commands.register({
+      name: 'tm-external-list',
+      description: 'List recorded external effects without executing compensation',
+      input: { hint: '[checkpoint] [--all]' },
+      handler: async ({ agent, rawInput }: CommandInvocationLike): Promise<CommandResult> => {
+        const args = rawInput.trim().split(/\s+/).filter(Boolean);
+        const checkpointId = args.find(arg => !arg.startsWith('--'));
+        const effects = await service.listExternalEffects(agent.session.id, checkpointId, !args.includes('--all'));
+        if (effects.length === 0) return { kind: 'success', text: 'No unresolved external effects recorded on this lineage.' };
+        return {
+          kind: 'success',
+          text: `${args.includes('--all') ? 'Recorded' : 'Unresolved'} external effects${checkpointId ? ` through ${checkpointId}` : ''}:\n${effects.map(effect => `${effect.status} ${effect.id} ${effect.adapter}:${effect.operation}${effect.compensation ? ` — ${effect.compensation}` : ''}`).join('\n')}`,
+        };
+      },
+    });
+
+    scope.commands.register({
+      name: 'tm-reflection',
+      description: 'Show failure and external-effect lessons before a new branch',
+      input: { hint: '<checkpoint>' },
+      handler: async ({ agent, rawInput }: CommandInvocationLike): Promise<CommandResult> => {
+        const checkpointId = rawInput.trim().split(/\s+/).filter(Boolean)[0];
+        if (!checkpointId) return { kind: 'error', text: 'Usage: /tm-reflection <checkpoint>' };
+        const reflection = await service.getReflection(agent.session.id, checkpointId);
+        if (!reflection.hasPastFailures && !reflection.hasExternalEffects) {
+          return { kind: 'success', text: reflection.summaryNote || 'No abandoned-branch failures or external-effect warnings were recorded.' };
+        }
+        return { kind: 'success', text: `${reflection.summaryNote || 'Reflection advisory available.'}\n\n${reflection.suggestedPromptPrefix}` };
+      },
+    });
+
+    scope.commands.register({
       name: 'tm-external-record',
       description: 'Record an external side effect without executing compensation',
       input: { hint: '<checkpoint> <adapter> <operation> [--reversible] [--failure=<text>] [--compensation=<text>]' },
@@ -184,7 +278,7 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
     scope.commands.register({
       name: 'tm-rewind',
       description: 'Restore workspace and fork conversation at a checkpoint',
-      input: { hint: '<checkpoint> [--merge|--force] [--preserve-hand-edits] [--delete-new-ignored] [--plan=<id>]' },
+      input: { hint: '<checkpoint> [--merge|--force] [--preserve-hand-edits|--no-preserve-hand-edits] [--require-effects-resolved] [--delete-new-ignored] [--plan=<id>]' },
       handler: async ({ agent, rawInput }: CommandInvocationLike): Promise<CommandResult> => {
         const args = rawInput.trim().split(/\s+/).filter(Boolean);
         const checkpointId = args.find(arg => !arg.startsWith('--'));
@@ -195,8 +289,11 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
         const sessionId = agent.session.id;
         const result = await service.rewindToCheckpoint(sessionId, checkpointId, {
           mode: args.includes('--force') ? 'force' : args.includes('--merge') ? 'merge' : undefined,
-          preserveVerifiedHandEdits: args.includes('--preserve-hand-edits'),
+          ...(args.includes('--preserve-hand-edits')
+            ? { preserveVerifiedHandEdits: true }
+            : args.includes('--no-preserve-hand-edits') ? { preserveVerifiedHandEdits: false } : {}),
           deleteNewIgnoredPaths: args.includes('--delete-new-ignored'),
+          requireExternalEffectsResolved: args.includes('--require-effects-resolved'),
           restorePlanId: optionValue(args, '--plan'),
         });
         try {
@@ -215,9 +312,47 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
     });
 
     scope.commands.register({
+      name: 'tm-undo',
+      description: 'Undo recent turns by restoring and forking from the active checkpoint lineage',
+      input: { hint: '[count] [--merge|--force] [--preserve-hand-edits|--no-preserve-hand-edits] [--require-effects-resolved] [--delete-new-ignored]' },
+      handler: async ({ agent, rawInput }: CommandInvocationLike): Promise<CommandResult> => {
+        const args = rawInput.trim().split(/\s+/).filter(Boolean);
+        const positionals = args.filter(arg => !arg.startsWith('--'));
+        const count = positionals.length ? Number(positionals[0]) : 1;
+        if (!Number.isInteger(count) || count < 1) return { kind: 'error', text: 'Usage: /tm-undo [positive-count] [--merge|--force] [--preserve-hand-edits|--no-preserve-hand-edits] [--delete-new-ignored]' };
+        const controller = scope.get('sessionController') as SessionControllerLike | undefined;
+        if (!controller) return { kind: 'error', text: 'This DSH profile has no sessionController; conversation undo is unavailable.' };
+
+        const sessionId = agent.session.id;
+        const checkpointId = await resolveRelativeCheckpoint(service, sessionId, count);
+        if (!checkpointId) return { kind: 'error', text: `Cannot undo ${count} turn(s): the active session has fewer than ${count + 1} completed turns.` };
+        const result = await service.rewindToCheckpoint(sessionId, checkpointId, {
+          mode: args.includes('--force') ? 'force' : args.includes('--merge') ? 'merge' : undefined,
+          ...(args.includes('--preserve-hand-edits')
+            ? { preserveVerifiedHandEdits: true }
+            : args.includes('--no-preserve-hand-edits') ? { preserveVerifiedHandEdits: false } : {}),
+          deleteNewIgnoredPaths: args.includes('--delete-new-ignored'),
+          requireExternalEffectsResolved: args.includes('--require-effects-resolved'),
+        });
+        try {
+          const created = await restartConversation(controller, sessionId, result.targetNode, service.workDir);
+          await service.completeRestoreJournal(result.restoreJournalId);
+          return {
+            kind: 'success',
+            text: `Undid ${count} turn${count === 1 ? '' : 's'} to ${checkpointId}. Continue in forked session ${created.sessionId}. Rescue point: ${result.rescueCheckpointId ?? 'none'}.${result.preservedHandEditPaths?.length ? ` Preserved hand-edited paths: ${result.preservedHandEditPaths.join(', ')}.` : ''}`,
+          };
+        } catch (error) {
+          await compensate(service, sessionId, result.rescueCheckpointId);
+          await service.completeRestoreJournal(result.restoreJournalId);
+          throw error;
+        }
+      },
+    });
+
+    scope.commands.register({
       name: 'tm-restore',
       description: 'Restore the full workspace to a checkpoint without forking the conversation',
-      input: { hint: '<checkpoint> [--merge|--force] [--delete-new-ignored] [--plan=<id>]' },
+      input: { hint: '<checkpoint> [--merge|--force] [--require-effects-resolved] [--delete-new-ignored] [--plan=<id>]' },
       handler: async ({ agent, rawInput }: CommandInvocationLike): Promise<CommandResult> => {
         const args = rawInput.trim().split(/\s+/).filter(Boolean);
         const checkpointId = args.find(arg => !arg.startsWith('--'));
@@ -225,6 +360,7 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
         const result = await service.restoreWorkspaceToCheckpoint(agent.session.id, checkpointId, {
           mode: args.includes('--force') ? 'force' : args.includes('--merge') ? 'merge' : undefined,
           deleteNewIgnoredPaths: args.includes('--delete-new-ignored'),
+          requireExternalEffectsResolved: args.includes('--require-effects-resolved'),
           restorePlanId: optionValue(args, '--plan'),
         });
         return { kind: 'success', text: `Restored workspace to ${checkpointId}; conversation unchanged. Rescue point: ${result.rescueCheckpointId ?? 'none'}.` };
@@ -234,11 +370,15 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
     scope.commands.register({
       name: 'tm-preview',
       description: 'Preview workspace changes before a rewind or fork',
-      input: { hint: '<checkpoint>' },
+      input: { hint: '<checkpoint> [--preserve-hand-edits|--no-preserve-hand-edits]' },
       handler: async ({ agent, rawInput }: CommandInvocationLike): Promise<CommandResult> => {
-        const checkpointId = rawInput.trim().split(/\s+/).filter(Boolean)[0];
-        if (!checkpointId) return { kind: 'error', text: 'Usage: /tm-preview <checkpoint>' };
-        const preview = await service.previewRestore(agent.session.id, checkpointId);
+        const args = rawInput.trim().split(/\s+/).filter(Boolean);
+        const checkpointId = args.find(arg => !arg.startsWith('--'));
+        if (!checkpointId) return { kind: 'error', text: 'Usage: /tm-preview <checkpoint> [--preserve-hand-edits|--no-preserve-hand-edits]' };
+        const preserveVerifiedHandEdits = args.includes('--preserve-hand-edits')
+          ? true
+          : args.includes('--no-preserve-hand-edits') ? false : undefined;
+        const preview = await service.previewRestore(agent.session.id, checkpointId, { preserveVerifiedHandEdits });
         const drift = preview.requiresForce ? 'workspace drift detected; --force may be required' : 'workspace matches active checkpoint';
         const files = preview.diffs.length ? preview.diffs.map(item => `${item.status} ${item.file}`).join(', ') : 'no managed file changes';
         const ignored = preview.ignoredPathsToDelete.length ? ` Ignored paths to delete: ${preview.ignoredPathsToDelete.join(', ')}.` : '';
@@ -246,8 +386,10 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
           ? ` INCOMPLETE checkpoint: omitted paths preserved live: ${preview.targetOmittedPaths.join(', ')}.`
           : '';
         const conflicts = preview.conflictingPaths.length ? ` Conflicting paths: ${preview.conflictingPaths.join(', ')}.` : '';
+        const effects = preview.requiresExternalEffectsReview ? ` Unresolved external effects: ${preview.unresolvedExternalEffectIds.join(', ')}; use --require-effects-resolved to fail closed until compensated.` : '';
+        const preserved = preview.preservedHandEditPaths?.length ? ` Preserved hand-edits: ${preview.preservedHandEditPaths.join(', ')}.` : '';
         const plan = ` Restore plan: ${preview.restorePlanId}${preview.restorePlanExpiresAt ? ` (expires ${new Date(preview.restorePlanExpiresAt).toISOString()})` : ' (no expiry)'}.`;
-        return { kind: 'success', text: `Preview ${checkpointId}: ${drift}. Changes: ${files}.${ignored}${omitted}${conflicts}${plan}` };
+        return { kind: 'success', text: `Preview ${checkpointId}: ${drift}. Changes: ${files}.${ignored}${omitted}${conflicts}${preserved}${effects}${plan}` };
       },
     });
 
@@ -270,7 +412,7 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
     scope.commands.register({
       name: 'tm-fork',
       description: 'Create a named exploration branch from a checkpoint',
-      input: { hint: '<checkpoint> <branch> [--merge|--force]' },
+      input: { hint: '<checkpoint> <branch> [--merge|--force] [--require-effects-resolved]' },
       handler: async ({ agent, rawInput }: CommandInvocationLike): Promise<CommandResult> => {
         const args = rawInput.trim().split(/\s+/).filter(Boolean);
         const positionals = args.filter(arg => !arg.startsWith('--'));
@@ -283,7 +425,7 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
           sessionId,
           fromCheckpointId: positionals[0],
           newBranchName: positionals[1],
-          restore: { mode: args.includes('--force') ? 'force' : args.includes('--merge') ? 'merge' : undefined },
+          restore: { mode: args.includes('--force') ? 'force' : args.includes('--merge') ? 'merge' : undefined, requireExternalEffectsResolved: args.includes('--require-effects-resolved') },
         });
         try {
           const created = await restartConversation(controller, sessionId, result.forkedNode, service.workDir);
@@ -308,6 +450,10 @@ function optionValue(args: string[], name: string): string | undefined {
   return inline ? inline.slice(prefix.length) || undefined : undefined;
 }
 
+async function resolveRelativeCheckpoint(service: TimeMachineService, sessionId: string, count: number): Promise<string | undefined> {
+  return (await service.resolveRelativeTurnCheckpoint(sessionId, count))?.id;
+}
+
 function parseDurationMs(value: string): number | undefined {
   const match = /^(\d+(?:\.\d+)?)(ms|s|m|h|d|w)$/i.exec(value.trim());
   if (!match) return undefined;
@@ -330,6 +476,9 @@ async function restartConversation(
   cwd: string,
 ): Promise<{ sessionId: string }> {
   const boundary = checkpoint.sessionState.boundarySeq;
+  if (boundary !== undefined && controller.rewind) {
+    return controller.rewind({ sessionId: sourceSessionId, atSeq: boundary });
+  }
   return boundary === undefined
     ? controller.create({ cwd })
     : controller.fork({ sessionId: sourceSessionId, atSeq: boundary });

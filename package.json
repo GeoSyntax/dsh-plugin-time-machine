@@ -11,6 +11,11 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
+    },
+    "./client": {
+      "types": "./dist/client.d.ts",
+      "import": "./dist/client.js",
+      "require": "./dist/client.cjs"
     }
   },
   "files": [
@@ -21,13 +26,14 @@
   ],
   "scripts": {
     "build": "tsup && node -e \"const fs = require('fs'); fs.cpSync('src/web/client', 'dist/client', { recursive: true });\"",
-    "check": "pnpm test && pnpm build && pnpm pack --dry-run",
+    "check": "pnpm test && pnpm build && pnpm test:consumer && pnpm pack --dry-run",
     "dev": "tsup --watch",
     "prepack": "pnpm build",
     "smoke:dsh": "node test/smoke-dsh.mjs",
     "smoke:dsh:source": "node test/smoke-dsh-source.mjs",
     "smoke:dsh:failure": "node test/smoke-dsh-failure.mjs",
     "smoke:dsh:web": "node test/smoke-dsh-web.mjs",
+    "test:consumer": "pnpm build && node test/consumer-smoke.mjs",
     "test:release": "pnpm check && pnpm audit --prod --audit-level=high && git diff --check",
     "test": "vitest run",
     "test:watch": "vitest",

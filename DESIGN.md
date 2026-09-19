@@ -9,6 +9,28 @@ Time Machine coordinates two independently durable domains:
 
 It never rewrites the append-only DSH event log. A rewind restores files and asks the host `sessionController` to create/fork a conversation. If the conversation operation fails, the workspace is restored from the automatic rescue checkpoint.
 
+The published package has two integration surfaces: the host service at `.` and a
+dependency-free companion contract at `./client`. The latter exposes
+`TimeMachineClient` plus the pure `buildCompanionTimeline()` projection. Native
+DSH slot packages can consume that projection without importing Cordis or
+duplicating the rules that hide running/internal checkpoints and surface partial,
+unattributed, or unresolved external-effect warnings. It intentionally does not
+register a React slot by itself; the optional browser package remains a separate
+compatibility surface.
+
+Relative undo is implemented once in `TimeMachineService.listRelativeTurnCheckpoints()`.
+CLI `/tm-undo`, REST `POST /api/undo`, and `TimeMachineClient.undo()` all resolve
+the same newest-first completed-turn list. Internal `pre-command`, rescue,
+selective-restore, and `running` nodes are ignored, so an automatic safety
+checkpoint cannot change the user's undo distance. Confirmation-oriented UIs
+should still use `timeline()` and a one-shot preview plan before calling the
+mutating `/api/rewind` route.
+
+The standalone Dashboard exposes the same relative operation as an explicit
+`Undo latest turn` action. It confirms before mutation, calls `/api/undo` with
+`count: 1`, and adopts the returned forked session identity; detailed timeline
+rewind remains available for preview-first conflict review.
+
 ## State model
 
 Each `CheckpointNode` records a parent, logical branch, pre-turn workspace object, Session boundary, turn outcome, and optional settled workspace signature. A pre-turn node therefore has two relevant signatures:
@@ -20,6 +42,26 @@ Integrations may attach `externalEffects` declarations to a node through
 `recordExternalEffect()`. These records describe mutations in databases,
 networks, processes, or cloud systems; they are persisted and surfaced in fork
 reflection, but the core never executes compensation implicitly.
+
+When `autoPreCommandSnapshot` is enabled, high-risk tool boundaries append
+`toolMutations` evidence to the boundary node. Each record contains the tool,
+result status, path delta, optional call id, and a bounded sanitized failure
+summary; delayed `tools/result` events are matched for five minutes without
+persisting raw command input or output. The read-only CLI, Web API, Dashboard,
+and companion client all expose the same ledger.
+
+Workspace routing is intentionally explicit. `TimeMachineWorkspaceHost` and
+`GET /api/workspace-route` allow a host to report a canonical workspace id,
+cwd, and actual isolation mode. Without that adapter the service reports
+`configured-root`/`shared-lock`; route validation rejects relative or malformed
+paths rather than inferring multi-workspace support.
+When a host provides the adapter through the Cordis `workspaceHost` service,
+Web rewind/undo/fork uses its atomic `forkSession()` operation; adapter failure
+therefore enters the same rescue compensation path as a normal session fork.
+The routing logic lives in `core/workspace-host.ts` and is independently tested
+for canonical same-root success, cross-root rejection, and invalid host result;
+this keeps the Web integration thin and makes the future multi-root adapter
+contract testable without a live DSH process.
 
 DAG mutations and workspace mutations are serialized per configured workspace. DAG files are published by writing a unique temporary file and renaming it into place.
 
@@ -33,6 +75,13 @@ DAG mutations and workspace mutations are serialized per configured workspace. D
 6. Fork the DSH conversation at `boundarySeq`.
 7. If step 6 fails, restore the rescue node and cursor.
 
+Preview plans also bind the hand-edit policy that was reviewed. A request that
+changes `preserveVerifiedHandEdits` after preview is rejected, so the dashboard
+cannot silently review one restore policy and execute another. When the host
+exposes the optional `sessionController.rewind({ sessionId, atSeq })` extension,
+the same protocol may finish with an in-place session rewind; current DSH alpha
+hosts use the fork path.
+
 This is compensating transaction semantics, not a filesystem-wide ACID transaction.
 
 ## Git decisions
@@ -42,6 +91,7 @@ This is compensating transaction semantics, not a filesystem-wide ACID transacti
 - Plugin storage and configured preserved paths are removed from the temporary index.
 - `git clean` is not used. The temporary current-state index gives `read-tree --reset -u` the information needed to remove managed paths absent from the target.
 - Ignored contents are excluded from Git objects. Explicit ignored-path deletion copies content to a plugin quarantine first; rescue restoration copies it back.
+- Before Git restore or selective restore, the engine rejects regular-file targets with `nlink > 1`; this prevents checkout from mutating another hard-linked path. It also checks every restore/cleanup path's ancestor chain and fails closed on symlink or non-directory ancestors. Fallback restore removes the destination link before writing, while symlinks remain explicit entries.
 
 The shadow store is opt-in. Loose unreachable objects are reclaimed after plugin refs are deleted. Explicit shadow repack rebuilds packs only from `refs/dsh-tm/*`; no repository-wide Git GC is invoked. Repack is never automatic.
 
@@ -59,7 +109,7 @@ The shadow store is opt-in. Loose unreachable objects are reclaimed after plugin
 | Threat | Control |
 |---|---|
 | Path traversal through Session/checkpoint IDs | IDs are base64url-encoded before filesystem/ref use; manifests validate relative paths. |
-| Symlink escape | Directory scans use `lstat` and never recurse through symlinks. Restore destinations are resolved beneath the workspace root. |
+| Symlink escape | Directory scans use `lstat` and never recurse through symlinks. Restore destinations are resolved beneath the workspace root, and ancestor symlinks/non-directories are rejected before mutation. |
 | Loss of staged changes | Capture and restore use isolated indexes; regression test compares cached diff before/after restore. |
 | Overwriting hand edits | Safe mode compares the current tree and ignored-name set with the active settled signature. |
 | Irrecoverable ignored-file deletion | Deletion is explicit and quarantines contents outside Git before removal. |
@@ -75,12 +125,21 @@ The shadow store is opt-in. Loose unreachable objects are reclaimed after plugin
 - A read-only preview issues a one-shot, session/checkpoint-bound restore plan. Web clients must submit that plan to mutate; the service rechecks its TTL, active checkpoint, workspace signature, and Git HEAD/branch/in-progress-operation state under the workspace lock, then consumes the token before restore. Direct service/CLI restores remain available without a plan for automation, while reviewed Web restores fail closed on stale plans.
 - Optional `maxSnapshotFileBytes` and `maxSnapshotBytes` are checked before Git staging or fallback copying. The policy intentionally fails the checkpoint rather than silently omitting content; this preserves the invariant that a successful checkpoint describes the complete eligible workspace.
 - A process or machine crash during the small interval between workspace restore and DAG cursor publication is recovered from the durable restore journal on next startup; filesystem restore itself remains compensating rather than ACID.
-- One plugin instance currently owns one configured workspace. Sessions with a different `cwd` are skipped rather than routed incorrectly.
-- Packed shadow objects are not repacked automatically; users must opt in to `--repack-shadow`, and shared-object mode still does not run repository-wide GC.
+- One plugin instance currently owns one configured workspace. Sessions with a different `cwd` are skipped rather than routed incorrectly; the versioned capability field `workspaceRouting: "single-root"` makes this limitation discoverable to Web/CLI clients.
+- Packed shadow objects are not repacked automatically; users must opt in to `--repack-shadow`, and shared-object mode still does not run repository-wide GC. With encrypted shadow storage enabled, the pack is encrypted in the durable archive after the operation and materialized only for Git reads.
 - The lock prevents concurrent mutation but does not provide separate worktrees for multiple Agents.
+- DSH's current `workspaceRegistry` can attach sessions to existing workspace directories, but its public `SessionForkRequest` only carries `sessionId` and `atSeq`; the fork command therefore inherits the source workspace rather than creating a new worktree. Time Machine reports shared-lock isolation until the host exposes a stronger workspace/fork contract.
+- `TimeMachineWebHooks.workspaceIsolation()` is an explicit host capability seam. The core default remains `shared-lock`; an integration must only report `isolated-worktree` or `isolated-container` after it has created and routed the child workspace, so capability discovery cannot turn a UI claim into accidental isolation.
 - External-effect declarations are an audit/reflection contract, not a transaction log: adapters still own authentication, idempotency, compensation execution, and verification.
+- External effects are queryable without mutation through `/tm-external-list`, `GET /api/external-effects`, and `TimeMachineClient.externalEffects()`. Restore previews also include effects on the abandoned active-lineage segment; none of these read paths execute compensation.
+- Pruning has an explicit dry-run path (`/tm-prune --dry-run` or Web `dryRun: true`). It uses the same keep/age/branch/leaf policy as a real prune, reports `wouldRemoveCheckpointIds`, and does not mutate DAG files, quarantine backups, refs, or shadow objects.
+- Reflection can be queried without a restore or fork through `/tm-reflection`, `GET /api/reflection`, and `TimeMachineClient.reflection()`. The advisory is derived from abandoned sibling subtrees and fork-point failures, so it provides cognitive guardrails without injecting or rewriting DSH session history.
 
 ## Change history
+
+### 2026-09-19 — 只读反思与清理审计入口
+
+新增外部副作用查询、prune dry-run、companion prune，以及不会改变会话或工作区的 reflection 查询；构建产物与类型声明同步发布。
 
 ### 2026-09-18 — 0.2.0 safety and DSH compatibility pass
 
@@ -100,6 +159,44 @@ with timeout and dead-owner recovery.
 
 **Remaining boundary:** packed-object repacking and true multi-Agent worktree isolation
 remain future work; the lock prevents races but does not create independent workspaces.
+
+### 2026-09-19 — versioned DAG storage migration
+
+**Changes:** persisted DAG JSON now includes `formatVersion: 1`. Legacy files
+without the field are validated first and atomically rewritten; unknown future
+versions fail closed without rewriting the original file. The runtime exposes
+`dagStorageFormatVersion` through capability discovery.
+
+**Reason:** a community plugin must be upgrade-safe. Treating an older file as
+an opaque schema error strands a user's rollback history, while guessing at a
+future schema risks silent data loss.
+
+**Impact:** existing sessions migrate on first open; companion clients can gate
+features on the advertised version; corrupt and future files remain available
+for diagnosis and are never overwritten.
+
+### 2026-09-19 — encrypted DAG/session metadata
+
+**Changes:** `stateEncryptionKeyEnv` optionally encrypts persisted DAG JSON with
+an AES-256-GCM envelope. Validated legacy plaintext is migrated atomically on
+first open; missing, wrong, or unsupported keys fail closed, including during
+session discovery. Capabilities and storage status expose only an enabled
+boolean, never key material.
+
+**Reason:** prompts, message history, variables, and failed tool inputs can
+contain credentials or proprietary code. A plaintext dashboard fallback would
+be more dangerous than a startup error, so key failures are surfaced rather
+than treated as an empty session list.
+
+**Remaining boundary:** Git Shadow objects are still plaintext at rest; their
+runtime/archive design remains separate and is not implied by this metadata
+encryption switch.
+
+During rotation operators set both `stateEncryptionKeyEnv` and
+`stateEncryptionPreviousKeyEnv`, restart once, verify discovery, then remove
+the previous-key setting. The previous key is only a decryption fallback; new
+writes always use the current key, and an unauthenticated file is never
+rewritten.
 
 ### 2026-09-19 — API boundary and external-effect identity hardening
 

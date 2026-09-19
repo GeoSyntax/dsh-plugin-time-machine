@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import { GitPlumbingEngine } from './core/git-plumbing.js';
 import { FallbackSnapshotEngine } from './core/fallback-engine.js';
-import { DAGStateManager } from './core/dag-manager.js';
+import { DAGStateManager, DAG_FORMAT_VERSION } from './core/dag-manager.js';
 import { ReflectionAdvisor } from './core/reflection-advisor.js';
 import { KeyedOperationLock } from './core/operation-lock.js';
 import { WorkspaceFileLock } from './core/workspace-lock.js';
@@ -13,6 +13,7 @@ import type {
   ExternalEffectAdapter,
   ExternalEffectCompensationResult,
   AgentWriteRecord,
+  ToolMutationRecord,
   FileChange,
   DAGTree,
   DiffResult,
@@ -26,6 +27,7 @@ import type {
   SessionSummary,
   SessionState,
   TimeMachineConfig,
+  WorkspaceIsolation,
 } from './types.js';
 
 export interface TimeMachineServiceOptions {
@@ -52,6 +54,14 @@ export class RestorePlanError extends Error {
   }
 }
 
+export class ExternalEffectsUnresolvedError extends Error {
+  readonly code = 'EXTERNAL_EFFECTS_UNRESOLVED';
+  constructor(public readonly effectIds: string[]) {
+    super(`Restore requires explicit compensation for unresolved external effects: ${effectIds.join(', ')}`);
+    this.name = 'ExternalEffectsUnresolvedError';
+  }
+}
+
 interface RestorePlan {
   id: string;
   sessionId: string;
@@ -64,6 +74,7 @@ interface RestorePlan {
   operation: string | null;
   createdAt: number;
   expiresAt: number | null;
+  preserveVerifiedHandEdits: boolean;
 }
 
 interface RestoreJournal {
@@ -114,16 +125,23 @@ export class TimeMachineService {
       maxSnapshots: Math.max(0, Math.floor(options.config?.maxSnapshots ?? 0)),
       maxStorageBytes: Math.max(0, Math.floor(options.config?.maxStorageBytes ?? 0)),
       shadowStore: options.config?.shadowStore ?? false,
+      shadowStoreEncryptionKeyEnv: options.config?.shadowStoreEncryptionKeyEnv ?? '',
+      shadowStoreEncryptionPreviousKeyEnv: options.config?.shadowStoreEncryptionPreviousKeyEnv ?? '',
       autoPrune: options.config?.autoPrune ?? false,
       retentionMaxAgeMs: Math.max(0, Math.floor(options.config?.retentionMaxAgeMs ?? 0)),
       workspaceLockTimeoutMs: Math.max(0, Math.floor(options.config?.workspaceLockTimeoutMs ?? 30000)),
       maxQuarantineBytes: Math.max(0, Math.floor(options.config?.maxQuarantineBytes ?? 0)),
       quarantineEncryptionKeyEnv: options.config?.quarantineEncryptionKeyEnv ?? '',
+      stateEncryptionKeyEnv: options.config?.stateEncryptionKeyEnv ?? '',
+      stateEncryptionPreviousKeyEnv: options.config?.stateEncryptionPreviousKeyEnv ?? '',
       restorePlanTtlMs: Math.max(0, Math.floor(options.config?.restorePlanTtlMs ?? 900000)),
       maxSnapshotFileBytes: Math.max(0, Math.floor(options.config?.maxSnapshotFileBytes ?? 0)),
       maxSnapshotBytes: Math.max(0, Math.floor(options.config?.maxSnapshotBytes ?? 0)),
       allowPartialSnapshots: options.config?.allowPartialSnapshots ?? false,
-      enableAgentWriteLedger: options.config?.enableAgentWriteLedger ?? false,
+      enableAgentWriteLedger: options.config?.preserveVerifiedHandEditsByDefault
+        ? true
+        : options.config?.enableAgentWriteLedger ?? false,
+      preserveVerifiedHandEditsByDefault: options.config?.preserveVerifiedHandEditsByDefault ?? false,
       autoPreCommandSnapshot: options.config?.autoPreCommandSnapshot ?? false,
       preCommandTools: [...(options.config?.preCommandTools ?? ['write', 'edit', 'str_replace_editor', 'bash', 'shell', 'pwsh', 'powershell', 'terminal_bash', 'terminal_exec', 'run_code', 'python'])],
       preCommandMaxPerTurn: Math.max(0, Math.floor(options.config?.preCommandMaxPerTurn ?? 1)),
@@ -135,6 +153,12 @@ export class TimeMachineService {
       preservePaths: [this.storageDir, ...this.config.preservePaths],
       quarantineDir: path.join(this.storageDir, 'ignored-quarantine'),
       shadowObjectDir: this.config.shadowStore ? path.join(this.storageDir, 'git-shadow', 'objects') : undefined,
+      shadowEncryptionKey: this.config.shadowStoreEncryptionKeyEnv
+        ? process.env[this.config.shadowStoreEncryptionKeyEnv]
+        : undefined,
+      shadowEncryptionPreviousKey: this.config.shadowStoreEncryptionPreviousKeyEnv
+        ? process.env[this.config.shadowStoreEncryptionPreviousKeyEnv]
+        : undefined,
       maxQuarantineBytes: this.config.maxQuarantineBytes,
       quarantineEncryptionKey: this.config.quarantineEncryptionKeyEnv
         ? process.env[this.config.quarantineEncryptionKeyEnv]
@@ -169,6 +193,8 @@ export class TimeMachineService {
       mgr = new DAGStateManager({
         sessionId,
         storageDir: this.storageDir,
+        encryptionKey: this.config.stateEncryptionKeyEnv ? process.env[this.config.stateEncryptionKeyEnv] : undefined,
+        previousEncryptionKey: this.config.stateEncryptionPreviousKeyEnv ? process.env[this.config.stateEncryptionPreviousKeyEnv] : undefined,
       });
       await mgr.init();
       this.dagManagers.set(sessionId, mgr);
@@ -178,6 +204,30 @@ export class TimeMachineService {
       this.recoveredSessions.add(sessionId);
     }
     return mgr;
+  }
+
+  /** Resolve a user-facing undo distance on the active lineage, ignoring internal nodes. */
+  async resolveRelativeTurnCheckpoint(sessionId: string, count: number): Promise<CheckpointNode | null> {
+    if (!Number.isInteger(count) || count < 1) throw new Error('Undo count must be a positive integer.');
+    return (await this.listRelativeTurnCheckpoints(sessionId))[count] ?? null;
+  }
+
+  /** Return newest-first user-visible boundaries for CLI, REST, and companion projections. */
+  async listRelativeTurnCheckpoints(sessionId: string, limit = 500): Promise<CheckpointNode[]> {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 500) throw new Error('Undo list limit must be an integer between 1 and 500.');
+    const dag = await this.getDAGManager(sessionId);
+    const current = dag.getCurrentNode();
+    if (!current) return [];
+    const selected: CheckpointNode[] = [];
+    const seenTurns = new Set<number>();
+    for (const node of [...dag.getLineage(current.id)].reverse()) {
+      if (node.status === 'running' || node.tags?.includes('pre-command') || node.tags?.includes('rescue') || node.tags?.includes('selective-restore')) continue;
+      if (seenTurns.has(node.turnIndex)) continue;
+      seenTurns.add(node.turnIndex);
+      selected.push(node);
+      if (selected.length >= limit) break;
+    }
+    return selected;
   }
 
   /**
@@ -193,6 +243,7 @@ export class TimeMachineService {
     errorMessage?: string;
     failedTools?: Array<{ toolName: string; input: any; error: string }>;
     tags?: string[];
+    userMessageId?: string;
   }): Promise<CheckpointNode> {
     return this.runWorkspaceOperation(() => this.createTurnCheckpointUnlocked(params));
   }
@@ -207,6 +258,7 @@ export class TimeMachineService {
     errorMessage?: string;
     failedTools?: Array<{ toolName: string; input: any; error: string }>;
     tags?: string[];
+    userMessageId?: string;
   }): Promise<CheckpointNode> {
     const dag = await this.getDAGManager(params.sessionId);
     const internalSafetyCheckpoint = params.tags?.includes('rescue') || params.tags?.includes('selective-restore');
@@ -262,6 +314,7 @@ export class TimeMachineService {
       sessionState: cloneJson(params.sessionState),
       changedFiles,
       status: params.status || 'success',
+      ...(params.userMessageId ? { userMessageId: params.userMessageId } : {}),
       errorMessage: params.errorMessage,
       failedTools: params.failedTools,
       tags: params.tags,
@@ -279,6 +332,8 @@ export class TimeMachineService {
     status: 'success' | 'failed' | 'aborted';
     errorMessage?: string;
     failedTools?: Array<{ toolName: string; input: any; error: string }>;
+    assistantMessageId?: string;
+    assistantMessageIds?: string[];
   }): Promise<CheckpointNode> {
     return this.runWorkspaceOperation(async () => {
       const dag = await this.getDAGManager(params.sessionId);
@@ -298,11 +353,28 @@ export class TimeMachineService {
         status: params.status,
         errorMessage: params.errorMessage,
         failedTools: params.failedTools,
+        ...(params.assistantMessageId ? { assistantMessageId: params.assistantMessageId } : {}),
+        ...(params.assistantMessageIds?.length ? { assistantMessageIds: [...new Set(params.assistantMessageIds)] } : {}),
         settledGitTreeOid: settled?.treeOid,
         settledIgnoredPaths: settled?.ignoredPaths,
         unattributedChanges,
       });
     });
+  }
+
+  /** Resolve any durable user/assistant message to its turn checkpoint for message actions. */
+  async findCheckpointByMessage(sessionId: string, messageId: string): Promise<CheckpointNode | null> {
+    if (!messageId.trim()) return null;
+    const dag = await this.getDAGManager(sessionId);
+    const matches = Object.values(dag.tree.nodes)
+      .filter(node => node.userMessageId === messageId || node.assistantMessageId === messageId || node.assistantMessageIds?.includes(messageId))
+      .sort((left, right) => right.timestamp - left.timestamp);
+    return matches[0] ? cloneJson(matches[0]) : null;
+  }
+
+  /** Backward-compatible assistant-specific alias. */
+  async findCheckpointByAssistantMessage(sessionId: string, messageId: string): Promise<CheckpointNode | null> {
+    return this.findCheckpointByMessage(sessionId, messageId);
   }
 
   /**
@@ -346,6 +418,46 @@ export class TimeMachineService {
     const node = dag.getNode(checkpointId);
     if (!node) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
     return cloneJson(node.unattributedChanges ?? []);
+  }
+
+  async inspectCheckpointDelta(sessionId: string, checkpointId: string): Promise<FileChange[]> {
+    return this.runWorkspaceOperation(async () => {
+      const dag = await this.getDAGManager(sessionId);
+      const node = dag.getNode(checkpointId);
+      if (!node) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
+      if (await this.gitEngine.isGitRepo()) {
+        const settled = await this.gitEngine.inspectWorkspace({ omitPaths: node.omittedPaths ?? [] });
+        return (await this.gitEngine.getDiffBetween(node.gitTreeOid, settled.treeOid)).map(item => ({ path: item.file, status: item.status }));
+      }
+      return this.fallbackEngine.getChangedFiles(sessionId, checkpointId);
+    });
+  }
+
+  async recordToolMutation(
+    sessionId: string,
+    checkpointId: string,
+    mutation: Omit<ToolMutationRecord, 'recordedAt'>,
+  ): Promise<CheckpointNode> {
+    return this.runWorkspaceOperation(async () => {
+      const toolName = mutation.toolName.trim();
+      if (!toolName) throw new Error('Tool mutation toolName is required.');
+      if (mutation.status !== 'success' && mutation.status !== 'error') throw new Error('Tool mutation status must be success or error.');
+      const dag = await this.getDAGManager(sessionId);
+      const node = dag.getNode(checkpointId);
+      if (!node) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
+      const changedFiles = [...new Map(mutation.changedFiles.map(item => [item.path, { path: item.path, status: item.status }])).values()]
+        .sort((a, b) => a.path.localeCompare(b.path));
+      const error = mutation.error?.trim().slice(0, 300);
+      const record: ToolMutationRecord = { toolName, status: mutation.status, changedFiles, recordedAt: Date.now(), ...(mutation.callId?.trim() ? { callId: mutation.callId.trim() } : {}), ...(error ? { error } : {}) };
+      return dag.updateNode(checkpointId, { toolMutations: [...(node.toolMutations ?? []), record] });
+    });
+  }
+
+  async getToolMutationLedger(sessionId: string, checkpointId: string): Promise<ToolMutationRecord[]> {
+    const dag = await this.getDAGManager(sessionId);
+    const node = dag.getNode(checkpointId);
+    if (!node) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
+    return cloneJson(node.toolMutations ?? []);
   }
 
   /**
@@ -415,6 +527,17 @@ export class TimeMachineService {
 
   listExternalEffectAdapters(): string[] {
     return [...this.externalEffectAdapters.keys()].sort();
+  }
+
+  /** Read external effects on a checkpoint lineage without executing compensation. */
+  async listExternalEffects(sessionId: string, checkpointId?: string, unresolvedOnly = false): Promise<ExternalEffectRecord[]> {
+    const dag = await this.getDAGManager(sessionId);
+    const node = checkpointId === undefined ? dag.getCurrentNode() : dag.getNode(checkpointId);
+    if (!node) throw new Error(checkpointId === undefined
+      ? `Session '${sessionId}' has no current checkpoint.`
+      : `Checkpoint '${checkpointId}' does not exist in DAG.`);
+    const effects = dag.getLineage(node.id).flatMap(item => item.externalEffects ?? []);
+    return cloneJson(unresolvedOnly ? effects.filter(effect => effect.status !== 'compensated') : effects);
   }
 
   /**
@@ -502,8 +625,10 @@ export class TimeMachineService {
       const dag = await this.getDAGManager(sessionId);
       const target = dag.getNode(checkpointId);
       if (!target) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
-      await this.consumeRestorePlan(sessionId, checkpointId, options.restorePlanId, dag);
-      const restored = await this.restoreWithRescue(dag, target, options);
+      const reviewedPreserve = await this.consumeRestorePlan(sessionId, checkpointId, options.restorePlanId, dag);
+      const effectiveOptions = this.applyReviewedRestorePolicy(options, reviewedPreserve);
+      this.assertExternalEffectsResolved(dag, checkpointId, effectiveOptions.requireExternalEffectsResolved);
+      const restored = await this.restoreWithRescue(dag, target, effectiveOptions);
       try {
         await dag.rewindTo(checkpointId);
       } catch (error) {
@@ -619,8 +744,10 @@ export class TimeMachineService {
     return this.runWorkspaceOperation(async () => {
       const dag = await this.getDAGManager(params.sessionId);
       const baseNode = dag.validateFork(params.fromCheckpointId, params.newBranchName);
-      await this.consumeRestorePlan(params.sessionId, params.fromCheckpointId, params.restore?.restorePlanId, dag);
-      const restored = await this.restoreWithRescue(dag, baseNode, params.restore ?? {}, 'fork');
+      const reviewedPreserve = await this.consumeRestorePlan(params.sessionId, params.fromCheckpointId, params.restore?.restorePlanId, dag);
+      const effectiveRestore = this.applyReviewedRestorePolicy(params.restore ?? {}, reviewedPreserve);
+      this.assertExternalEffectsResolved(dag, params.fromCheckpointId, effectiveRestore.requireExternalEffectsResolved);
+      const restored = await this.restoreWithRescue(dag, baseNode, effectiveRestore, 'fork');
       let forkedNode: CheckpointNode;
       try {
         forkedNode = await dag.forkBranch(params.fromCheckpointId, params.newBranchName, params.description);
@@ -662,6 +789,23 @@ export class TimeMachineService {
     });
   }
 
+  /** Read the reflection advisory for branches abandoned after a checkpoint without mutating state. */
+  async getReflection(sessionId: string, checkpointId: string): Promise<ReflectionSummary> {
+    const dag = await this.getDAGManager(sessionId);
+    const forkPoint = dag.getNode(checkpointId);
+    if (!forkPoint) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
+    if (!this.config.enableReflectionAdvisor) {
+      return { hasPastFailures: false, failedNodeCount: 0, summaryNote: '', suggestedPromptPrefix: '' };
+    }
+    const abandonedNodes = dag.getAbandonedSubtrees(checkpointId, dag.tree.currentBranch);
+    const forkPointHasFailure = forkPoint.status === 'failed'
+      || forkPoint.errorMessage !== undefined
+      || (forkPoint.failedTools?.length ?? 0) > 0;
+    return this.advisor.generateReflectionNote(
+      forkPointHasFailure ? [forkPoint, ...abandonedNodes] : abandonedNodes,
+    );
+  }
+
   /**
    * 获取指定快照与当前（或另一快照）的代码差异
    */
@@ -683,7 +827,7 @@ export class TimeMachineService {
    * Produce a read-only impact report before a rewind/fork. This deliberately
    * does not create a rescue point, mutate the DAG, or touch workspace files.
    */
-  async previewRestore(sessionId: string, checkpointId: string): Promise<RestorePreview> {
+  async previewRestore(sessionId: string, checkpointId: string, options: { preserveVerifiedHandEdits?: boolean } = {}): Promise<RestorePreview> {
     return this.runWorkspaceOperation(async () => {
       const dag = await this.getDAGManager(sessionId);
       const target = dag.getNode(checkpointId);
@@ -709,14 +853,30 @@ export class TimeMachineService {
           }));
       const expectedTree = current?.settledGitTreeOid ?? current?.gitTreeOid;
       const expectedIgnored = current?.settledIgnoredPaths ?? current?.ignoredPaths ?? [];
+      const preserveHandEdits = options.preserveVerifiedHandEdits === true
+        || (options.preserveVerifiedHandEdits === undefined && this.config.preserveVerifiedHandEditsByDefault);
+      const preservedHandEditPaths = preserveHandEdits && current
+        ? await this.findVerifiedHandEdits(current)
+        : [];
       const driftDiffs = isGit && current && expectedTree && currentState.treeOid !== expectedTree
         ? await this.gitEngine.getDiffBetween(expectedTree, currentState.treeOid)
-        : [];
-      const conflictingPaths = [...new Set([
+        : !isGit && current && expectedTree && currentState.treeOid !== expectedTree
+          ? (await this.fallbackEngine.getChangedFiles(sessionId, current.id)).map(item => ({ file: item.path }))
+          : [];
+      const allConflictingPaths = [...new Set([
         ...driftDiffs.map(diff => diff.file),
-        ...(!isGit && current && expectedTree && currentState.treeOid !== expectedTree && diffs.length === 0 ? ['(fallback workspace; no file diff available)'] : []),
         ...symmetricDifference(expectedIgnored, currentState.ignoredPaths).map(item => `(ignored) ${item}`),
       ])].sort();
+      const conflictingPaths = allConflictingPaths.filter(file => !preservedHandEditPaths.some(path => file === path || file.startsWith(`${path}/`)));
+      const currentLineage = current ? dag.getLineage(current.id) : [];
+      const targetIndex = currentLineage.findIndex(node => node.id === checkpointId);
+      const externalEffects = currentLineage
+        .slice(targetIndex >= 0 ? targetIndex + 1 : 0)
+        .flatMap(node => node.externalEffects ?? [])
+        .map(effect => cloneJson(effect));
+      const unresolvedExternalEffectIds = externalEffects
+        .filter(effect => effect.status !== 'compensated')
+        .map(effect => effect.id);
       const workspaceDrifted = Boolean(current && (
         currentState.treeOid !== expectedTree || !sameStrings(currentState.ignoredPaths, expectedIgnored)
       ));
@@ -736,6 +896,7 @@ export class TimeMachineService {
         operation: controlPlane.operation,
         createdAt,
         expiresAt,
+        preserveVerifiedHandEdits: preserveHandEdits,
       });
       return {
         sessionId,
@@ -749,8 +910,12 @@ export class TimeMachineService {
         ignoredPathsToDelete: currentState.ignoredPaths.filter(item => !targetIgnoredPaths.includes(item)),
         diffs,
         conflictingPaths,
+        preservedHandEditPaths,
+        externalEffects,
+        unresolvedExternalEffectIds,
+        requiresExternalEffectsReview: unresolvedExternalEffectIds.length > 0,
         workspaceDrifted,
-        requiresForce: workspaceDrifted,
+        requiresForce: conflictingPaths.length > 0,
         restorePlanId: planId,
         restorePlanExpiresAt: expiresAt,
       };
@@ -769,8 +934,8 @@ export class TimeMachineService {
     checkpointId: string,
     planId: string | undefined,
     dag: DAGStateManager,
-  ): Promise<void> {
-    if (!planId) return;
+  ): Promise<boolean | undefined> {
+    if (!planId) return undefined;
     this.expireRestorePlans();
     const plan = this.restorePlans.get(planId);
     this.restorePlans.delete(planId);
@@ -790,6 +955,17 @@ export class TimeMachineService {
     if (controlPlane.headOid !== plan.headOid || controlPlane.branch !== plan.branch || controlPlane.operation !== plan.operation) {
       throw new RestorePlanError('Git HEAD, branch, or in-progress operation changed after preview; run preview again.');
     }
+    return plan.preserveVerifiedHandEdits;
+  }
+
+  private applyReviewedRestorePolicy(options: RestoreOptions, reviewedPreserve: boolean | undefined): RestoreOptions {
+    if (reviewedPreserve === undefined) return options;
+    if (options.preserveVerifiedHandEdits !== undefined && options.preserveVerifiedHandEdits !== reviewedPreserve) {
+      throw new RestorePlanError('Restore request hand-edit policy differs from the reviewed preview; run preview again.');
+    }
+    return options.preserveVerifiedHandEdits === undefined
+      ? { ...options, preserveVerifiedHandEdits: reviewedPreserve }
+      : options;
   }
 
   private async inspectWorkspaceSignature(omitPaths: string[] = []): Promise<{ treeOid: string; ignoredPaths: string[] }> {
@@ -819,6 +995,7 @@ export class TimeMachineService {
     const leaves = managers.reduce((sum, manager) => sum + this.pruneCandidates(manager).length, 0);
     const files = await countFiles(this.storageDir);
     const bytes = await directoryBytes(this.storageDir);
+    const shadowStatus = await this.gitEngine.encryptedShadowStatus();
     return {
       storageDir: this.storageDir,
       bytes,
@@ -827,9 +1004,15 @@ export class TimeMachineService {
       checkpoints,
       pruneCandidates: leaves,
       gitObjectsShared: await this.gitEngine.isGitRepo() && !this.config.shadowStore,
-      gitObjectsEncrypted: false,
+      gitObjectsEncrypted: shadowStatus.ready,
+      dagStateEncrypted: Boolean(this.config.stateEncryptionKeyEnv && process.env[this.config.stateEncryptionKeyEnv]),
       quarantineEncrypted: Boolean(this.config.quarantineEncryptionKeyEnv && process.env[this.config.quarantineEncryptionKeyEnv]),
     };
+  }
+
+  /** Explicitly migrate a plaintext shadow object directory into the encrypted archive. */
+  async migrateShadowStore(): Promise<{ migrated: boolean; entries: number; bytes: number }> {
+    return this.runWorkspaceOperation(() => this.gitEngine.migrateShadowStore());
   }
 
   /** Enumerate persisted sessions without creating a new empty DAG. */
@@ -839,8 +1022,17 @@ export class TimeMachineService {
     for (const entry of entries) {
       if (!entry.isFile() || !entry.name.startsWith('dag_') || !entry.name.endsWith('.json')) continue;
       try {
-        const tree = JSON.parse(await fs.readFile(path.join(this.storageDir, entry.name), 'utf8')) as DAGTree;
-        if (typeof tree.sessionId !== 'string') continue;
+        const encodedSessionId = entry.name.slice('dag_'.length, -'.json'.length);
+        const sessionId = encodedSessionId === '_' ? '' : Buffer.from(encodedSessionId, 'base64url').toString('utf8');
+        if (!sessionId) continue;
+        const manager = new DAGStateManager({
+          sessionId,
+          storageDir: this.storageDir,
+          encryptionKey: this.config.stateEncryptionKeyEnv ? process.env[this.config.stateEncryptionKeyEnv] : undefined,
+          previousEncryptionKey: this.config.stateEncryptionPreviousKeyEnv ? process.env[this.config.stateEncryptionPreviousKeyEnv] : undefined,
+        });
+        await manager.init();
+        const tree = manager.tree;
         const nodes = Object.values(tree.nodes ?? {}) as CheckpointNode[];
         summaries.push({
           sessionId: tree.sessionId,
@@ -849,7 +1041,13 @@ export class TimeMachineService {
           currentCheckpointId: tree.currentCheckpointId,
           updatedAt: nodes.length ? Math.max(...nodes.map(node => node.timestamp)) : null,
         });
-      } catch { /* ignore corrupt/partial files in best-effort discovery */ }
+      } catch (error: any) {
+        // An encrypted store must never degrade to an empty dashboard when the
+        // operator forgot or mistyped the key; surface the key failure so the
+        // caller can fix configuration instead of creating a ghost session.
+        if (error?.code === 'DAG_STATE_KEY_INVALID') throw error;
+        /* ignore corrupt/partial files in best-effort discovery */
+      }
     }
     return summaries.sort((left, right) => (right.updatedAt ?? 0) - (left.updatedAt ?? 0) || left.sessionId.localeCompare(right.sessionId));
   }
@@ -857,28 +1055,41 @@ export class TimeMachineService {
   /** Report runtime capabilities so Web/CLI integrations can fail early. */
   async getCapabilities(): Promise<{
     version: 1;
+    dagStorageFormatVersion: 1;
     git: boolean;
     fallback: boolean;
     mergeRestore: boolean;
     fallbackTextDiff: boolean;
     selectiveRestore: boolean;
     shadowStore: boolean;
-    shadowStoreEncryption: false;
+    shadowStoreEncryption: boolean;
+    shadowStoreMigrationRequired: boolean;
+    shadowStoreKeyRotation: boolean;
+    dagStateEncryption: boolean;
+    dagStateKeyRotation: boolean;
     quarantineEncryption: boolean;
     quarantineMigration: boolean;
     partialSnapshots: boolean;
     /** Safe dirty-path overlay is available for normal Git workspaces. */
     incrementalCapture: boolean;
     /** Current restore semantics; ledger mode is explicit and opt-in. */
-    handEditPolicy: 'reject-drift' | 'ledger-opt-in';
+    handEditPolicy: 'reject-drift' | 'ledger-opt-in' | 'ledger-default';
     agentWriteLedger: boolean;
     preCommandSnapshots: boolean;
     preCommandTools: string[];
     preCommandMaxPerTurn: number;
+    toolMutationLedger: boolean;
     unattributedMutationInventory: boolean;
     externalEffectLedger: true;
     externalEffectAdapters: string[];
-    workspaceIsolation: 'shared-lock';
+    /** Session routing is intentionally single-root until DSH exposes a host router contract. */
+    workspaceRouting: 'single-root';
+    workspaceRouteInspection: true;
+    /** Message kinds that can resolve to a persisted checkpoint. */
+    messageAnchors: Array<'assistant' | 'user'>;
+    workspaceIsolation: WorkspaceIsolation;
+    /** Rewind restores files and opens a new DSH session; it never rewrites the append-only log. */
+    rewindSessionMode: 'fork';
     workspace: { sparseCheckout: boolean; submodulePaths: string[]; inProgressOperation: string | null };
     policies: {
       restoreMode: 'safe' | 'merge' | 'force';
@@ -889,6 +1100,7 @@ export class TimeMachineService {
       maxSnapshotBytes: number;
       allowPartialSnapshots: boolean;
       enableAgentWriteLedger: boolean;
+      preserveVerifiedHandEditsByDefault: boolean;
       autoPreCommandSnapshot: boolean;
       preCommandTools: string[];
       preCommandMaxPerTurn: number;
@@ -897,32 +1109,54 @@ export class TimeMachineService {
     };
   }> {
     const git = await this.gitEngine.isGitRepo();
-    const workspace = git
+    // Read the Shadow Store state before any Git plumbing call. A legacy
+    // plaintext store must be reported as migration-required rather than
+    // making capability discovery fail while trying to materialize it.
+    const shadowStatus = await this.gitEngine.encryptedShadowStatus();
+    const workspace = git && !shadowStatus.migrationRequired
       ? await this.gitEngine.inspectWorkspaceCapabilities()
       : { sparseCheckout: false, submodulePaths: [], inProgressOperation: null };
-    const usable = git && !workspace.sparseCheckout && workspace.submodulePaths.length === 0 && !workspace.inProgressOperation;
+    const usable = git && !shadowStatus.migrationRequired && !workspace.sparseCheckout && workspace.submodulePaths.length === 0 && !workspace.inProgressOperation;
     return {
       version: 1,
+      dagStorageFormatVersion: DAG_FORMAT_VERSION,
       git,
       fallback: !git,
       mergeRestore: usable,
       fallbackTextDiff: !git,
       selectiveRestore: usable || !git,
       shadowStore: git && this.config.shadowStore,
-      shadowStoreEncryption: false,
+      shadowStoreEncryption: git && this.gitEngine.usesEncryptedShadowStore && shadowStatus.ready,
+      shadowStoreMigrationRequired: git && this.gitEngine.usesEncryptedShadowStore && shadowStatus.migrationRequired,
+      shadowStoreKeyRotation: Boolean(
+        this.config.shadowStoreEncryptionKeyEnv && process.env[this.config.shadowStoreEncryptionKeyEnv]
+        && this.config.shadowStoreEncryptionPreviousKeyEnv && process.env[this.config.shadowStoreEncryptionPreviousKeyEnv],
+      ),
+      dagStateEncryption: Boolean(this.config.stateEncryptionKeyEnv && process.env[this.config.stateEncryptionKeyEnv]),
+      dagStateKeyRotation: Boolean(
+        this.config.stateEncryptionKeyEnv && process.env[this.config.stateEncryptionKeyEnv]
+        && this.config.stateEncryptionPreviousKeyEnv && process.env[this.config.stateEncryptionPreviousKeyEnv],
+      ),
       quarantineEncryption: Boolean(this.config.quarantineEncryptionKeyEnv && process.env[this.config.quarantineEncryptionKeyEnv]),
       quarantineMigration: git && Boolean(this.config.quarantineEncryptionKeyEnv),
       partialSnapshots: git && this.config.allowPartialSnapshots && (this.config.maxSnapshotFileBytes > 0 || this.config.maxSnapshotBytes > 0),
       incrementalCapture: usable && this.config.maxSnapshotFileBytes === 0 && this.config.maxSnapshotBytes === 0,
-      handEditPolicy: this.config.enableAgentWriteLedger ? 'ledger-opt-in' : 'reject-drift',
+      handEditPolicy: this.config.preserveVerifiedHandEditsByDefault
+        ? 'ledger-default'
+        : this.config.enableAgentWriteLedger ? 'ledger-opt-in' : 'reject-drift',
       agentWriteLedger: this.config.enableAgentWriteLedger,
       preCommandSnapshots: this.config.autoPreCommandSnapshot,
       preCommandTools: [...this.config.preCommandTools],
       preCommandMaxPerTurn: this.config.preCommandMaxPerTurn,
+      toolMutationLedger: this.config.autoPreCommandSnapshot,
       unattributedMutationInventory: true,
       externalEffectLedger: true,
       externalEffectAdapters: this.listExternalEffectAdapters(),
+      workspaceRouting: 'single-root',
+      workspaceRouteInspection: true,
+      messageAnchors: ['assistant', 'user'],
       workspaceIsolation: 'shared-lock',
+      rewindSessionMode: 'fork',
       workspace,
       policies: {
         restoreMode: this.config.restoreMode,
@@ -933,6 +1167,7 @@ export class TimeMachineService {
         maxSnapshotBytes: this.config.maxSnapshotBytes,
         allowPartialSnapshots: this.config.allowPartialSnapshots,
         enableAgentWriteLedger: this.config.enableAgentWriteLedger,
+        preserveVerifiedHandEditsByDefault: this.config.preserveVerifiedHandEditsByDefault,
         autoPreCommandSnapshot: this.config.autoPreCommandSnapshot,
         preCommandTools: [...this.config.preCommandTools],
         preCommandMaxPerTurn: this.config.preCommandMaxPerTurn,
@@ -942,7 +1177,7 @@ export class TimeMachineService {
     };
   }
 
-  async prune(sessionId: string, options: { keepLatest?: number; olderThanMs?: number; abandonedBranches?: boolean; compactHistory?: boolean; repackShadowObjects?: boolean } = {}): Promise<PruneResult> {
+  async prune(sessionId: string, options: { keepLatest?: number; olderThanMs?: number; abandonedBranches?: boolean; compactHistory?: boolean; repackShadowObjects?: boolean; dryRun?: boolean } = {}): Promise<PruneResult> {
     return this.runWorkspaceOperation(async () => {
       const dag = await this.getDAGManager(sessionId);
       const keepLatest = Math.max(0, Math.floor(options.keepLatest ?? 20));
@@ -951,29 +1186,54 @@ export class TimeMachineService {
       const olderThanMs = options.olderThanMs !== undefined ? Math.max(0, Math.floor(options.olderThanMs)) : undefined;
       const cutoff = olderThanMs !== undefined && olderThanMs > 0 ? Date.now() - olderThanMs : undefined;
       let removed: CheckpointNode[] = [];
+      const dryRun = options.dryRun === true;
+      const currentLineageIds = new Set(dag.getLineage(dag.tree.currentCheckpointId ?? '').map(node => node.id));
+      const protectedIds = new Set<string>([
+        ...(dag.tree.currentCheckpointId ? [dag.tree.currentCheckpointId] : []),
+        ...Object.values(dag.tree.branches).map(branch => branch.headId).filter(Boolean),
+      ]);
+      const plannedBranchRemoval = options.abandonedBranches
+        ? nodes.filter(node => node.branch !== dag.tree.currentBranch && !currentLineageIds.has(node.id))
+        : [];
       if (options.abandonedBranches) {
-        const abandonedBranches = Object.keys(dag.tree.branches).filter(branch => branch !== dag.tree.currentBranch);
-        for (const branch of abandonedBranches) removed.push(...await dag.removeBranch(branch));
+        if (dryRun) removed.push(...plannedBranchRemoval);
+        else {
+          const abandonedBranches = Object.keys(dag.tree.branches).filter(branch => branch !== dag.tree.currentBranch);
+          for (const branch of abandonedBranches) removed.push(...await dag.removeBranch(branch));
+        }
       }
-      const candidates = Object.values(dag.tree.nodes).filter(node => !keep.has(node.id) && (cutoff === undefined || node.timestamp < cutoff));
+      const remainingNodes = dryRun
+        ? nodes.filter(node => !plannedBranchRemoval.some(item => item.id === node.id))
+        : Object.values(dag.tree.nodes);
+      const candidates = remainingNodes.filter(node => !keep.has(node.id) && (cutoff === undefined || node.timestamp < cutoff));
+      const childIds = new Set(remainingNodes.map(node => node.parentId).filter((id): id is string => Boolean(id)));
+      const plannedCandidates = options.compactHistory
+        ? candidates.filter(node => !protectedIds.has(node.id))
+        : candidates.filter(node => !protectedIds.has(node.id) && !childIds.has(node.id));
       if (options.compactHistory) {
-        removed.push(...await dag.compactNodes(candidates.map(node => node.id)));
+        if (dryRun) removed.push(...plannedCandidates);
+        else removed.push(...await dag.compactNodes(candidates.map(node => node.id)));
       } else {
-        removed.push(...await dag.removeLeafNodes(candidates.map(node => node.id)));
+        if (dryRun) removed.push(...plannedCandidates);
+        else removed.push(...await dag.removeLeafNodes(candidates.map(node => node.id)));
       }
-      const reclaimed = await this.reclaimNodes(sessionId, removed);
-      const shadowRepack = options.repackShadowObjects && this.config.shadowStore
+      const reclaimed = dryRun ? { reclaimedBytes: 0, gitRefsRemoved: 0, quarantineReclaimedBytes: 0 } : await this.reclaimNodes(sessionId, removed);
+      const shadowRepack = !dryRun && options.repackShadowObjects && this.config.shadowStore
         ? await this.gitEngine.repackShadowObjects()
         : undefined;
       return {
         sessionId,
-        removedCheckpointIds: removed.map(node => node.id),
+        dryRun,
+        ...(dryRun ? { wouldRemoveCheckpointIds: removed.map(node => node.id) } : {}),
+        removedCheckpointIds: dryRun ? [] : removed.map(node => node.id),
         reclaimedBytes: reclaimed.reclaimedBytes,
         gitRefsRemoved: reclaimed.gitRefsRemoved,
         quarantineReclaimedBytes: reclaimed.quarantineReclaimedBytes,
         shadowObjectsReclaimedBytes: shadowRepack?.reclaimedBytes,
         shadowRepackSkippedReason: shadowRepack?.skippedReason,
-        note: reclaimed.gitRefsRemoved > 0
+        note: dryRun
+          ? `Dry run: ${removed.length} checkpoint(s) would be removed; no DAG, quarantine, or Git objects were changed.`
+          : reclaimed.gitRefsRemoved > 0
           ? (this.config.shadowStore
             ? 'Plugin refs and shadow objects were pruned; the user repository was not garbage-collected.'
             : 'Git objects are shared; run repository maintenance only if you understand its impact.')
@@ -1083,12 +1343,14 @@ export class TimeMachineService {
   ): Promise<{ rescue?: CheckpointNode; deletedIgnoredPaths: string[]; journalId?: string; preservedHandEditPaths: string[] }> {
     const current = dag.getCurrentNode() ?? undefined;
     const mode = options.mode ?? this.config.restoreMode;
-    const preserveHandEdits = options.preserveVerifiedHandEdits === true;
+    const preserveHandEdits = options.preserveVerifiedHandEdits === true
+      || (options.preserveVerifiedHandEdits === undefined && this.config.preserveVerifiedHandEditsByDefault);
     const preservedPaths = preserveHandEdits && current ? await this.findVerifiedHandEdits(current) : [];
-    if (await this.gitEngine.isGitRepo()) await this.gitEngine.assertSupportedWorkspace();
+    const isGit = await this.gitEngine.isGitRepo();
+    if (isGit) await this.gitEngine.assertSupportedWorkspace();
 
     if (mode === 'safe' && current) {
-      const actual = await this.gitEngine.isGitRepo()
+      const actual = isGit
         ? await this.gitEngine.inspectWorkspace({ omitPaths: current.omittedPaths ?? [] })
         : { treeOid: await this.fallbackEngine.inspectWorkspace(), ignoredPaths: [] };
       const expectedTree = current.settledGitTreeOid ?? current.gitTreeOid;
@@ -1097,7 +1359,11 @@ export class TimeMachineService {
         const { WorkspaceDriftError } = await import('./core/git-plumbing.js');
         const changed = actual.treeOid === expectedTree
           ? []
-          : (await this.gitEngine.getDiffBetween(expectedTree, actual.treeOid)).map(item => item.file)
+          : (isGit
+            ? (await this.gitEngine.getDiffBetween(expectedTree, actual.treeOid)).map(item => item.file)
+            : current
+              ? (await this.fallbackEngine.getChangedFiles(dag.tree.sessionId, current.id)).map(item => item.path)
+              : [])
             .filter(file => !preservedPaths.some(path => file === path || file.startsWith(`${path}/`)));
         const ignoredDrift = !sameStrings(actual.ignoredPaths, expectedIgnored);
         if (changed.length || ignoredDrift) {
@@ -1156,6 +1422,23 @@ export class TimeMachineService {
     }
   }
 
+  private unresolvedExternalEffects(dag: DAGStateManager, targetCheckpointId: string): ExternalEffectRecord[] {
+    const current = dag.getCurrentNode();
+    if (!current) return [];
+    const lineage = dag.getLineage(current.id);
+    const targetIndex = lineage.findIndex(node => node.id === targetCheckpointId);
+    return lineage
+      .slice(targetIndex >= 0 ? targetIndex + 1 : 0)
+      .flatMap(node => node.externalEffects ?? [])
+      .filter(effect => effect.status !== 'compensated');
+  }
+
+  private assertExternalEffectsResolved(dag: DAGStateManager, targetCheckpointId: string, required: boolean | undefined): void {
+    if (!required) return;
+    const unresolved = this.unresolvedExternalEffects(dag, targetCheckpointId);
+    if (unresolved.length) throw new ExternalEffectsUnresolvedError(unresolved.map(effect => effect.id));
+  }
+
   private async restoreNode(
     target: CheckpointNode,
     expected: CheckpointNode | undefined,
@@ -1191,9 +1474,13 @@ export class TimeMachineService {
     if (options.mode === 'merge') {
       throw new Error('Merge restore is only supported for Git-backed checkpoints.');
     }
-    await this.fallbackEngine.restoreSnapshot(target.sessionState.sessionId, target.id);
-    const verified = await this.fallbackEngine.inspectWorkspace();
-    if (verified !== target.gitTreeOid) {
+    const preservePaths = options.preservePaths ?? [];
+    await this.fallbackEngine.restoreSnapshot(target.sessionState.sessionId, target.id, { preservePaths });
+    const verified = await this.fallbackEngine.inspectWorkspace({ omitPaths: preservePaths });
+    const expectedTree = preservePaths.length
+      ? await this.fallbackEngine.snapshotTreeOid(target.sessionState.sessionId, target.id, preservePaths)
+      : target.gitTreeOid;
+    if (verified !== expectedTree) {
       throw new Error(`Fallback workspace integrity check failed after restoring checkpoint '${target.id}'.`);
     }
     return { deletedIgnoredPaths: [] };

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import os from 'node:os';
-import { DAGStateManager } from '../src/core/dag-manager.js';
+import { DAGStateKeyError, DAGStateManager } from '../src/core/dag-manager.js';
 import type { CheckpointNode } from '../src/types.js';
 
 describe('DAGStateManager', () => {
@@ -109,5 +109,80 @@ describe('DAGStateManager', () => {
     }));
     const manager = new DAGStateManager({ sessionId, storageDir: tmpDir });
     await expect(manager.init()).rejects.toThrow('current checkpoint');
+  });
+
+  it('migrates a valid legacy DAG without a format version atomically', async () => {
+    const sessionId = 'legacy-session';
+    const file = path.join(tmpDir, `dag_${Buffer.from(sessionId).toString('base64url')}.json`);
+    const legacy = {
+      sessionId,
+      currentBranch: 'main',
+      currentCheckpointId: null,
+      nodes: {},
+      branches: { main: { name: 'main', headId: '', forkedFromId: null, createdAt: Date.now() } },
+    };
+    await fs.writeFile(file, JSON.stringify(legacy));
+    const manager = new DAGStateManager({ sessionId, storageDir: tmpDir });
+    await manager.init();
+    expect(manager.tree.formatVersion).toBe(1);
+    expect(JSON.parse(await fs.readFile(file, 'utf8')).formatVersion).toBe(1);
+  });
+
+  it('rejects a future DAG format without rewriting it', async () => {
+    const sessionId = 'future-session';
+    const file = path.join(tmpDir, `dag_${Buffer.from(sessionId).toString('base64url')}.json`);
+    const future = {
+      formatVersion: 99,
+      sessionId,
+      currentBranch: 'main',
+      currentCheckpointId: null,
+      nodes: {},
+      branches: { main: { name: 'main', headId: '', forkedFromId: null, createdAt: Date.now() } },
+    };
+    await fs.writeFile(file, JSON.stringify(future));
+    const manager = new DAGStateManager({ sessionId, storageDir: tmpDir });
+    await expect(manager.init()).rejects.toThrow('Unsupported DAG storage format 99');
+    expect(JSON.parse(await fs.readFile(file, 'utf8')).formatVersion).toBe(99);
+  });
+
+  it('encrypts DAG metadata, reloads with the key, and fails closed with a wrong key', async () => {
+    const sessionId = 'encrypted-session';
+    const encrypted = new DAGStateManager({ sessionId, storageDir: tmpDir, encryptionKey: 'operator-secret' });
+    await encrypted.init();
+    encrypted.tree.nodes.note = {
+      id: 'note', parentId: null, branch: 'main', turnIndex: 1, timestamp: Date.now(),
+      prompt: 'sensitive prompt should not be plaintext', summary: 'secret', gitTreeOid: 'tree',
+      gitCommitOid: 'commit', sessionState: { sessionId, messages: [{ role: 'user', content: 'private' }] },
+      changedFiles: [], status: 'success',
+    };
+    await encrypted.persist();
+    const file = path.join(tmpDir, `dag_${Buffer.from(sessionId).toString('base64url')}.json`);
+    const raw = await fs.readFile(file, 'utf8');
+    expect(raw).toContain('dsh-time-machine-dag');
+    expect(raw).not.toContain('sensitive prompt should not be plaintext');
+
+    const reloaded = new DAGStateManager({ sessionId, storageDir: tmpDir, encryptionKey: 'operator-secret' });
+    await reloaded.init();
+    expect(reloaded.tree.nodes.note.prompt).toContain('sensitive prompt');
+    const wrong = new DAGStateManager({ sessionId, storageDir: tmpDir, encryptionKey: 'wrong-secret' });
+    await expect(wrong.init()).rejects.toBeInstanceOf(DAGStateKeyError);
+    const missing = new DAGStateManager({ sessionId, storageDir: tmpDir });
+    await expect(missing.init()).rejects.toMatchObject({ code: 'DAG_STATE_KEY_INVALID' });
+  });
+
+  it('rotates an encrypted DAG envelope only after authenticating the previous key', async () => {
+    const sessionId = 'rotating-session';
+    const original = new DAGStateManager({ sessionId, storageDir: tmpDir, encryptionKey: 'old-key' });
+    await original.init();
+    await original.persist();
+    const file = path.join(tmpDir, `dag_${Buffer.from(sessionId).toString('base64url')}.json`);
+    const before = await fs.readFile(file, 'utf8');
+    const rotated = new DAGStateManager({ sessionId, storageDir: tmpDir, encryptionKey: 'new-key', previousEncryptionKey: 'old-key' });
+    await rotated.init();
+    const after = await fs.readFile(file, 'utf8');
+    expect(after).not.toBe(before);
+    await expect(new DAGStateManager({ sessionId, storageDir: tmpDir, encryptionKey: 'old-key' }).init())
+      .rejects.toMatchObject({ code: 'DAG_STATE_KEY_INVALID' });
+    await expect(new DAGStateManager({ sessionId, storageDir: tmpDir, encryptionKey: 'new-key' }).init()).resolves.toBeUndefined();
   });
 });

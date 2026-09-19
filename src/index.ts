@@ -1,4 +1,6 @@
 import path from 'node:path';
+import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
 import { createHash } from 'node:crypto';
 import type { Context } from '@deepseek-ai/cordis';
 import Schema from '@deepseek-ai/schemastery';
@@ -6,7 +8,8 @@ import pc from 'picocolors';
 import { TimeMachineService } from './service.js';
 import { TimeMachineWebServer } from './web/server.js';
 import { registerCliCommands } from './cli/commands.js';
-import type { SessionMessage, TimeMachineConfig } from './types.js';
+import { forkThroughWorkspaceHost } from './core/workspace-host.js';
+import type { SessionMessage, TimeMachineConfig, TimeMachineWorkspaceHost, WorkspaceRoute } from './types.js';
 
 export { TimeMachineService } from './service.js';
 
@@ -26,16 +29,21 @@ export const Config: Schema<Config> = Schema.object({
   maxSnapshots: Schema.number().default(0),
   maxStorageBytes: Schema.number().default(0),
   shadowStore: Schema.boolean().default(false),
+  shadowStoreEncryptionKeyEnv: Schema.string().default(''),
+  shadowStoreEncryptionPreviousKeyEnv: Schema.string().default(''),
   autoPrune: Schema.boolean().default(false),
   retentionMaxAgeMs: Schema.number().default(0),
   workspaceLockTimeoutMs: Schema.number().default(30000),
   maxQuarantineBytes: Schema.number().default(0),
   quarantineEncryptionKeyEnv: Schema.string().default(''),
+  stateEncryptionKeyEnv: Schema.string().default(''),
+  stateEncryptionPreviousKeyEnv: Schema.string().default(''),
   restorePlanTtlMs: Schema.number().default(900000),
   maxSnapshotFileBytes: Schema.number().default(0),
   maxSnapshotBytes: Schema.number().default(0),
   allowPartialSnapshots: Schema.boolean().default(false),
   enableAgentWriteLedger: Schema.boolean().default(false),
+  preserveVerifiedHandEditsByDefault: Schema.boolean().default(false),
   autoPreCommandSnapshot: Schema.boolean().default(false),
   preCommandTools: Schema.array(Schema.string()).default(['write', 'edit', 'str_replace_editor', 'bash', 'shell', 'pwsh', 'powershell', 'terminal_bash', 'terminal_exec', 'run_code', 'python']),
   preCommandMaxPerTurn: Schema.number().step(1).min(0).default(1),
@@ -63,6 +71,8 @@ interface AgentLike {
 interface SessionControllerLike {
   create(request: { readonly cwd?: string }): Promise<{ readonly sessionId: string }>;
   fork(request: { readonly sessionId: string; readonly atSeq?: number }): Promise<{ readonly sessionId: string }>;
+  /** Optional host extension for true in-place append-only session rewind. */
+  rewind?(request: { readonly sessionId: string; readonly atSeq?: number }): Promise<{ readonly sessionId: string }>;
   inspect?(sessionId: string): Promise<unknown>;
 }
 
@@ -86,6 +96,21 @@ interface ToolEventExecutionLike {
 
 interface ToolEventResultLike {
   readonly isError?: boolean;
+  readonly error?: unknown;
+}
+
+function boundedToolError(result: ToolEventResultLike): string | undefined {
+  if (result.isError !== true || result.error === undefined || result.error === null) return undefined;
+  const value = result.error;
+  if (typeof value === 'string') return value.replace(/\s+/g, ' ').trim().slice(0, 300) || undefined;
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    const fields = ['code', 'name', 'reason', 'message']
+      .map(key => typeof record[key] === 'string' ? `${key}=${String(record[key]).replace(/\s+/g, ' ').trim()}` : undefined)
+      .filter((item): item is string => Boolean(item));
+    return fields.join('; ').slice(0, 300) || undefined;
+  }
+  return undefined;
 }
 
 interface ToolExecutionLike {
@@ -103,6 +128,7 @@ declare module '@deepseek-ai/cordis' {
     tools: unknown;
     commands: CommandRuntimeLike;
     sessionController: SessionControllerLike;
+    workspaceHost: TimeMachineWorkspaceHost;
   }
 
   interface Events {
@@ -123,18 +149,37 @@ export function apply(ctx: Context, config: Config = {}): void {
   const workDir = path.resolve(process.cwd());
   const service = new TimeMachineService({ workDir, storageDir: config.storageDir, config });
   ctx.provide('timeMachine', service);
+  const canonicalWorkDir = fs.realpath(service.workDir).catch(() => service.workDir);
+
+  let workspaceHost: TimeMachineWorkspaceHost | undefined;
+  try { workspaceHost = ctx.get('workspaceHost') as TimeMachineWorkspaceHost | undefined; } catch { workspaceHost = undefined; }
 
   registerCliCommands(ctx, service);
 
   if (config.enableWebUI !== false) {
     const webServer = new TimeMachineWebServer(service, config.webPort ?? 3088, config.webHost ?? '127.0.0.1', {
       restartConversation: async (sourceSessionId, checkpoint) => {
+        if (workspaceHost) {
+          const boundary = checkpoint.sessionState.boundarySeq;
+          return forkThroughWorkspaceHost(workspaceHost, sourceSessionId, boundary, service.workDir);
+        }
         const controller = ctx.get('sessionController') as SessionControllerLike | undefined;
         if (!controller) throw new Error('This DSH profile has no sessionController.');
         const boundary = checkpoint.sessionState.boundarySeq;
+        if (boundary !== undefined && controller.rewind) {
+          return controller.rewind({ sessionId: sourceSessionId, atSeq: boundary });
+        }
         return boundary === undefined
           ? controller.create({ cwd: service.workDir })
           : controller.fork({ sessionId: sourceSessionId, atSeq: boundary });
+      },
+      rewindSessionMode: () => {
+        try {
+          const controller = ctx.get('sessionController') as SessionControllerLike | undefined;
+          return controller?.rewind ? 'in-place' : 'fork';
+        } catch {
+          return 'fork';
+        }
       },
       sessionExists: async (sessionId) => {
         const controller = ctx.get('sessionController') as SessionControllerLike | undefined;
@@ -146,6 +191,7 @@ export function apply(ctx: Context, config: Config = {}): void {
           return false;
         }
       },
+      ...(workspaceHost ? { workspaceRoute: async (sessionId: string): Promise<WorkspaceRoute> => workspaceHost!.resolveSessionWorkspace(sessionId) } : {}),
     }, config.webAllowedOrigins ?? []);
     ctx.effect(() => {
       void webServer.start().then((url) => {
@@ -158,15 +204,22 @@ export function apply(ctx: Context, config: Config = {}): void {
   }
 
   const checkpoints = new Map<string, string>();
+  const checkpointAssistantBaselines = new Map<string, Set<string>>();
   const observedWrites = new Map<string, { sessionId: string; turn: number; paths: Map<string, 'modify' | 'delete'> }>();
   const pendingLedgerWrites = new Map<string, Promise<void>>();
   const preCommandCalls = new Set<string>();
+  const preCommandCheckpoints = new Map<string, { sessionId: string; turn: number; checkpointId: string; toolName: string; callId?: string; expiresAt: ReturnType<typeof setTimeout> }>();
   const preCommandCounts = new Map<string, number>();
   // Some host adapters omit callId. Keep identity-based deduplication for the
   // same execution object crossing both waterfalls, without collapsing two
   // distinct anonymous calls that happen to use the same tool name.
   const anonymousExecutionIds = new WeakMap<object, number>();
   let nextAnonymousExecutionId = 0;
+  const preCommandCallKey = (execution: ToolExecutionLike, sessionId: string, turn: number): { key: string; callId?: string } => {
+    const callId = execution.callId?.trim() || undefined;
+    const identity = callId || `anonymous:${executionIdentity(execution, anonymousExecutionIds, () => nextAnonymousExecutionId++)}`;
+    return { key: `${sessionId}\0${identity}\0${turn}`, callId };
+  };
 
   // Hermes-style pre-destructive boundaries. DSH's pre-execute/execute
   // waterfalls are the last reliable seams before a shell/PTC tool mutates the workspace. We
@@ -188,8 +241,7 @@ export function apply(ctx: Context, config: Config = {}): void {
           : undefined;
         const configured = service.config.preCommandTools ?? [];
         if (!session || !toolName || !configured.includes(toolName) || !turnCheckpoint) return;
-        const callIdentity = execution.callId?.trim() || `anonymous:${executionIdentity(execution, anonymousExecutionIds, () => nextAnonymousExecutionId++)}`;
-        const callKey = `${session.id}\0${callIdentity}\0${turn}`;
+        const { key: callKey, callId } = preCommandCallKey(execution, session.id, turn as number);
         if (preCommandCalls.has(callKey)) return;
         const turnKey = `${session.id}\0${turn}`;
         const maxPerTurn = service.config.preCommandMaxPerTurn;
@@ -210,9 +262,16 @@ export function apply(ctx: Context, config: Config = {}): void {
             status: 'success',
             tags: ['pre-command', `tool:${toolName}`],
           });
+          const expiresAt = setTimeout(() => {
+            const pending = preCommandCheckpoints.get(callKey);
+            if (pending?.checkpointId === boundary.id) preCommandCheckpoints.delete(callKey);
+          }, 5 * 60 * 1000);
+          expiresAt.unref?.();
+          preCommandCheckpoints.set(callKey, { sessionId: session.id, turn: turn as number, checkpointId: boundary.id, toolName, ...(callId ? { callId } : {}), expiresAt });
           ctx.logger.info(`[time-machine] captured pre-command checkpoint ${boundary.id} before ${toolName}`);
         } catch (error) {
           preCommandCalls.delete(callKey);
+          preCommandCheckpoints.delete(callKey);
           const nextCount = (preCommandCounts.get(turnKey) ?? 1) - 1;
           if (nextCount > 0) preCommandCounts.set(turnKey, nextCount); else preCommandCounts.delete(turnKey);
           ctx.logger.warn(`[time-machine] pre-command checkpoint skipped for ${toolName}: ${errorMessage(error)}`);
@@ -228,6 +287,38 @@ export function apply(ctx: Context, config: Config = {}): void {
       }, { prepend: true });
     };
     ctx.on('agent/created', ({ agent }) => { installAgentToolBoundary?.(agent); return undefined; });
+  }
+
+  if (service.config.autoPreCommandSnapshot) {
+    ctx.on('tools/result', (execution, result) => {
+      const session = execution.agent?.session;
+      if (!session) return;
+      const turn = currentSessionTurn(session);
+      const { key, callId } = Number.isSafeInteger(turn)
+        ? preCommandCallKey(execution, session.id, turn as number)
+        : { key: '', callId: execution.callId?.trim() || undefined };
+      let boundaryKey = key;
+      let boundary = key ? preCommandCheckpoints.get(key) : undefined;
+      if (!boundary) {
+        for (const [candidateKey, candidate] of preCommandCheckpoints) {
+          if (candidate.sessionId !== session.id) continue;
+          if (callId && candidate.callId === callId) { boundaryKey = candidateKey; boundary = candidate; break; }
+          if (!callId && candidateKey.includes(`\0anonymous:${executionIdentity(execution, anonymousExecutionIds, () => nextAnonymousExecutionId++)}\0`)) { boundaryKey = candidateKey; boundary = candidate; break; }
+        }
+      }
+      if (!boundary) return;
+      clearTimeout(boundary.expiresAt);
+      preCommandCheckpoints.delete(boundaryKey);
+      void service.inspectCheckpointDelta(boundary.sessionId, boundary.checkpointId)
+        .then(changedFiles => service.recordToolMutation(boundary.sessionId, boundary.checkpointId, {
+          toolName: boundary.toolName,
+          callId: boundary.callId,
+          status: result?.isError === true ? 'error' : 'success',
+          changedFiles,
+          ...(boundedToolError(result) ? { error: boundedToolError(result) } : {}),
+        }))
+        .catch((error: unknown) => ctx.logger.warn(`[time-machine] could not record tool mutation for ${boundary.toolName}: ${errorMessage(error)}`));
+    });
   }
 
   // These are global lifecycle observations. Register them on the plugin root
@@ -280,6 +371,8 @@ export function apply(ctx: Context, config: Config = {}): void {
     const checkpointId = checkpoints.get(key);
     if (!checkpointId) return;
     checkpoints.delete(key);
+    const baseline = checkpointAssistantBaselines.get(key) ?? new Set<string>();
+    checkpointAssistantBaselines.delete(key);
     const reason = asRecord(event.data.reason);
     const kind = typeof reason?.kind === 'string' ? reason.kind : 'error';
     const failure = asRecord(reason?.error);
@@ -290,12 +383,15 @@ export function apply(ctx: Context, config: Config = {}): void {
       if (callKey.startsWith(`${session.id}\0`) && callKey.endsWith(`\0${turn as number}`)) preCommandCalls.delete(callKey);
     }
     preCommandCounts.delete(`${session.id}\0${turn as number}`);
+    const assistantMessageIds = assistantMessageIdsForTurn(getMessages(session), baseline);
     void ledgerWrites.then(() => service.finalizeTurnCheckpoint({
       sessionId: session.id,
       checkpointId,
       status: kind === 'completed' ? 'success' : kind === 'aborted' || kind === 'interrupted' ? 'aborted' : 'failed',
       errorMessage: typeof failure?.message === 'string' ? failure.message : kind === 'completed' ? undefined : `Turn ended: ${kind}`,
       failedTools: failedTools.length > 0 ? failedTools : undefined,
+      assistantMessageId: assistantMessageIds.at(-1),
+      assistantMessageIds,
     })).catch((error: unknown) => {
       ctx.logger.error(`[time-machine] could not finalize ${checkpointId}: ${errorMessage(error)}`);
     });
@@ -307,7 +403,11 @@ export function apply(ctx: Context, config: Config = {}): void {
       installAgentToolBoundary?.(agent);
       const session = agent.session;
       const cwd = session.header.cwd ? path.resolve(session.header.cwd) : workDir;
-      if (cwd !== service.workDir) {
+      const [canonicalCwd, canonicalRoot] = await Promise.all([
+        fs.realpath(cwd).catch(() => cwd),
+        canonicalWorkDir,
+      ]);
+      if (canonicalCwd !== canonicalRoot) {
         scope.logger.warn(`[time-machine] skipped session ${session.id}: cwd ${cwd} differs from configured workspace ${service.workDir}`);
         return next();
       }
@@ -325,14 +425,19 @@ export function apply(ctx: Context, config: Config = {}): void {
           turnIndex: turn,
           prompt: `DSH turn ${turn} (pre-execution boundary)`,
           summary: `Workspace before DSH turn ${turn}`,
-          sessionState: {
-            sessionId: session.id,
-            messages: getMessages(session),
-            ...(start.seq > 0 ? { boundarySeq: start.seq - 1 } : {}),
-          },
-          status: 'running',
+            sessionState: {
+              sessionId: session.id,
+              messages: getMessages(session),
+              ...(start.seq > 0 ? { boundarySeq: start.seq - 1 } : {}),
+            },
+            userMessageId: latestUserMessageId(getMessages(session)),
+            status: 'running',
         });
         checkpoints.set(checkpointKey(session.id, turn), checkpoint.id);
+        checkpointAssistantBaselines.set(
+          checkpointKey(session.id, turn),
+          new Set(allAssistantMessageIds(getMessages(session))),
+        );
       } catch (error) {
         scope.logger.error(`[time-machine] checkpoint for turn ${turn} failed: ${errorMessage(error)}`);
         throw error;
@@ -350,11 +455,28 @@ function isNativeWriteTool(name: string): boolean {
 }
 
 function workspaceRelativePath(workDir: string, displayPath: string): string | undefined {
-  const absolute = path.resolve(workDir, displayPath);
-  const root = path.resolve(workDir);
+  const absolute = canonicalPathForComparison(path.resolve(workDir, displayPath));
+  const root = canonicalPathForComparison(path.resolve(workDir));
   const relative = path.relative(root, absolute).replace(/\\/g, '/');
   if (!relative || relative === '..' || relative.startsWith('../') || path.isAbsolute(relative)) return undefined;
   return relative;
+}
+
+/** Resolve existing parents so macOS mount aliases also work for observed paths that are absent. */
+function canonicalPathForComparison(candidate: string): string {
+  let cursor = candidate;
+  const suffix: string[] = [];
+  while (true) {
+    try {
+      const resolved = fsSync.realpathSync.native(cursor);
+      return path.join(resolved, ...suffix.reverse());
+    } catch {
+      const parent = path.dirname(cursor);
+      if (parent === cursor) return candidate;
+      suffix.push(path.basename(cursor));
+      cursor = parent;
+    }
+  }
 }
 
 function executionIdentity(
@@ -427,6 +549,28 @@ function getEvents(session: SessionLike): readonly SessionEventLike[] {
 function getMessages(session: SessionLike): SessionMessage[] {
   if (typeof session.deriveMessages !== 'function') return [];
   return session.deriveMessages().map(message => message as SessionMessage);
+}
+
+function assistantMessageIdsForTurn(messages: readonly SessionMessage[], baseline: ReadonlySet<string>): string[] {
+  const ids: string[] = [];
+  for (const message of messages) {
+    const candidate = message as SessionMessage & { id?: unknown };
+    if (candidate.role !== 'assistant' || typeof candidate.id !== 'string' || !candidate.id.trim() || baseline.has(candidate.id)) continue;
+    ids.push(candidate.id);
+  }
+  return [...new Set(ids)];
+}
+
+function latestUserMessageId(messages: readonly SessionMessage[]): string | undefined {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index] as SessionMessage & { id?: unknown };
+    if (message.role === 'user' && typeof message.id === 'string' && message.id.trim()) return message.id;
+  }
+  return undefined;
+}
+
+function allAssistantMessageIds(messages: readonly SessionMessage[]): string[] {
+  return assistantMessageIdsForTurn(messages, new Set<string>());
 }
 
 function findLastEvent(

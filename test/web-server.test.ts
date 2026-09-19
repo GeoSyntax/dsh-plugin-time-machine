@@ -53,6 +53,7 @@ describe('TimeMachineWebServer', () => {
     expect(capabilitiesRes.status).toBe(200);
     const capabilities = (await capabilitiesRes.json()).capabilities;
     expect(capabilities.version).toBe(1);
+    expect(capabilities.dagStorageFormatVersion).toBe(1);
     expect(capabilities.fallback).toBe(true);
     expect(capabilities.mergeRestore).toBe(false);
     expect(capabilities.selectiveRestore).toBe(true);
@@ -61,11 +62,17 @@ describe('TimeMachineWebServer', () => {
     expect(capabilities.externalEffectLedger).toBe(true);
     expect(capabilities.unattributedMutationInventory).toBe(true);
     expect(capabilities.externalEffectAdapters).toEqual([]);
+    expect(capabilities.messageAnchors).toEqual(['assistant', 'user']);
     expect(capabilities.preCommandTools).toEqual(expect.arrayContaining(['write', 'edit', 'str_replace_editor', 'bash']));
     expect(capabilities.workspaceIsolation).toBe('shared-lock');
+    expect(capabilities.workspaceRouting).toBe('single-root');
+    expect(capabilities.workspaceRouteInspection).toBe(true);
+    expect(capabilities.rewindSessionMode).toBe('fork');
     expect(capabilities.incrementalCapture).toBe(false);
     expect(capabilities.handEditPolicy).toBe('reject-drift');
     expect(capabilities.shadowStoreEncryption).toBe(false);
+    expect(capabilities.dagStateEncryption).toBe(false);
+    expect(capabilities.dagStateKeyRotation).toBe(false);
     expect(capabilities.policies).toMatchObject({
       restoreMode: 'safe',
       maxSnapshots: 0,
@@ -89,10 +96,13 @@ describe('TimeMachineWebServer', () => {
     expect(htmlText).toContain('DSH Time Machine');
     expect(htmlText).toContain('Coordinated Session Fork');
     expect(htmlText).toContain('session-selector');
+    expect(htmlText).toContain('btn-undo-latest');
 
     const clientRes = await fetch(`http://localhost:${testPort}/app.js`);
     expect(clientRes.status).toBe(200);
-    expect(await clientRes.text()).toContain('Agent Write Ledger');
+    const clientText = await clientRes.text();
+    expect(clientText).toContain('Agent Write Ledger');
+    expect(clientText).toContain('/api/undo');
 
     const blocked = await fetch(`http://localhost:${testPort}/api/status`, {
       headers: { Origin: 'https://attacker.example' },
@@ -102,6 +112,19 @@ describe('TimeMachineWebServer', () => {
       headers: { 'sec-fetch-site': 'cross-site' },
     });
     expect(fetchMetadataBlocked.status).toBe(403);
+  });
+
+  it('advertises an optional host-provided in-place rewind contract', async () => {
+    await server.stop();
+    server = new TimeMachineWebServer(service, testPort, '127.0.0.1', {
+      rewindSessionMode: () => 'in-place',
+      workspaceIsolation: () => 'isolated-worktree',
+    });
+    await server.start();
+    const response = await fetch(`http://localhost:${testPort}/api/capabilities`);
+    expect(response.status).toBe(200);
+    expect((await response.json()).capabilities.rewindSessionMode).toBe('in-place');
+    expect((await fetch(`http://localhost:${testPort}/api/capabilities`).then(value => value.json())).capabilities.workspaceIsolation).toBe('isolated-worktree');
   });
 
   it('discovers and switches between real persisted sessions without a default ghost', async () => {
@@ -124,6 +147,40 @@ describe('TimeMachineWebServer', () => {
     const unknownStorage = await fetch(`http://localhost:${testPort}/api/storage?sessionId=does-not-exist`);
     expect(unknownStorage.status).toBe(404);
     expect((await unknownStorage.json()).code).toBe('SESSION_NOT_FOUND');
+  });
+
+  it('exposes a validated canonical workspace route and rejects unsafe host routes', async () => {
+    const sessionId = 'route-session';
+    await service.createTurnCheckpoint({ sessionId, turnIndex: 1, prompt: 'route', sessionState: { sessionId, messages: [] } });
+    const response = await fetch(`http://localhost:${testPort}/api/workspace-route?sessionId=${sessionId}`);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ sessionId, adapter: false, route: { isolation: 'shared-lock', workspaceId: 'configured-root' } });
+
+    await server.stop();
+    server = new TimeMachineWebServer(service, testPort, '127.0.0.1', {
+      workspaceRoute: async () => ({ workspaceId: 'isolated', cwd: 'relative/path', isolation: 'isolated-worktree' }),
+    });
+    await server.start();
+    const invalid = await fetch(`http://localhost:${testPort}/api/workspace-route?sessionId=${sessionId}`);
+    expect(invalid.status).toBe(400);
+    expect((await invalid.json()).code).toBe('BAD_REQUEST');
+  });
+
+  it('resolves assistant message actions to finalized checkpoints', async () => {
+    const sessionId = 'message-action-session';
+    const checkpoint = await service.createTurnCheckpoint({
+      sessionId, turnIndex: 1, prompt: 'message action', userMessageId: 'user-1', sessionState: { sessionId, messages: [] },
+    });
+    await service.finalizeTurnCheckpoint({ sessionId, checkpointId: checkpoint.id, status: 'success', assistantMessageId: 'assistant-2', assistantMessageIds: ['assistant-1', 'assistant-2'] });
+    const response = await fetch(`http://localhost:${testPort}/api/checkpoint-for-message?sessionId=${sessionId}&messageId=assistant-1`);
+    expect(response.status).toBe(200);
+    expect((await response.json()).checkpoint.id).toBe(checkpoint.id);
+    const userResponse = await fetch(`http://localhost:${testPort}/api/checkpoint-for-message?sessionId=${sessionId}&messageId=user-1`);
+    expect(userResponse.status).toBe(200);
+    expect((await userResponse.json()).checkpoint.id).toBe(checkpoint.id);
+    const missing = await fetch(`http://localhost:${testPort}/api/checkpoint-for-message?sessionId=${sessionId}&messageId=missing`);
+    expect(missing.status).toBe(404);
+    expect((await missing.json()).code).toBe('CHECKPOINT_NOT_FOUND');
   });
 
   it('filters plugin sessions through the host session authority when available', async () => {
@@ -205,6 +262,32 @@ describe('TimeMachineWebServer', () => {
     expect(calls).toBe(1);
   });
 
+  it('exposes unresolved effects in preview and blocks strict workspace restore', async () => {
+    const sessionId = 'web-strict-effects';
+    const file = path.join(tmpDir, 'strict-effects.txt');
+    await fs.writeFile(file, 'base\n', 'utf8');
+    const base = await service.createTurnCheckpoint({ sessionId, turnIndex: 1, prompt: 'base', sessionState: { sessionId, messages: [] } });
+    await fs.writeFile(file, 'changed\n', 'utf8');
+    const current = await service.createTurnCheckpoint({ sessionId, turnIndex: 2, prompt: 'remote mutation', sessionState: { sessionId, messages: [] } });
+    await service.recordExternalEffect(sessionId, current.id, {
+      adapter: 'remote', operation: 'create-resource', reversible: true,
+      failureSemantics: 'manual verification', status: 'unresolved',
+    });
+    const preview = await fetch(`http://localhost:${testPort}/api/preview?sessionId=${sessionId}&checkpoint=${encodeURIComponent(base.id)}`);
+    expect(preview.status).toBe(200);
+    const previewBody = await preview.json();
+    expect(previewBody.preview.requiresExternalEffectsReview).toBe(true);
+    expect(previewBody.preview.unresolvedExternalEffectIds).toHaveLength(1);
+
+    const response = await fetch(`http://localhost:${testPort}/api/restore-workspace`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId, checkpointId: base.id, requireExternalEffectsResolved: true }),
+    });
+    expect(response.status).toBe(409);
+    expect((await response.json()).code).toBe('EXTERNAL_EFFECTS_UNRESOLVED');
+    expect(await fs.readFile(file, 'utf8')).toBe('changed\n');
+  });
+
   it('records external effects through the Web API without invoking an adapter', async () => {
     const sessionId = 'web-record-effect';
     const checkpoint = await service.createTurnCheckpoint({
@@ -223,6 +306,35 @@ describe('TimeMachineWebServer', () => {
     const body = await response.json();
     expect(body.checkpoint.externalEffects).toEqual([expect.objectContaining({ adapter: 'record-only', status: 'unresolved' })]);
     expect(called).toBe(false);
+  });
+
+  it('lists external effects through a read-only Web API', async () => {
+    const sessionId = 'web-list-effects';
+    const checkpoint = await service.createTurnCheckpoint({
+      sessionId, turnIndex: 1, prompt: 'list remote effect', sessionState: { sessionId, messages: [] },
+    });
+    await service.recordExternalEffect(sessionId, checkpoint.id, {
+      adapter: 'cloud', operation: 'create-resource', reversible: true,
+      failureSemantics: 'manual verification', status: 'unresolved',
+    });
+    const response = await fetch(`http://localhost:${testPort}/api/external-effects?sessionId=${sessionId}&checkpoint=${checkpoint.id}&unresolved=true`);
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.unresolvedOnly).toBe(true);
+    expect(body.effects).toEqual([expect.objectContaining({ adapter: 'cloud', operation: 'create-resource', status: 'unresolved' })]);
+  });
+
+  it('exposes a read-only reflection advisory endpoint', async () => {
+    const sessionId = 'web-reflection';
+    const checkpoint = await service.createTurnCheckpoint({
+      sessionId, turnIndex: 1, prompt: 'failed web command', sessionState: { sessionId, messages: [] },
+      status: 'success', failedTools: [{ toolName: 'shell', input: {}, error: 'exit code 7' }],
+    });
+    const response = await fetch(`http://localhost:${testPort}/api/reflection?sessionId=${sessionId}&checkpoint=${checkpoint.id}`);
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.reflection.hasPastFailures).toBe(true);
+    expect(body.reflection.suggestedPromptPrefix).toContain('Failed tool [shell]');
   });
 
   it('rejects malformed external effect declarations before touching the DAG', async () => {
@@ -346,6 +458,32 @@ describe('TimeMachineWebServer', () => {
     expect(await fs.readFile(right, 'utf8')).toBe('live-right\n');
   });
 
+  it('supports relative turn undo through the Web API without counting internal checkpoints', async () => {
+    const sessionId = 'web-undo-session';
+    const checkpoints = [] as Array<{ id: string }>;
+    for (let turnIndex = 1; turnIndex <= 3; turnIndex += 1) {
+      const checkpoint = await service.createTurnCheckpoint({ sessionId, turnIndex, prompt: `turn ${turnIndex}`, sessionState: { sessionId, messages: [] } });
+      checkpoints.push(checkpoint);
+      await service.finalizeTurnCheckpoint({ sessionId, checkpointId: checkpoint.id, status: 'success' });
+    }
+    await service.createTurnCheckpoint({ sessionId, turnIndex: 3, prompt: '[pre-command]', sessionState: { sessionId, messages: [] }, tags: ['pre-command'] });
+
+    await server.stop();
+    server = new TimeMachineWebServer(service, testPort, '127.0.0.1', {
+      restartConversation: async (_source, checkpoint) => ({ sessionId: `undo-${checkpoint.id}` }),
+    });
+    await server.start();
+    const response = await fetch(`http://localhost:${testPort}/api/undo`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId, count: 2 }),
+    });
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.targetCheckpointId).toBe(checkpoints[0].id);
+    expect(body.conversation.sessionId).toBe(`undo-${checkpoints[0].id}`);
+  });
+
   it('restores a full workspace without requiring conversation restart', async () => {
     const sessionId = 'restore-workspace-web';
     const file = path.join(tmpDir, 'restore-workspace.txt');
@@ -374,6 +512,7 @@ describe('TimeMachineWebServer', () => {
     expect(capabilities.mergeRestore).toBe(true);
     expect(capabilities.unattributedMutationInventory).toBe(true);
     expect(capabilities.workspaceIsolation).toBe('shared-lock');
+    expect(capabilities.rewindSessionMode).toBe('fork');
     expect(capabilities.incrementalCapture).toBe(true);
     expect(capabilities.handEditPolicy).toBe('reject-drift');
     expect(capabilities.shadowStoreEncryption).toBe(false);
@@ -450,6 +589,25 @@ describe('TimeMachineWebServer', () => {
     });
     expect(response.status).toBe(200);
     expect((await response.json()).result.removedCheckpointIds).toContain(first.id);
+  });
+
+  it('supports a non-mutating prune dry-run over the Web API', async () => {
+    const sessionId = 'storage-dry-web';
+    const file = path.join(tmpDir, 'storage-dry.txt');
+    await fs.writeFile(file, 'one\n', 'utf8');
+    const first = await service.createTurnCheckpoint({ sessionId, turnIndex: 1, prompt: 'one', sessionState: { sessionId, messages: [] } });
+    await fs.writeFile(file, 'two\n', 'utf8');
+    const current = await service.createTurnCheckpoint({ sessionId, turnIndex: 2, prompt: 'two', sessionState: { sessionId, messages: [] } });
+    const response = await fetch(`http://localhost:${testPort}/api/prune`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId, keepLatest: 0, compactHistory: true, dryRun: true }),
+    });
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.result.dryRun).toBe(true);
+    expect(body.result.wouldRemoveCheckpointIds).toContain(first.id);
+    expect(body.result.wouldRemoveCheckpointIds).not.toContain(current.id);
+    expect((await service.getDAGManager(sessionId)).getNode(first.id)).not.toBeNull();
   });
 
   it('should compensate a physical rewind when conversation restart fails', async () => {

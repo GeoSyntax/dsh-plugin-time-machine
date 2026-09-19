@@ -17,6 +17,324 @@ var init_esm_shims = __esm({
   }
 });
 
+// src/core/encrypted-shadow-store.ts
+import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "crypto";
+import fs from "fs/promises";
+import path2 from "path";
+function safeRelative(value) {
+  const normalized = value.replace(/\\/g, "/");
+  if (!normalized || normalized === "." || normalized.startsWith("/") || normalized.split("/").some((part) => !part || part === "..")) {
+    throw new ShadowArchiveCorruptError(`Unsafe encrypted shadow path '${value}'.`);
+  }
+  return normalized;
+}
+async function exists(file) {
+  return fs.access(file).then(() => true, () => false);
+}
+async function writeDurable(file, content) {
+  const handle = await fs.open(file, "w");
+  try {
+    await handle.writeFile(content, "utf8");
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+async function listFiles(root) {
+  const output = [];
+  async function visit(directory) {
+    for (const entry of await fs.readdir(directory, { withFileTypes: true }).catch(() => [])) {
+      const absolute = path2.join(directory, entry.name);
+      if (entry.isDirectory()) await visit(absolute);
+      else if (entry.isFile()) output.push(absolute);
+      else if (entry.isSymbolicLink()) throw new ShadowArchiveCorruptError(`Shadow object runtime contains unsupported symlink '${absolute}'.`);
+    }
+  }
+  await visit(root);
+  return output.sort();
+}
+var ShadowStoreKeyError, ShadowArchiveCorruptError, EncryptedShadowStore;
+var init_encrypted_shadow_store = __esm({
+  "src/core/encrypted-shadow-store.ts"() {
+    "use strict";
+    init_esm_shims();
+    ShadowStoreKeyError = class extends Error {
+      code = "SHADOW_KEY_INVALID";
+      constructor(message) {
+        super(message);
+        this.name = "ShadowStoreKeyError";
+      }
+    };
+    ShadowArchiveCorruptError = class extends Error {
+      code = "SHADOW_ARCHIVE_CORRUPT";
+      constructor(message) {
+        super(message);
+        this.name = "ShadowArchiveCorruptError";
+      }
+    };
+    EncryptedShadowStore = class {
+      constructor(runtimeDir, archiveDir, key, previousKey) {
+        this.runtimeDir = runtimeDir;
+        this.archiveDir = archiveDir;
+        this.currentKey = createHash("sha256").update(key).digest();
+        this.previousKey = previousKey ? createHash("sha256").update(previousKey).digest() : void 0;
+      }
+      runtimeDir;
+      archiveDir;
+      currentKey;
+      previousKey;
+      queue = Promise.resolve();
+      runtimeDepth = 0;
+      usedPreviousKey = false;
+      async withRuntime(operation) {
+        if (this.runtimeDepth > 0) {
+          this.runtimeDepth += 1;
+          try {
+            return await operation();
+          } finally {
+            this.runtimeDepth -= 1;
+          }
+        }
+        let release;
+        const prior = this.queue;
+        this.queue = new Promise((resolve) => {
+          release = resolve;
+        });
+        await prior;
+        this.runtimeDepth = 1;
+        let materialized = false;
+        const legacyPlaintext = !await exists(path2.join(this.archiveDir, "manifest.v1.json")) && (await listFiles(this.runtimeDir)).length > 0;
+        try {
+          await this.recoverJournal();
+          await this.materialize();
+          materialized = true;
+          return await operation();
+        } finally {
+          try {
+            if (materialized) await this.persist();
+          } finally {
+            this.runtimeDepth = 0;
+            if (materialized || !legacyPlaintext) {
+              await fs.rm(this.runtimeDir, { recursive: true, force: true });
+            }
+            release();
+          }
+        }
+      }
+      /** Explicitly migrate an existing plaintext runtime directory. */
+      async migratePlaintext() {
+        const files = await listFiles(this.runtimeDir);
+        if (files.length === 0) return { migrated: false, entries: 0, bytes: 0 };
+        if (await exists(path2.join(this.archiveDir, "manifest.v1.json"))) {
+          throw new ShadowStoreKeyError("Encrypted shadow archive already exists; refusing to mix plaintext objects.");
+        }
+        await fs.mkdir(this.archiveDir, { recursive: true });
+        await this.persist(files);
+        const manifest = await this.readManifest();
+        await fs.rm(this.runtimeDir, { recursive: true, force: true });
+        return { migrated: true, entries: manifest.entries.length, bytes: manifest.entries.reduce((sum, item) => sum + item.bytes, 0) };
+      }
+      /** Report whether encrypted storage is ready or an explicit migration is required. */
+      async status() {
+        const manifest = await exists(path2.join(this.archiveDir, "manifest.v1.json"));
+        const plaintext = await listFiles(this.runtimeDir);
+        return {
+          ready: manifest || plaintext.length === 0,
+          migrationRequired: !manifest && plaintext.length > 0
+        };
+      }
+      async materialize() {
+        const manifest = await this.readManifestOptional();
+        const plaintext = await listFiles(this.runtimeDir);
+        if (!manifest) {
+          if (plaintext.length > 0) {
+            throw new ShadowStoreKeyError("Plaintext shadow objects exist; run explicit shadow migration before enabling encryption.");
+          }
+          await fs.mkdir(this.runtimeDir, { recursive: true });
+          return;
+        }
+        await fs.rm(this.runtimeDir, { recursive: true, force: true });
+        await fs.mkdir(this.runtimeDir, { recursive: true });
+        for (const entry of manifest.entries) {
+          const relative = safeRelative(entry.path);
+          const encrypted = await fs.readFile(path2.join(this.archiveDir, entry.payload)).catch(() => {
+            throw new ShadowArchiveCorruptError(`Encrypted shadow payload '${entry.path}' is missing.`);
+          });
+          if (encrypted.length < 16) throw new ShadowArchiveCorruptError(`Encrypted shadow payload '${entry.path}' is truncated.`);
+          const plaintextBytes = this.decrypt(encrypted, entry.nonce, entry.path);
+          const digest = createHash("sha256").update(plaintextBytes).digest("hex");
+          if (digest !== entry.sha256 || plaintextBytes.length !== entry.bytes) {
+            throw new ShadowArchiveCorruptError(`Encrypted shadow payload '${entry.path}' failed integrity validation.`);
+          }
+          const target = path2.join(this.runtimeDir, ...relative.split("/"));
+          await fs.mkdir(path2.dirname(target), { recursive: true });
+          await fs.writeFile(target, plaintextBytes);
+        }
+      }
+      async persist(existingFiles) {
+        const files = existingFiles ?? await listFiles(this.runtimeDir);
+        const staging = path2.join(this.archiveDir, `.staging-${randomUUID()}`);
+        const payloadDir = path2.join(staging, "payload");
+        await fs.mkdir(payloadDir, { recursive: true });
+        const entries = [];
+        try {
+          for (const file of files) {
+            const relative = safeRelative(path2.relative(this.runtimeDir, file).replace(/\\/g, "/"));
+            const plaintext = await fs.readFile(file);
+            const nonce = randomBytes(12);
+            const cipher = createCipheriv("aes-256-gcm", this.currentKey, nonce);
+            cipher.setAAD(Buffer.from(`dsh-tm-shadow:v1:${relative}`, "utf8"));
+            const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final(), cipher.getAuthTag()]);
+            const payload = `payload/${randomUUID()}.bin`;
+            await fs.mkdir(path2.join(payloadDir, "payload"), { recursive: true });
+            await fs.writeFile(path2.join(staging, payload), ciphertext);
+            entries.push({
+              path: relative,
+              payload,
+              nonce: nonce.toString("base64url"),
+              sha256: createHash("sha256").update(plaintext).digest("hex"),
+              bytes: plaintext.length
+            });
+          }
+          const manifest = { version: 1, entries };
+          await fs.mkdir(this.archiveDir, { recursive: true });
+          await this.writeJournal({ version: 1, staging: path2.relative(this.archiveDir, staging).replace(/\\/g, "/"), phase: "staging" });
+          for (const entry of entries) {
+            const target = path2.join(this.archiveDir, entry.payload);
+            await fs.mkdir(path2.dirname(target), { recursive: true });
+            await fs.rename(path2.join(staging, entry.payload), target);
+          }
+          const temporaryManifest = path2.join(this.archiveDir, `.manifest-${randomUUID()}.tmp`);
+          await writeDurable(temporaryManifest, `${JSON.stringify(manifest, null, 2)}
+`);
+          await fs.rename(temporaryManifest, path2.join(this.archiveDir, "manifest.v1.json"));
+          await this.writeJournal({ version: 1, staging: path2.relative(this.archiveDir, staging).replace(/\\/g, "/"), phase: "published" });
+          const referenced = new Set(entries.map((entry) => entry.payload.replace(/\\/g, "/")));
+          for (const payloadFile of await listFiles(path2.join(this.archiveDir, "payload"))) {
+            const relative = path2.relative(this.archiveDir, payloadFile).replace(/\\/g, "/");
+            if (!referenced.has(relative)) await fs.rm(payloadFile, { force: true });
+          }
+          await fs.rm(path2.join(this.archiveDir, "journal.json"), { force: true });
+        } finally {
+          await fs.rm(staging, { recursive: true, force: true }).catch(() => void 0);
+        }
+        this.usedPreviousKey = false;
+      }
+      async readManifest() {
+        const manifest = await this.readManifestOptional();
+        if (!manifest) throw new ShadowArchiveCorruptError("Encrypted shadow archive manifest is missing.");
+        return manifest;
+      }
+      async readManifestOptional() {
+        const raw = await fs.readFile(path2.join(this.archiveDir, "manifest.v1.json"), "utf8").catch((error) => {
+          if (error?.code === "ENOENT") return void 0;
+          throw new ShadowArchiveCorruptError(`Encrypted shadow archive cannot be read: ${error?.message ?? "unknown error"}`);
+        });
+        if (!raw) return void 0;
+        try {
+          const value = JSON.parse(raw);
+          if (value.version !== 1 || !Array.isArray(value.entries)) throw new Error("unsupported manifest");
+          for (const entry of value.entries) {
+            safeRelative(entry.path);
+            if (!entry.payload || !entry.nonce || !/^[0-9a-f]{64}$/.test(entry.sha256) || !Number.isInteger(entry.bytes) || entry.bytes < 0) throw new Error("invalid entry");
+          }
+          return value;
+        } catch (error) {
+          throw new ShadowArchiveCorruptError(`Encrypted shadow archive manifest is invalid: ${error?.message ?? "unknown error"}`);
+        }
+      }
+      async writeJournal(journal) {
+        await fs.mkdir(this.archiveDir, { recursive: true });
+        const temporary = path2.join(this.archiveDir, `.journal-${randomUUID()}.tmp`);
+        await writeDurable(temporary, `${JSON.stringify(journal, null, 2)}
+`);
+        await fs.rename(temporary, path2.join(this.archiveDir, "journal.json"));
+      }
+      async recoverJournal() {
+        const journalPath = path2.join(this.archiveDir, "journal.json");
+        const raw = await fs.readFile(journalPath, "utf8").catch((error) => {
+          if (error?.code === "ENOENT") return void 0;
+          throw new ShadowArchiveCorruptError(`Encrypted shadow journal cannot be read: ${error?.message ?? "unknown error"}`);
+        });
+        if (!raw) return;
+        let journal;
+        try {
+          journal = JSON.parse(raw);
+          if (journal.version !== 1 || !journal.staging || !["staging", "published"].includes(journal.phase)) throw new Error("unsupported journal");
+          safeRelative(journal.staging);
+        } catch (error) {
+          throw new ShadowArchiveCorruptError(`Encrypted shadow journal is invalid: ${error?.message ?? "unknown error"}`);
+        }
+        await fs.rm(path2.join(this.archiveDir, journal.staging), { recursive: true, force: true });
+        await fs.rm(journalPath, { force: true });
+        await this.removeUnreferencedPayloads();
+      }
+      async removeUnreferencedPayloads() {
+        const manifest = await this.readManifestOptional();
+        const referenced = new Set((manifest?.entries ?? []).map((entry) => entry.payload.replace(/\\/g, "/")));
+        for (const payloadFile of await listFiles(path2.join(this.archiveDir, "payload"))) {
+          const relative = path2.relative(this.archiveDir, payloadFile).replace(/\\/g, "/");
+          if (!referenced.has(relative)) await fs.rm(payloadFile, { force: true });
+        }
+      }
+      decrypt(encrypted, nonceText, relative) {
+        const keys = this.previousKey ? [this.currentKey, this.previousKey] : [this.currentKey];
+        for (let index = 0; index < keys.length; index += 1) {
+          try {
+            const decipher = createDecipheriv("aes-256-gcm", keys[index], Buffer.from(nonceText, "base64url"));
+            decipher.setAAD(Buffer.from(`dsh-tm-shadow:v1:${relative}`, "utf8"));
+            decipher.setAuthTag(encrypted.subarray(encrypted.length - 16));
+            const result = Buffer.concat([decipher.update(encrypted.subarray(0, encrypted.length - 16)), decipher.final()]);
+            if (index === 1) this.usedPreviousKey = true;
+            return result;
+          } catch {
+          }
+        }
+        throw new ShadowStoreKeyError(`Encrypted shadow payload '${relative}' failed authentication.`);
+      }
+    };
+  }
+});
+
+// src/core/path-safety.ts
+import fs2 from "fs/promises";
+import path3 from "path";
+async function assertNoSymlinkAncestors(root, relativePaths) {
+  const unsafe = /* @__PURE__ */ new Set();
+  for (const relative of relativePaths) {
+    const normalized = relative.replaceAll("\\", "/").replace(/^\/+/, "");
+    const parts = normalized.split("/").filter(Boolean);
+    let cursor = path3.resolve(root);
+    const traversed = [];
+    for (const part of parts.slice(0, -1)) {
+      traversed.push(part);
+      cursor = path3.join(cursor, part);
+      const stat = await fs2.lstat(cursor).catch(() => void 0);
+      if (stat?.isSymbolicLink() || stat && !stat.isDirectory()) {
+        unsafe.add(traversed.join("/"));
+        break;
+      }
+    }
+  }
+  if (unsafe.size) throw new WorkspacePathSafetyError([...unsafe].sort());
+}
+var WorkspacePathSafetyError;
+var init_path_safety = __esm({
+  "src/core/path-safety.ts"() {
+    "use strict";
+    init_esm_shims();
+    WorkspacePathSafetyError = class extends Error {
+      constructor(paths) {
+        super(`Workspace restore paths traverse symbolic-link or non-directory ancestors: ${paths.join(", ")}`);
+        this.paths = paths;
+        this.name = "WorkspacePathSafetyError";
+      }
+      paths;
+      code = "UNSUPPORTED_WORKSPACE_STATE";
+    };
+  }
+});
+
 // src/core/git-plumbing.ts
 var git_plumbing_exports = {};
 __export(git_plumbing_exports, {
@@ -26,28 +344,29 @@ __export(git_plumbing_exports, {
   SnapshotSizeError: () => SnapshotSizeError,
   UnsupportedWorkspaceStateError: () => UnsupportedWorkspaceStateError,
   WorkspaceDriftError: () => WorkspaceDriftError,
+  WorkspaceHardLinkError: () => WorkspaceHardLinkError,
   WorkspaceMergeConflictError: () => WorkspaceMergeConflictError,
   WorkspaceRestoreConflictError: () => WorkspaceRestoreConflictError
 });
 import { execFile, spawn } from "child_process";
-import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "crypto";
+import { createCipheriv as createCipheriv2, createDecipheriv as createDecipheriv2, createHash as createHash2, randomBytes as randomBytes2, randomUUID as randomUUID2 } from "crypto";
 import { promisify } from "util";
-import path2 from "path";
-import fs from "fs/promises";
+import path4 from "path";
+import fs3 from "fs/promises";
 import zlib from "zlib";
 async function sumFileSizes(files) {
   let total = 0;
-  for (const file of files) total += (await fs.stat(file).catch(() => ({ size: 0 }))).size;
+  for (const file of files) total += (await fs3.stat(file).catch(() => ({ size: 0 }))).size;
   return total;
 }
 async function directoryBytes(root) {
-  const rootStat = await fs.stat(root).catch(() => void 0);
+  const rootStat = await fs3.stat(root).catch(() => void 0);
   if (rootStat?.isFile()) return rootStat.size;
   let total = 0;
-  for (const entry of await fs.readdir(root, { withFileTypes: true }).catch(() => [])) {
-    const absolute = path2.join(root, entry.name);
+  for (const entry of await fs3.readdir(root, { withFileTypes: true }).catch(() => [])) {
+    const absolute = path4.join(root, entry.name);
     if (entry.isDirectory()) total += await directoryBytes(absolute);
-    else total += (await fs.stat(absolute).catch(() => ({ size: 0 }))).size;
+    else total += (await fs3.stat(absolute).catch(() => ({ size: 0 }))).size;
   }
   return total;
 }
@@ -63,11 +382,13 @@ function symmetricDifference(left, right) {
 function longestFirst(left, right) {
   return right.split("/").length - left.split("/").length || right.localeCompare(left);
 }
-var execFileAsync, WorkspaceDriftError, UnsupportedWorkspaceStateError, WorkspaceRestoreConflictError, WorkspaceMergeConflictError, QuarantineQuotaError, QuarantineKeyError, SnapshotSizeError, GitPlumbingEngine;
+var execFileAsync, WorkspaceDriftError, UnsupportedWorkspaceStateError, WorkspaceRestoreConflictError, WorkspaceHardLinkError, WorkspaceMergeConflictError, QuarantineQuotaError, QuarantineKeyError, SnapshotSizeError, GitPlumbingEngine;
 var init_git_plumbing = __esm({
   "src/core/git-plumbing.ts"() {
     "use strict";
     init_esm_shims();
+    init_encrypted_shadow_store();
+    init_path_safety();
     execFileAsync = promisify(execFile);
     WorkspaceDriftError = class extends Error {
       constructor(details) {
@@ -100,6 +421,15 @@ var init_git_plumbing = __esm({
       }
       paths;
       code = "RESTORE_CONFLICT";
+    };
+    WorkspaceHardLinkError = class extends Error {
+      constructor(paths) {
+        super(`Workspace contains hard-linked restore targets: ${paths.slice(0, 8).join(", ")}. Replace the links or restore selectively elsewhere, then retry.`);
+        this.paths = paths;
+        this.name = "WorkspaceHardLinkError";
+      }
+      paths;
+      code = "UNSUPPORTED_WORKSPACE_STATE";
     };
     WorkspaceMergeConflictError = class extends Error {
       constructor(paths) {
@@ -147,6 +477,7 @@ var init_git_plumbing = __esm({
       repoRootCached = null;
       gitDirCached = null;
       shadowObjectDir;
+      encryptedShadowStore;
       maxQuarantineBytes;
       maxSnapshotFileBytes;
       maxSnapshotBytes;
@@ -156,24 +487,47 @@ var init_git_plumbing = __esm({
       /** Last complete managed tree and the Git status signature that produced it. */
       workspaceTreeCache;
       constructor(options) {
-        this.workDir = path2.resolve(options.workDir);
+        this.workDir = path4.resolve(options.workDir);
         this.refPrefix = options.refPrefix || "refs/dsh-tm";
-        this.preservePaths = (options.preservePaths ?? []).map((item) => path2.resolve(this.workDir, item));
-        this.quarantineDir = options.quarantineDir ? path2.resolve(options.quarantineDir) : void 0;
-        this.shadowObjectDir = options.shadowObjectDir ? path2.resolve(options.shadowObjectDir) : void 0;
+        this.preservePaths = (options.preservePaths ?? []).map((item) => path4.resolve(this.workDir, item));
+        this.quarantineDir = options.quarantineDir ? path4.resolve(options.quarantineDir) : void 0;
+        this.shadowObjectDir = options.shadowObjectDir ? path4.resolve(options.shadowObjectDir) : void 0;
+        if (this.shadowObjectDir && options.shadowEncryptionKey) {
+          this.encryptedShadowStore = new EncryptedShadowStore(
+            this.shadowObjectDir,
+            path4.join(path4.dirname(path4.dirname(this.shadowObjectDir)), "git-shadow-encrypted"),
+            options.shadowEncryptionKey,
+            options.shadowEncryptionPreviousKey
+          );
+        }
         this.maxQuarantineBytes = Math.max(0, Math.floor(options.maxQuarantineBytes ?? 0));
         this.maxSnapshotFileBytes = Math.max(0, Math.floor(options.maxSnapshotFileBytes ?? 0));
         this.maxSnapshotBytes = Math.max(0, Math.floor(options.maxSnapshotBytes ?? 0));
         this.allowPartialSnapshots = options.allowPartialSnapshots === true;
-        this.quarantineKey = options.quarantineEncryptionKey ? createHash("sha256").update(options.quarantineEncryptionKey).digest() : void 0;
+        this.quarantineKey = options.quarantineEncryptionKey ? createHash2("sha256").update(options.quarantineEncryptionKey).digest() : void 0;
       }
       get usesShadowStore() {
         return Boolean(this.shadowObjectDir);
       }
+      get usesEncryptedShadowStore() {
+        return Boolean(this.encryptedShadowStore);
+      }
+      async migrateShadowStore() {
+        if (!this.encryptedShadowStore) throw new ShadowStoreKeyError("Encrypted shadow migration requires shadowStore and a configured key.");
+        return this.encryptedShadowStore.migratePlaintext();
+      }
+      async encryptedShadowStatus() {
+        if (!this.encryptedShadowStore) return { ready: false, migrationRequired: false };
+        return this.encryptedShadowStore.status();
+      }
       async isGitRepo() {
         if (this.isRepoCached !== null) return this.isRepoCached;
         try {
-          const { stdout } = await this.runGit(["rev-parse", "--is-inside-work-tree"]);
+          const { stdout } = await execFileAsync("git", ["rev-parse", "--is-inside-work-tree"], {
+            cwd: this.workDir,
+            env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_NOSYSTEM: "1" },
+            encoding: "utf8"
+          });
           this.isRepoCached = stdout.trim() === "true";
         } catch {
           this.isRepoCached = false;
@@ -183,31 +537,32 @@ var init_git_plumbing = __esm({
       async getRepoRoot() {
         if (this.repoRootCached) return this.repoRootCached;
         const { stdout } = await this.runGit(["rev-parse", "--show-toplevel"]);
-        this.repoRootCached = await fs.realpath(path2.resolve(stdout.trim())).catch(() => path2.resolve(stdout.trim()));
-        this.preservePaths = await Promise.all(this.preservePaths.map(async (absolute) => await fs.realpath(absolute).catch(() => absolute)));
+        this.repoRootCached = await fs3.realpath(path4.resolve(stdout.trim())).catch(() => path4.resolve(stdout.trim()));
+        this.preservePaths = await Promise.all(this.preservePaths.map(async (absolute) => await fs3.realpath(absolute).catch(() => absolute)));
         return this.repoRootCached;
       }
       async getGitDir() {
         if (this.gitDirCached) return this.gitDirCached;
         const { stdout } = await this.runGit(["rev-parse", "--absolute-git-dir"]);
-        this.gitDirCached = path2.resolve(stdout.trim());
+        this.gitDirCached = path4.resolve(stdout.trim());
         return this.gitDirCached;
       }
       async runGit(args, extraEnv = {}, cwd = this.workDir) {
-        await this.ensureShadowStore();
-        const env = this.gitEnv(extraEnv);
-        try {
-          return await execFileAsync("git", args, {
-            cwd,
-            env,
-            maxBuffer: 32 * 1024 * 1024,
-            encoding: "utf8"
-          });
-        } catch (err) {
-          const errorMsg = err.stderr || err.stdout || err.message;
-          throw new Error(`Git plumbing command failed: git ${args.join(" ")}
+        return this.withShadowRuntime(async () => {
+          const env = this.gitEnv(extraEnv);
+          try {
+            return await execFileAsync("git", args, {
+              cwd,
+              env,
+              maxBuffer: 32 * 1024 * 1024,
+              encoding: "utf8"
+            });
+          } catch (err) {
+            const errorMsg = err.stderr || err.stdout || err.message;
+            throw new Error(`Git plumbing command failed: git ${args.join(" ")}
 Reason: ${errorMsg}`);
-        }
+          }
+        });
       }
       async createSnapshot(params) {
         if (!await this.isGitRepo()) {
@@ -251,7 +606,7 @@ Reason: ${errorMsg}`);
             omittedPaths: treeResult.omittedPaths
           };
         } finally {
-          if (indexFile) await fs.rm(indexFile, { force: true }).catch(() => void 0);
+          if (indexFile) await fs3.rm(indexFile, { force: true }).catch(() => void 0);
         }
       }
       /** Compute the current managed tree without publishing a commit or ref. */
@@ -260,7 +615,7 @@ Reason: ${errorMsg}`);
         try {
           return { treeOid, ignoredPaths: await this.listIgnoredPaths() };
         } finally {
-          await fs.rm(indexFile, { force: true }).catch(() => void 0);
+          await fs3.rm(indexFile, { force: true }).catch(() => void 0);
         }
       }
       /** Read Git control-plane state without touching the user's index or refs. */
@@ -275,11 +630,11 @@ Reason: ${errorMsg}`);
           ["REVERT_HEAD", "revert"]
         ];
         for (const [file, operation] of operationFiles) {
-          if (await fs.access(path2.join(gitDir, file)).then(() => true).catch(() => false)) return { headOid, branch, operation };
+          if (await fs3.access(path4.join(gitDir, file)).then(() => true).catch(() => false)) return { headOid, branch, operation };
         }
         const rebaseDirs = [["rebase-merge", "rebase"], ["rebase-apply", "rebase"]];
         for (const [directory, operation] of rebaseDirs) {
-          if (await fs.access(path2.join(gitDir, directory)).then(() => true).catch(() => false)) return { headOid, branch, operation };
+          if (await fs3.access(path4.join(gitDir, directory)).then(() => true).catch(() => false)) return { headOid, branch, operation };
         }
         return { headOid, branch, operation: null };
       }
@@ -291,7 +646,7 @@ Reason: ${errorMsg}`);
         }
         const sparseConfig = await this.runGit(["config", "--bool", "--get", "core.sparseCheckout"]).then((result) => result.stdout.trim() === "true").catch(() => false);
         const gitDir = await this.getGitDir();
-        const sparseFile = await fs.access(path2.join(gitDir, "info", "sparse-checkout")).then(() => true).catch(() => false);
+        const sparseFile = await fs3.access(path4.join(gitDir, "info", "sparse-checkout")).then(() => true).catch(() => false);
         const { stdout } = await this.runGit(["ls-files", "--stage", "-z"]).catch(() => ({ stdout: "" }));
         const submodulePaths = stdout.split("\0").filter(Boolean).map((entry) => entry.match(/^160000\s+[0-9a-f]+\s+\d+\t(.+)$/)?.[1]).filter((item) => Boolean(item));
         return { sparseCheckout: sparseConfig || sparseFile, submodulePaths, inProgressOperation: control.operation };
@@ -312,7 +667,7 @@ Reason: ${errorMsg}`);
         const current = await this.inspectWorkspace();
         const preservePaths = [...new Set((options.preservePaths ?? []).map(normalizeGitPath).filter(Boolean))];
         if (mode === "safe" && options.expectedCurrentTreeOid && current.treeOid !== options.expectedCurrentTreeOid) {
-          const details = (await this.diffNameOnly(options.expectedCurrentTreeOid, current.treeOid)).filter((item) => !preservePaths.some((path9) => item === path9 || item.startsWith(`${path9}/`)));
+          const details = (await this.diffNameOnly(options.expectedCurrentTreeOid, current.treeOid)).filter((item) => !preservePaths.some((path13) => item === path13 || item.startsWith(`${path13}/`)));
           if (details.length) throw new WorkspaceDriftError(details);
         }
         if (mode === "safe" && options.expectedCurrentIgnoredPaths) {
@@ -326,6 +681,13 @@ Reason: ${errorMsg}`);
         const targetIgnored = new Set(options.targetIgnoredPaths ?? []);
         const ignoredToDelete = current.ignoredPaths.filter((item) => !targetIgnored.has(item));
         const targetFiles = new Set(await this.listTreeFileNames(restoreTree));
+        await assertNoSymlinkAncestors(this.workDir, [
+          ...targetFiles,
+          ...current.ignoredPaths,
+          ...options.omittedPaths ?? [],
+          ...preservePaths
+        ]);
+        await this.assertNoHardLinkTargets([...targetFiles]);
         const targetEntries = this.shadowObjectDir ? await this.listTreeEntries(restoreTree) : [];
         const collisions = current.ignoredPaths.filter((item) => targetFiles.has(item));
         if (collisions.length && !options.deleteNewIgnoredPaths) {
@@ -337,7 +699,7 @@ Reason: ${errorMsg}`);
             if (this.isPreservedRelative(relative)) continue;
             const absolute = await this.safeWorkspacePath(relative);
             if (options.ignoredBackupKey) await this.backupIgnoredPath(options.ignoredBackupKey, relative, absolute);
-            await fs.rm(absolute, { recursive: true, force: true });
+            await fs3.rm(absolute, { recursive: true, force: true });
             deletedIgnoredPaths.push(relative);
           }
         }
@@ -352,59 +714,59 @@ Reason: ${errorMsg}`);
             const currentFiles = await this.listTreeFileNames(current.treeOid);
             for (const entry of targetEntries) {
               const destination = await this.safeWorkspacePath(entry.path);
-              await fs.mkdir(path2.dirname(destination), { recursive: true });
-              await fs.rm(destination, { recursive: true, force: true });
+              await fs3.mkdir(path4.dirname(destination), { recursive: true });
+              await fs3.rm(destination, { recursive: true, force: true });
               const content = await this.readShadowBlob(entry.oid, root);
               if (entry.mode === "120000") {
-                await fs.symlink(content.toString("utf8"), destination);
+                await fs3.symlink(content.toString("utf8"), destination);
               } else {
-                await fs.writeFile(destination, content);
-                await fs.chmod(destination, Number.parseInt(entry.mode, 8) & 511).catch(() => void 0);
+                await fs3.writeFile(destination, content);
+                await fs3.chmod(destination, Number.parseInt(entry.mode, 8) & 511).catch(() => void 0);
               }
             }
             for (const relative of currentFiles.filter((file) => !targetFiles.has(file)).sort(longestFirst)) {
-              await fs.rm(await this.safeWorkspacePath(relative), { recursive: true, force: true });
+              await fs3.rm(await this.safeWorkspacePath(relative), { recursive: true, force: true });
             }
           }
           if (omittedStash) await this.restoreStashedWorkspacePaths(omittedStash);
         } finally {
-          await fs.rm(indexFile, { force: true }).catch(() => void 0);
-          if (omittedStash) await fs.rm(omittedStash.root, { recursive: true, force: true }).catch(() => void 0);
+          await fs3.rm(indexFile, { force: true }).catch(() => void 0);
+          if (omittedStash) await fs3.rm(omittedStash.root, { recursive: true, force: true }).catch(() => void 0);
         }
         this.workspaceTreeCache = void 0;
         return { deletedIgnoredPaths, restoredTreeOid: restoreTree };
       }
       async stashWorkspacePaths(paths) {
-        const root = path2.join(await this.getGitDir(), `dsh-tm-omitted-${randomUUID()}`);
+        const root = path4.join(await this.getGitDir(), `dsh-tm-omitted-${randomUUID2()}`);
         const entries = [];
         try {
           for (const relative of [...new Set(paths.map(normalizeGitPath).filter(Boolean))]) {
             const source = await this.safeWorkspacePath(relative);
-            const stat = await fs.lstat(source).catch(() => void 0);
+            const stat = await fs3.lstat(source).catch(() => void 0);
             if (!stat) continue;
-            const destination = path2.join(root, ...relative.split("/"));
-            await fs.mkdir(path2.dirname(destination), { recursive: true });
-            await fs.cp(source, destination, { recursive: true, force: true, verbatimSymlinks: true });
+            const destination = path4.join(root, ...relative.split("/"));
+            await fs3.mkdir(path4.dirname(destination), { recursive: true });
+            await fs3.cp(source, destination, { recursive: true, force: true, verbatimSymlinks: true });
             entries.push(relative);
           }
           return { root, entries };
         } catch (error) {
-          await fs.rm(root, { recursive: true, force: true }).catch(() => void 0);
+          await fs3.rm(root, { recursive: true, force: true }).catch(() => void 0);
           throw error;
         }
       }
       async restoreStashedWorkspacePaths(stash) {
         for (const relative of stash.entries) {
-          const source = path2.join(stash.root, ...relative.split("/"));
+          const source = path4.join(stash.root, ...relative.split("/"));
           const destination = await this.safeWorkspacePath(relative);
-          await fs.mkdir(path2.dirname(destination), { recursive: true });
-          await fs.rm(destination, { recursive: true, force: true });
-          await fs.cp(source, destination, { recursive: true, force: true, verbatimSymlinks: true });
+          await fs3.mkdir(path4.dirname(destination), { recursive: true });
+          await fs3.rm(destination, { recursive: true, force: true });
+          await fs3.cp(source, destination, { recursive: true, force: true, verbatimSymlinks: true });
         }
       }
       async mergeWorkspaceTree(baseTree, targetTree, currentTree) {
         if (!baseTree) throw new Error("Merge restore requires the active checkpoint tree.");
-        const indexFile = path2.join(await this.getGitDir(), `dsh-tm-merge-index-${randomUUID()}`);
+        const indexFile = path4.join(await this.getGitDir(), `dsh-tm-merge-index-${randomUUID2()}`);
         try {
           await this.runGit(["read-tree", "-m", baseTree, targetTree, currentTree], { GIT_INDEX_FILE: indexFile });
           const { stdout: conflicts } = await this.runGit(["ls-files", "-u", "-z"], { GIT_INDEX_FILE: indexFile });
@@ -413,7 +775,7 @@ Reason: ${errorMsg}`);
           const { stdout } = await this.runGit(["write-tree"], { GIT_INDEX_FILE: indexFile });
           return stdout.trim();
         } finally {
-          await fs.rm(indexFile, { force: true }).catch(() => void 0);
+          await fs3.rm(indexFile, { force: true }).catch(() => void 0);
         }
       }
       /** Restore only selected tracked workspace paths using a disposable index. */
@@ -425,52 +787,62 @@ Reason: ${errorMsg}`);
         for (const relative of normalized) await this.safeWorkspacePath(relative);
         const mode = options.mode ?? "safe";
         const current = await this.inspectWorkspace();
-        const ignoredSelection = current.ignoredPaths.filter((file) => normalized.some((path9) => file === path9 || file.startsWith(`${path9}/`)));
+        const ignoredSelection = current.ignoredPaths.filter((file) => normalized.some((path13) => file === path13 || file.startsWith(`${path13}/`)));
         if (ignoredSelection.length) throw new WorkspaceRestoreConflictError(ignoredSelection);
         if (mode === "safe" && options.expectedCurrentTreeOid && current.treeOid !== options.expectedCurrentTreeOid) {
           const changed = await this.diffNameOnly(options.expectedCurrentTreeOid, current.treeOid);
-          const selectedDrift = changed.filter((file) => normalized.some((path9) => file === path9 || file.startsWith(`${path9}/`)));
+          const selectedDrift = changed.filter((file) => normalized.some((path13) => file === path13 || file.startsWith(`${path13}/`)));
           if (selectedDrift.length) throw new WorkspaceDriftError(selectedDrift);
         }
         const { stdout: treeStdout } = await this.runGit(["rev-parse", `${commitOrTreeOid}^{tree}`]);
         const targetTree = treeStdout.trim();
         const targetFiles = await this.listTreeFileNames(targetTree);
         const currentFiles = await this.listTreeFileNames(current.treeOid);
-        const selectedTargetFiles = targetFiles.filter((file) => normalized.some((path9) => file === path9 || file.startsWith(`${path9}/`)));
-        const selectedCurrentFiles = currentFiles.filter((file) => normalized.some((path9) => file === path9 || file.startsWith(`${path9}/`)));
+        const selectedTargetFiles = targetFiles.filter((file) => normalized.some((path13) => file === path13 || file.startsWith(`${path13}/`)));
+        const selectedCurrentFiles = currentFiles.filter((file) => normalized.some((path13) => file === path13 || file.startsWith(`${path13}/`)));
+        await assertNoSymlinkAncestors(this.workDir, [...selectedTargetFiles, ...selectedCurrentFiles, ...normalized]);
+        await this.assertNoHardLinkTargets(selectedCurrentFiles);
         if (selectedTargetFiles.length === 0 && selectedCurrentFiles.length === 0) {
           throw new Error(`None of the selected paths exist in the current or target snapshot: ${normalized.join(", ")}`);
         }
-        const exportDir = path2.join(await fs.mkdtemp(path2.join(await fs.mkdtemp(path2.join(this.workDir, ".dsh-tm-export-")), "snapshot-")));
-        const indexFile = path2.join(await this.getGitDir(), `dsh-tm-index-${randomUUID()}`);
+        const exportDir = path4.join(await fs3.mkdtemp(path4.join(await fs3.mkdtemp(path4.join(this.workDir, ".dsh-tm-export-")), "snapshot-")));
+        const indexFile = path4.join(await this.getGitDir(), `dsh-tm-index-${randomUUID2()}`);
         try {
-          await fs.mkdir(exportDir, { recursive: true });
+          await fs3.mkdir(exportDir, { recursive: true });
           await this.runGit(["read-tree", targetTree], { GIT_INDEX_FILE: indexFile });
-          await this.runGit(["checkout-index", "--all", `--prefix=${exportDir}${path2.sep}`], { GIT_INDEX_FILE: indexFile });
+          await this.runGit(["checkout-index", "--all", `--prefix=${exportDir}${path4.sep}`], { GIT_INDEX_FILE: indexFile });
           const targetSet = new Set(selectedTargetFiles);
           for (const relative of selectedCurrentFiles) {
             if (targetSet.has(relative)) continue;
-            await fs.rm(await this.safeWorkspacePath(relative), { recursive: true, force: true });
+            await fs3.rm(await this.safeWorkspacePath(relative), { recursive: true, force: true });
           }
           for (const relative of selectedTargetFiles) {
-            const source = path2.join(exportDir, ...relative.split("/"));
+            const source = path4.join(exportDir, ...relative.split("/"));
             const destination = await this.safeWorkspacePath(relative);
-            await fs.mkdir(path2.dirname(destination), { recursive: true });
-            await fs.rm(destination, { recursive: true, force: true });
-            await fs.cp(source, destination, { recursive: true, force: true, verbatimSymlinks: true });
+            await fs3.mkdir(path4.dirname(destination), { recursive: true });
+            await fs3.rm(destination, { recursive: true, force: true });
+            await fs3.cp(source, destination, { recursive: true, force: true, verbatimSymlinks: true });
           }
           this.workspaceTreeCache = void 0;
           return normalized;
         } finally {
-          await fs.rm(indexFile, { force: true }).catch(() => void 0);
-          await fs.rm(path2.dirname(exportDir), { recursive: true, force: true }).catch(() => void 0);
+          await fs3.rm(indexFile, { force: true }).catch(() => void 0);
+          await fs3.rm(path4.dirname(exportDir), { recursive: true, force: true }).catch(() => void 0);
         }
+      }
+      async assertNoHardLinkTargets(paths) {
+        const hardLinks = [];
+        for (const relative of paths) {
+          const stat = await fs3.lstat(await this.safeWorkspacePath(relative)).catch(() => void 0);
+          if (stat?.isFile() && stat.nlink > 1) hardLinks.push(relative);
+        }
+        if (hardLinks.length) throw new WorkspaceHardLinkError(hardLinks.sort());
       }
       /** Restore quarantined ignored content without ever writing it into Git objects. */
       async restoreIgnoredBackup(key) {
         if (!this.quarantineDir) return;
-        const backupRoot = path2.join(this.quarantineDir, encodeRefPart(key));
-        const encryptedManifest = await fs.readFile(path2.join(backupRoot, ".manifest.json"), "utf8").then((raw) => JSON.parse(raw)).catch((error) => {
+        const backupRoot = path4.join(this.quarantineDir, encodeRefPart(key));
+        const encryptedManifest = await fs3.readFile(path4.join(backupRoot, ".manifest.json"), "utf8").then((raw) => JSON.parse(raw)).catch((error) => {
           if (error?.code === "ENOENT") return void 0;
           throw new QuarantineKeyError(`Encrypted quarantine manifest is invalid: ${error?.message ?? "unknown error"}`);
         });
@@ -480,34 +852,34 @@ Reason: ${errorMsg}`);
           const directories = encryptedManifest.entries.filter((entry) => entry.type === "directory").sort((a, b) => a.path.localeCompare(b.path));
           for (const entry of directories) {
             const destination = await this.safeWorkspacePath(entry.path);
-            await fs.mkdir(destination, { recursive: true, mode: entry.mode });
+            await fs3.mkdir(destination, { recursive: true, mode: entry.mode });
           }
           for (const entry of encryptedManifest.entries.filter((item) => item.type !== "directory")) {
             const destination = await this.safeWorkspacePath(entry.path);
-            await fs.mkdir(path2.dirname(destination), { recursive: true });
-            await fs.rm(destination, { recursive: true, force: true });
+            await fs3.mkdir(path4.dirname(destination), { recursive: true });
+            await fs3.rm(destination, { recursive: true, force: true });
             if (entry.type === "symlink") {
-              await fs.symlink(entry.linkTarget, destination);
+              await fs3.symlink(entry.linkTarget, destination);
               continue;
             }
             if (!entry.payload || !entry.nonce) throw new QuarantineKeyError(`Encrypted quarantine entry '${entry.path}' is incomplete.`);
-            const encrypted = await fs.readFile(path2.join(backupRoot, entry.payload));
+            const encrypted = await fs3.readFile(path4.join(backupRoot, entry.payload));
             if (encrypted.length < 16) throw new QuarantineKeyError(`Encrypted quarantine entry '${entry.path}' is corrupt.`);
             let plaintext;
             try {
-              const decipher = createDecipheriv("aes-256-gcm", this.quarantineKey, Buffer.from(entry.nonce, "base64url"));
+              const decipher = createDecipheriv2("aes-256-gcm", this.quarantineKey, Buffer.from(entry.nonce, "base64url"));
               decipher.setAuthTag(encrypted.subarray(encrypted.length - 16));
               plaintext = Buffer.concat([decipher.update(encrypted.subarray(0, encrypted.length - 16)), decipher.final()]);
             } catch {
               throw new QuarantineKeyError(`Encrypted quarantine entry '${entry.path}' failed authentication.`);
             }
-            await fs.writeFile(destination, plaintext);
-            await fs.chmod(destination, entry.mode).catch(() => void 0);
+            await fs3.writeFile(destination, plaintext);
+            await fs3.chmod(destination, entry.mode).catch(() => void 0);
           }
           return;
         }
         if (this.quarantineKey) {
-          const plaintextEntries = await fs.readdir(backupRoot).catch((error) => {
+          const plaintextEntries = await fs3.readdir(backupRoot).catch((error) => {
             if (error?.code === "ENOENT") return [];
             throw error;
           });
@@ -516,27 +888,27 @@ Reason: ${errorMsg}`);
           }
         }
         const root = await this.getRepoRoot();
-        const entries = await fs.readdir(backupRoot, { withFileTypes: true }).catch((error) => {
+        const entries = await fs3.readdir(backupRoot, { withFileTypes: true }).catch((error) => {
           if (error?.code === "ENOENT") return [];
           throw error;
         });
         for (const entry of entries) {
-          const source = path2.join(backupRoot, entry.name);
-          const destination = path2.join(root, entry.name);
-          await fs.cp(source, destination, { recursive: true, force: true, verbatimSymlinks: true });
+          const source = path4.join(backupRoot, entry.name);
+          const destination = path4.join(root, entry.name);
+          await fs3.cp(source, destination, { recursive: true, force: true, verbatimSymlinks: true });
         }
       }
       /** Validate encrypted quarantine content before a restore mutates the workspace. */
       async validateIgnoredBackup(key) {
         if (!this.quarantineDir) return;
-        const backupRoot = path2.join(this.quarantineDir, encodeRefPart(key));
-        const manifest = await fs.readFile(path2.join(backupRoot, ".manifest.json"), "utf8").then((raw) => JSON.parse(raw)).catch((error) => {
+        const backupRoot = path4.join(this.quarantineDir, encodeRefPart(key));
+        const manifest = await fs3.readFile(path4.join(backupRoot, ".manifest.json"), "utf8").then((raw) => JSON.parse(raw)).catch((error) => {
           if (error?.code === "ENOENT") return void 0;
           throw new QuarantineKeyError(`Encrypted quarantine manifest is invalid: ${error?.message ?? "unknown error"}`);
         });
         if (!manifest) {
           if (this.quarantineKey) {
-            const plaintextEntries = await fs.readdir(backupRoot).catch((error) => {
+            const plaintextEntries = await fs3.readdir(backupRoot).catch((error) => {
               if (error?.code === "ENOENT") return [];
               throw error;
             });
@@ -550,10 +922,10 @@ Reason: ${errorMsg}`);
         if (manifest.version !== 1 || !Array.isArray(manifest.entries)) throw new QuarantineKeyError("Encrypted quarantine manifest version is unsupported.");
         for (const entry of manifest.entries.filter((item) => item.type === "file")) {
           if (!entry.payload || !entry.nonce) throw new QuarantineKeyError(`Encrypted quarantine entry '${entry.path}' is incomplete.`);
-          const encrypted = await fs.readFile(path2.join(backupRoot, entry.payload));
+          const encrypted = await fs3.readFile(path4.join(backupRoot, entry.payload));
           if (encrypted.length < 16) throw new QuarantineKeyError(`Encrypted quarantine entry '${entry.path}' is corrupt.`);
           try {
-            const decipher = createDecipheriv("aes-256-gcm", this.quarantineKey, Buffer.from(entry.nonce, "base64url"));
+            const decipher = createDecipheriv2("aes-256-gcm", this.quarantineKey, Buffer.from(entry.nonce, "base64url"));
             decipher.setAuthTag(encrypted.subarray(encrypted.length - 16));
             decipher.update(encrypted.subarray(0, encrypted.length - 16));
             decipher.final();
@@ -565,9 +937,9 @@ Reason: ${errorMsg}`);
       /** Remove a quarantine backup only after the DAG no longer references its key. */
       async removeIgnoredBackup(key) {
         if (!this.quarantineDir) return 0;
-        const backupRoot = path2.join(this.quarantineDir, encodeRefPart(key));
+        const backupRoot = path4.join(this.quarantineDir, encodeRefPart(key));
         const reclaimed = await directoryBytes(backupRoot);
-        await fs.rm(backupRoot, { recursive: true, force: true });
+        await fs3.rm(backupRoot, { recursive: true, force: true });
         return reclaimed;
       }
       async getDiffBetween(baseOid, targetOid) {
@@ -579,8 +951,7 @@ Reason: ${errorMsg}`);
         }
       }
       async runGitBuffer(args, extraEnv = {}, cwd = this.workDir) {
-        await this.ensureShadowStore();
-        return new Promise((resolve, reject) => {
+        return this.withShadowRuntime(() => new Promise((resolve, reject) => {
           const child = spawn("git", args, { cwd, env: this.gitEnv(extraEnv), windowsHide: true });
           const chunks = [];
           const errors = [];
@@ -592,22 +963,24 @@ Reason: ${errorMsg}`);
             reject(new Error(`Git plumbing command failed: git ${args.join(" ")}
 Reason: ${Buffer.concat(errors).toString("utf8")}`));
           });
-        });
+        }));
       }
       async readShadowBlob(oid, cwd) {
-        if (this.shadowObjectDir) {
-          const loose = path2.join(this.shadowObjectDir, oid.slice(0, 2), oid.slice(2));
-          const compressed = await fs.readFile(loose).catch(() => void 0);
-          if (compressed) {
-            try {
-              const inflated = zlib.inflateSync(compressed);
-              const separator = inflated.indexOf(0);
-              if (separator >= 0) return inflated.subarray(separator + 1);
-            } catch {
+        return this.withShadowRuntime(async () => {
+          if (this.shadowObjectDir) {
+            const loose = path4.join(this.shadowObjectDir, oid.slice(0, 2), oid.slice(2));
+            const compressed = await fs3.readFile(loose).catch(() => void 0);
+            if (compressed) {
+              try {
+                const inflated = zlib.inflateSync(compressed);
+                const separator = inflated.indexOf(0);
+                if (separator >= 0) return inflated.subarray(separator + 1);
+              } catch {
+              }
             }
           }
-        }
-        return this.runGitBuffer(["cat-file", "blob", oid], {}, cwd);
+          return this.runGitBuffer(["cat-file", "blob", oid], {}, cwd);
+        });
       }
       gitEnv(extraEnv) {
         const env = {
@@ -618,14 +991,14 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
         };
         if (this.shadowObjectDir) {
           env.GIT_OBJECT_DIRECTORY = this.shadowObjectDir;
-          const primaryObjects = path2.join(this.gitDirCached ?? path2.join(this.workDir, ".git"), "objects");
-          env.GIT_ALTERNATE_OBJECT_DIRECTORIES = [primaryObjects, env.GIT_ALTERNATE_OBJECT_DIRECTORIES].filter(Boolean).map((item) => item.replace(/\\/g, "/")).join(path2.delimiter);
+          const primaryObjects = path4.join(this.gitDirCached ?? path4.join(this.workDir, ".git"), "objects");
+          env.GIT_ALTERNATE_OBJECT_DIRECTORIES = [primaryObjects, env.GIT_ALTERNATE_OBJECT_DIRECTORIES].filter(Boolean).map((item) => item.replace(/\\/g, "/")).join(path4.delimiter);
         }
         return env;
       }
       async writeWorkspaceTree(enforceSnapshotLimits = false, extraOmittedPaths = [], baseTreeOid, changedPaths = []) {
         const root = await this.getRepoRoot();
-        const indexFile = path2.join(await this.getGitDir(), `dsh-tm-index-${randomUUID()}`);
+        const indexFile = path4.join(await this.getGitDir(), `dsh-tm-index-${randomUUID2()}`);
         const env = { GIT_INDEX_FILE: indexFile };
         try {
           try {
@@ -682,7 +1055,7 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
           const { stdout } = await this.runGit(["write-tree"], env, root);
           return { treeOid: stdout.trim(), indexFile, omittedPaths };
         } catch (error) {
-          await fs.rm(indexFile, { force: true }).catch(() => void 0);
+          await fs3.rm(indexFile, { force: true }).catch(() => void 0);
           throw error;
         }
       }
@@ -723,7 +1096,7 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
         let totalBytes = 0;
         const omitted = [];
         for (const relative of files) {
-          const stat = await fs.lstat(path2.join(root, ...relative.split("/"))).catch(() => void 0);
+          const stat = await fs3.lstat(path4.join(root, ...relative.split("/"))).catch(() => void 0);
           if (!stat?.isFile()) continue;
           if (this.maxSnapshotFileBytes > 0 && stat.size > this.maxSnapshotFileBytes) {
             if (this.allowPartialSnapshots) {
@@ -797,7 +1170,7 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
       }
       protectedRepoPaths(repoRoot) {
         return this.preservePaths.flatMap((absolute) => {
-          const relative = normalizeGitPath(path2.relative(repoRoot, absolute));
+          const relative = normalizeGitPath(path4.relative(repoRoot, absolute));
           return relative && relative !== ".." && !relative.startsWith("../") ? [relative] : [];
         });
       }
@@ -805,15 +1178,15 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
         const normalized = normalizeGitPath(relative);
         const repoRoot = this.repoRootCached ?? this.workDir;
         return this.preservePaths.some((absolute) => {
-          const candidate = normalizeGitPath(path2.relative(repoRoot, absolute));
+          const candidate = normalizeGitPath(path4.relative(repoRoot, absolute));
           return candidate === normalized || normalized.startsWith(`${candidate}/`);
         });
       }
       async safeWorkspacePath(relative) {
         const root = await this.getRepoRoot();
-        const absolute = path2.resolve(root, relative);
-        const relation = path2.relative(root, absolute);
-        if (!relation || relation === ".." || relation.startsWith(`..${path2.sep}`) || path2.isAbsolute(relation)) {
+        const absolute = path4.resolve(root, relative);
+        const relation = path4.relative(root, absolute);
+        if (!relation || relation === ".." || relation.startsWith(`..${path4.sep}`) || path4.isAbsolute(relation)) {
           throw new Error(`Unsafe workspace path: ${relative}`);
         }
         return absolute;
@@ -824,32 +1197,32 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
           await this.backupIgnoredPathEncrypted(key, relative, absolute);
           return;
         }
-        const destination = path2.join(this.quarantineDir, encodeRefPart(key), ...relative.split("/"));
+        const destination = path4.join(this.quarantineDir, encodeRefPart(key), ...relative.split("/"));
         if (this.maxQuarantineBytes > 0) {
           const currentBytes = await directoryBytes(this.quarantineDir);
           const incomingBytes = await directoryBytes(absolute);
-          const existingBytes = await directoryBytes(path2.dirname(destination));
+          const existingBytes = await directoryBytes(path4.dirname(destination));
           const requiredBytes = currentBytes - existingBytes + incomingBytes;
           if (requiredBytes > this.maxQuarantineBytes) throw new QuarantineQuotaError(this.maxQuarantineBytes, requiredBytes);
         }
-        await fs.mkdir(path2.dirname(destination), { recursive: true });
-        await fs.cp(absolute, destination, { recursive: true, force: true, verbatimSymlinks: true });
+        await fs3.mkdir(path4.dirname(destination), { recursive: true });
+        await fs3.cp(absolute, destination, { recursive: true, force: true, verbatimSymlinks: true });
       }
       async backupIgnoredPathEncrypted(key, relative, absolute) {
-        const root = path2.join(this.quarantineDir, encodeRefPart(key));
-        const manifestPath = path2.join(root, ".manifest.json");
-        const existing = await fs.readFile(manifestPath, "utf8").then((raw) => JSON.parse(raw)).catch(async (error) => {
+        const root = path4.join(this.quarantineDir, encodeRefPart(key));
+        const manifestPath = path4.join(root, ".manifest.json");
+        const existing = await fs3.readFile(manifestPath, "utf8").then((raw) => JSON.parse(raw)).catch(async (error) => {
           if (error?.code === "ENOENT") {
-            const entries = await fs.readdir(root).catch(() => []);
+            const entries = await fs3.readdir(root).catch(() => []);
             if (entries.length) throw new QuarantineKeyError("Plaintext quarantine exists; refusing to mix it with encrypted backups.");
             return { version: 1, entries: [] };
           }
           throw new QuarantineKeyError(`Encrypted quarantine manifest is invalid: ${error?.message ?? "unknown error"}`);
         });
         if (existing.version !== 1 || !Array.isArray(existing.entries)) throw new QuarantineKeyError("Encrypted quarantine manifest version is unsupported.");
-        const staging = path2.join(root, `.staging-${randomUUID()}`);
-        const payloadDir = path2.join(staging, "payload");
-        await fs.mkdir(payloadDir, { recursive: true });
+        const staging = path4.join(root, `.staging-${randomUUID2()}`);
+        const payloadDir = path4.join(staging, "payload");
+        await fs3.mkdir(payloadDir, { recursive: true });
         const added = [];
         try {
           await this.collectEncryptedQuarantineEntries(absolute, relative, payloadDir, added);
@@ -861,21 +1234,21 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
           if (this.maxQuarantineBytes > 0 && requiredBytes > this.maxQuarantineBytes) {
             throw new QuarantineQuotaError(this.maxQuarantineBytes, requiredBytes);
           }
-          await fs.mkdir(path2.join(root, "payload"), { recursive: true });
+          await fs3.mkdir(path4.join(root, "payload"), { recursive: true });
           for (const entry of added) {
-            const source = path2.join(payloadDir, entry.payload);
-            const destination = path2.join(root, "payload", entry.payload);
-            await fs.rename(source, destination);
-            entry.payload = path2.posix.join("payload", entry.payload);
+            const source = path4.join(payloadDir, entry.payload);
+            const destination = path4.join(root, "payload", entry.payload);
+            await fs3.rename(source, destination);
+            entry.payload = path4.posix.join("payload", entry.payload);
           }
-          await fs.rm(staging, { recursive: true, force: true });
+          await fs3.rm(staging, { recursive: true, force: true });
           const next = { version: 1, entries: [...existing.entries, ...added] };
-          const temporaryManifest = `${manifestPath}.${randomUUID()}.tmp`;
-          await fs.writeFile(temporaryManifest, `${JSON.stringify(next, null, 2)}
+          const temporaryManifest = `${manifestPath}.${randomUUID2()}.tmp`;
+          await fs3.writeFile(temporaryManifest, `${JSON.stringify(next, null, 2)}
 `, "utf8");
-          await fs.rename(temporaryManifest, manifestPath);
+          await fs3.rename(temporaryManifest, manifestPath);
         } catch (error) {
-          await fs.rm(staging, { recursive: true, force: true }).catch(() => void 0);
+          await fs3.rm(staging, { recursive: true, force: true }).catch(() => void 0);
           throw error;
         }
       }
@@ -883,9 +1256,9 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
       async migrateIgnoredBackup(key) {
         if (!this.quarantineDir) throw new Error("Ignored-path migration requires a quarantineDir.");
         if (!this.quarantineKey) throw new QuarantineKeyError("Encrypted quarantine migration requires the configured key.");
-        const root = path2.join(this.quarantineDir, encodeRefPart(key));
-        const manifestPath = path2.join(root, ".manifest.json");
-        const existingManifest = await fs.readFile(manifestPath, "utf8").then((raw) => JSON.parse(raw)).catch((error) => {
+        const root = path4.join(this.quarantineDir, encodeRefPart(key));
+        const manifestPath = path4.join(root, ".manifest.json");
+        const existingManifest = await fs3.readFile(manifestPath, "utf8").then((raw) => JSON.parse(raw)).catch((error) => {
           if (error?.code === "ENOENT") return void 0;
           throw new QuarantineKeyError(`Encrypted quarantine manifest is invalid: ${error?.message ?? "unknown error"}`);
         });
@@ -895,20 +1268,20 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
           }
           return { migrated: false, bytesRewritten: 0, entryCount: existingManifest.entries.length };
         }
-        const entries = await fs.readdir(root, { withFileTypes: true }).catch((error) => {
+        const entries = await fs3.readdir(root, { withFileTypes: true }).catch((error) => {
           if (error?.code === "ENOENT") return [];
           throw error;
         });
         if (entries.length === 0) return { migrated: false, bytesRewritten: 0, entryCount: 0 };
-        const legacyRoot = `${root}.legacy-${randomUUID()}`;
-        const stagingRoot = path2.join(path2.dirname(root), `.migration-${randomUUID()}`);
-        const payloadDir = path2.join(stagingRoot, "payload");
-        await fs.rename(root, legacyRoot);
+        const legacyRoot = `${root}.legacy-${randomUUID2()}`;
+        const stagingRoot = path4.join(path4.dirname(root), `.migration-${randomUUID2()}`);
+        const payloadDir = path4.join(stagingRoot, "payload");
+        await fs3.rename(root, legacyRoot);
         try {
-          await fs.mkdir(payloadDir, { recursive: true });
+          await fs3.mkdir(payloadDir, { recursive: true });
           const encryptedEntries = [];
           for (const entry of entries) {
-            await this.collectEncryptedQuarantineEntries(path2.join(legacyRoot, entry.name), entry.name, payloadDir, encryptedEntries);
+            await this.collectEncryptedQuarantineEntries(path4.join(legacyRoot, entry.name), entry.name, payloadDir, encryptedEntries);
           }
           const manifest = { version: 1, entries: encryptedEntries };
           const manifestBytes = Buffer.byteLength(JSON.stringify(manifest));
@@ -919,47 +1292,47 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
           if (this.maxQuarantineBytes > 0 && requiredBytes > this.maxQuarantineBytes) {
             throw new QuarantineQuotaError(this.maxQuarantineBytes, requiredBytes);
           }
-          await fs.mkdir(path2.join(root, "payload"), { recursive: true });
+          await fs3.mkdir(path4.join(root, "payload"), { recursive: true });
           for (const entry of encryptedEntries) {
-            const source = path2.join(payloadDir, entry.payload);
-            const destination = path2.join(root, "payload", entry.payload);
-            await fs.rename(source, destination);
-            entry.payload = path2.posix.join("payload", entry.payload);
+            const source = path4.join(payloadDir, entry.payload);
+            const destination = path4.join(root, "payload", entry.payload);
+            await fs3.rename(source, destination);
+            entry.payload = path4.posix.join("payload", entry.payload);
           }
-          await fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}
+          await fs3.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}
 `, "utf8");
           const rewrittenBytes = await directoryBytes(root);
-          await fs.rm(stagingRoot, { recursive: true, force: true });
-          await fs.rm(legacyRoot, { recursive: true, force: true });
+          await fs3.rm(stagingRoot, { recursive: true, force: true });
+          await fs3.rm(legacyRoot, { recursive: true, force: true });
           return { migrated: true, bytesRewritten: rewrittenBytes, entryCount: encryptedEntries.length };
         } catch (error) {
-          await fs.rm(root, { recursive: true, force: true }).catch(() => void 0);
-          await fs.rm(stagingRoot, { recursive: true, force: true }).catch(() => void 0);
-          await fs.rename(legacyRoot, root).catch(() => void 0);
+          await fs3.rm(root, { recursive: true, force: true }).catch(() => void 0);
+          await fs3.rm(stagingRoot, { recursive: true, force: true }).catch(() => void 0);
+          await fs3.rename(legacyRoot, root).catch(() => void 0);
           throw error;
         }
       }
       async collectEncryptedQuarantineEntries(source, relative, payloadDir, output) {
-        const stat = await fs.lstat(source);
+        const stat = await fs3.lstat(source);
         if (stat.isDirectory()) {
           output.push({ path: normalizeGitPath(relative), type: "directory", mode: stat.mode & 511 });
-          for (const child of await fs.readdir(source)) {
-            await this.collectEncryptedQuarantineEntries(path2.join(source, child), path2.posix.join(relative, child), payloadDir, output);
+          for (const child of await fs3.readdir(source)) {
+            await this.collectEncryptedQuarantineEntries(path4.join(source, child), path4.posix.join(relative, child), payloadDir, output);
           }
           return;
         }
         if (stat.isSymbolicLink()) {
-          output.push({ path: normalizeGitPath(relative), type: "symlink", mode: stat.mode & 511, linkTarget: await fs.readlink(source) });
+          output.push({ path: normalizeGitPath(relative), type: "symlink", mode: stat.mode & 511, linkTarget: await fs3.readlink(source) });
           return;
         }
         if (!stat.isFile()) throw new QuarantineKeyError(`Unsupported ignored backup entry: ${relative}`);
-        const plaintext = await fs.readFile(source);
-        const nonce = randomBytes(12);
-        const cipher = createCipheriv("aes-256-gcm", this.quarantineKey, nonce);
+        const plaintext = await fs3.readFile(source);
+        const nonce = randomBytes2(12);
+        const cipher = createCipheriv2("aes-256-gcm", this.quarantineKey, nonce);
         const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
         const tag = cipher.getAuthTag();
-        const payload = randomUUID();
-        await fs.writeFile(path2.join(payloadDir, payload), Buffer.concat([ciphertext, tag]));
+        const payload = randomUUID2();
+        await fs3.writeFile(path4.join(payloadDir, payload), Buffer.concat([ciphertext, tag]));
         output.push({
           path: normalizeGitPath(relative),
           type: "file",
@@ -989,121 +1362,132 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
       }
       async deleteCheckpointRef(sessionId, checkpointId) {
         const ref = `${this.refPrefix}/${encodeRefPart(sessionId)}/nodes/${encodeRefPart(checkpointId)}`;
-        const exists = await this.runGit(["show-ref", "--verify", "--quiet", ref]).then(() => true).catch(() => false);
-        if (!exists) return false;
+        const exists2 = await this.runGit(["show-ref", "--verify", "--quiet", ref]).then(() => true).catch(() => false);
+        if (!exists2) return false;
         await this.runGit(["update-ref", "-d", ref]);
         return true;
       }
       /** Remove unreachable loose objects from the opt-in shadow store only. */
       async pruneShadowObjects() {
         if (!this.shadowObjectDir) return { removedObjects: 0, reclaimedBytes: 0, packedObjectsSkipped: false };
-        const { stdout: refs } = await this.runGit(["for-each-ref", "--format=%(refname)", this.refPrefix]).catch(() => ({ stdout: "", stderr: "" }));
-        const refNames = refs.split("\n").map((item) => item.trim()).filter(Boolean);
-        const reachable = /* @__PURE__ */ new Set();
-        if (refNames.length) {
-          const { stdout } = await this.runGit(["rev-list", "--objects", ...refNames]);
-          for (const line of stdout.split("\n")) {
-            const oid = line.trim().split(/\s+/, 1)[0];
-            if (/^[0-9a-f]{40}$/.test(oid)) reachable.add(oid);
+        const shadowObjectDir = this.shadowObjectDir;
+        return this.withShadowRuntime(async () => {
+          const { stdout: refs } = await this.runGit(["for-each-ref", "--format=%(refname)", this.refPrefix]).catch(() => ({ stdout: "", stderr: "" }));
+          const refNames = refs.split("\n").map((item) => item.trim()).filter(Boolean);
+          const reachable = /* @__PURE__ */ new Set();
+          if (refNames.length) {
+            const { stdout } = await this.runGit(["rev-list", "--objects", ...refNames]);
+            for (const line of stdout.split("\n")) {
+              const oid = line.trim().split(/\s+/, 1)[0];
+              if (/^[0-9a-f]{40}$/.test(oid)) reachable.add(oid);
+            }
           }
-        }
-        let removedObjects = 0;
-        let reclaimedBytes = 0;
-        const entries = await fs.readdir(this.shadowObjectDir, { withFileTypes: true }).catch(() => []);
-        let packedObjectsSkipped = false;
-        for (const entry of entries) {
-          if (entry.name === "pack" && entry.isDirectory()) {
-            packedObjectsSkipped = (await fs.readdir(path2.join(this.shadowObjectDir, entry.name)).catch(() => [])).length > 0;
-            continue;
+          let removedObjects = 0;
+          let reclaimedBytes = 0;
+          const entries = await fs3.readdir(shadowObjectDir, { withFileTypes: true }).catch(() => []);
+          let packedObjectsSkipped = false;
+          for (const entry of entries) {
+            if (entry.name === "pack" && entry.isDirectory()) {
+              packedObjectsSkipped = (await fs3.readdir(path4.join(shadowObjectDir, entry.name)).catch(() => [])).length > 0;
+              continue;
+            }
+            if (!entry.isDirectory() || !/^[0-9a-f]{2}$/.test(entry.name)) continue;
+            const directory = path4.join(shadowObjectDir, entry.name);
+            for (const object of await fs3.readdir(directory, { withFileTypes: true }).catch(() => [])) {
+              if (!object.isFile() || !/^[0-9a-f]{38}$/.test(object.name)) continue;
+              const oid = `${entry.name}${object.name}`;
+              if (reachable.has(oid)) continue;
+              const file = path4.join(directory, object.name);
+              reclaimedBytes += (await fs3.stat(file).catch(() => ({ size: 0 }))).size;
+              await fs3.rm(file, { force: true });
+              removedObjects += 1;
+            }
+            await fs3.rmdir(directory).catch(() => void 0);
           }
-          if (!entry.isDirectory() || !/^[0-9a-f]{2}$/.test(entry.name)) continue;
-          const directory = path2.join(this.shadowObjectDir, entry.name);
-          for (const object of await fs.readdir(directory, { withFileTypes: true }).catch(() => [])) {
-            if (!object.isFile() || !/^[0-9a-f]{38}$/.test(object.name)) continue;
-            const oid = `${entry.name}${object.name}`;
-            if (reachable.has(oid)) continue;
-            const file = path2.join(directory, object.name);
-            reclaimedBytes += (await fs.stat(file).catch(() => ({ size: 0 }))).size;
-            await fs.rm(file, { force: true });
-            removedObjects += 1;
-          }
-          await fs.rmdir(directory).catch(() => void 0);
-        }
-        return { removedObjects, reclaimedBytes, packedObjectsSkipped };
+          return { removedObjects, reclaimedBytes, packedObjectsSkipped };
+        });
       }
       /** Rebuild only the opt-in shadow pack from the plugin's private refs. */
       async repackShadowObjects() {
         if (!this.shadowObjectDir) return { repacked: false, removedPackFiles: 0, reclaimedBytes: 0, reachableRefs: 0 };
-        const { stdout: refsOutput } = await this.runGit(["for-each-ref", "--format=%(objectname)", this.refPrefix]).catch(() => ({ stdout: "", stderr: "" }));
-        const refs = refsOutput.split("\n").map((item) => item.trim()).filter((item) => /^[0-9a-f]{40}$/.test(item));
-        const packDir = path2.join(this.shadowObjectDir, "pack");
-        const existing = await fs.readdir(packDir, { withFileTypes: true }).catch(() => []);
-        const existingPackFiles = existing.filter((entry) => entry.isFile() && /^pack-[0-9a-f]{40}\.(pack|idx|bitmap|rev|mtimes)$/.test(entry.name));
-        const lockedPack = existing.some((entry) => entry.isFile() && /^pack-[0-9a-f]{40}\.keep$/.test(entry.name));
-        if (lockedPack) return { repacked: false, removedPackFiles: 0, reclaimedBytes: 0, reachableRefs: refs.length, skippedReason: "shadow pack contains a .keep file" };
-        const existingBytes = await sumFileSizes(existingPackFiles.map((entry) => path2.join(packDir, entry.name)));
-        const tempDir = path2.join(this.shadowObjectDir, `.repack-${randomUUID()}`);
-        await fs.mkdir(tempDir, { recursive: true });
-        let generatedFiles = [];
-        try {
-          if (refs.length) {
-            const prefix = path2.join(tempDir, "pack");
-            await this.runGitInput(["pack-objects", "--revs", "--no-reuse-object", "--delta-base-offset", prefix], `${refs.join("\n")}
+        const shadowObjectDir = this.shadowObjectDir;
+        return this.withShadowRuntime(async () => {
+          const { stdout: refsOutput } = await this.runGit(["for-each-ref", "--format=%(objectname)", this.refPrefix]).catch(() => ({ stdout: "", stderr: "" }));
+          const refs = refsOutput.split("\n").map((item) => item.trim()).filter((item) => /^[0-9a-f]{40}$/.test(item));
+          const packDir = path4.join(shadowObjectDir, "pack");
+          const existing = await fs3.readdir(packDir, { withFileTypes: true }).catch(() => []);
+          const existingPackFiles = existing.filter((entry) => entry.isFile() && /^pack-[0-9a-f]{40}\.(pack|idx|bitmap|rev|mtimes)$/.test(entry.name));
+          const lockedPack = existing.some((entry) => entry.isFile() && /^pack-[0-9a-f]{40}\.keep$/.test(entry.name));
+          if (lockedPack) return { repacked: false, removedPackFiles: 0, reclaimedBytes: 0, reachableRefs: refs.length, skippedReason: "shadow pack contains a .keep file" };
+          const existingBytes = await sumFileSizes(existingPackFiles.map((entry) => path4.join(packDir, entry.name)));
+          const tempDir = path4.join(shadowObjectDir, `.repack-${randomUUID2()}`);
+          await fs3.mkdir(tempDir, { recursive: true });
+          let generatedFiles = [];
+          try {
+            if (refs.length) {
+              const prefix = path4.join(tempDir, "pack");
+              await this.runGitInput(["pack-objects", "--revs", "--no-reuse-object", "--delta-base-offset", prefix], `${refs.join("\n")}
 `);
-            generatedFiles = (await fs.readdir(tempDir, { withFileTypes: true })).filter((entry) => entry.isFile() && /^(pack-[0-9a-f]{40})\.(pack|idx)$/.test(entry.name)).map((entry) => entry.name);
+              generatedFiles = (await fs3.readdir(tempDir, { withFileTypes: true })).filter((entry) => entry.isFile() && /^(pack-[0-9a-f]{40})\.(pack|idx)$/.test(entry.name)).map((entry) => entry.name);
+            }
+            await fs3.mkdir(packDir, { recursive: true });
+            for (const file of generatedFiles) {
+              const destination = path4.join(packDir, file);
+              const source = path4.join(tempDir, file);
+              const alreadyPresent = await fs3.access(destination).then(() => true).catch(() => false);
+              if (alreadyPresent) await fs3.rm(source, { force: true });
+              else await fs3.rename(source, destination);
+            }
+            const keep = new Set(generatedFiles);
+            let removedPackFiles = 0;
+            let reclaimedBytes = 0;
+            for (const entry of existingPackFiles) {
+              if (keep.has(entry.name)) continue;
+              const file = path4.join(packDir, entry.name);
+              reclaimedBytes += (await fs3.stat(file).catch(() => ({ size: 0 }))).size;
+              await fs3.rm(file, { force: true });
+              removedPackFiles += 1;
+            }
+            await fs3.rm(path4.join(shadowObjectDir, "info", "packs"), { force: true }).catch(() => void 0);
+            return {
+              repacked: refs.length > 0 && generatedFiles.length > 0,
+              removedPackFiles,
+              reclaimedBytes: Math.max(reclaimedBytes, existingBytes - await sumFileSizes(generatedFiles.map((file) => path4.join(packDir, file)))),
+              reachableRefs: refs.length
+            };
+          } finally {
+            await fs3.rm(tempDir, { recursive: true, force: true }).catch(() => void 0);
           }
-          await fs.mkdir(packDir, { recursive: true });
-          for (const file of generatedFiles) {
-            const destination = path2.join(packDir, file);
-            const source = path2.join(tempDir, file);
-            const alreadyPresent = await fs.access(destination).then(() => true).catch(() => false);
-            if (alreadyPresent) await fs.rm(source, { force: true });
-            else await fs.rename(source, destination);
-          }
-          const keep = new Set(generatedFiles);
-          let removedPackFiles = 0;
-          let reclaimedBytes = 0;
-          for (const entry of existingPackFiles) {
-            if (keep.has(entry.name)) continue;
-            const file = path2.join(packDir, entry.name);
-            reclaimedBytes += (await fs.stat(file).catch(() => ({ size: 0 }))).size;
-            await fs.rm(file, { force: true });
-            removedPackFiles += 1;
-          }
-          await fs.rm(path2.join(this.shadowObjectDir, "info", "packs"), { force: true }).catch(() => void 0);
-          return {
-            repacked: refs.length > 0 && generatedFiles.length > 0,
-            removedPackFiles,
-            reclaimedBytes: Math.max(reclaimedBytes, existingBytes - await sumFileSizes(generatedFiles.map((file) => path2.join(packDir, file)))),
-            reachableRefs: refs.length
-          };
-        } finally {
-          await fs.rm(tempDir, { recursive: true, force: true }).catch(() => void 0);
-        }
+        });
       }
       async ensureShadowStore() {
         if (!this.shadowObjectDir) return;
-        this.shadowReady ??= fs.mkdir(this.shadowObjectDir, { recursive: true }).then(() => void 0);
+        this.shadowReady ??= fs3.mkdir(this.shadowObjectDir, { recursive: true }).then(() => void 0);
         await this.shadowReady;
       }
-      async runGitInput(args, input, cwd = this.workDir) {
+      async withShadowRuntime(operation) {
         await this.ensureShadowStore();
-        const env = this.gitEnv({});
-        return await new Promise((resolve, reject) => {
-          const child = spawn("git", args, { cwd, env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
-          const stdout = [];
-          const stderr = [];
-          child.stdout.on("data", (chunk) => stdout.push(Buffer.from(chunk)));
-          child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
-          child.once("error", reject);
-          child.once("close", (code) => {
-            const out = Buffer.concat(stdout).toString("utf8");
-            const err = Buffer.concat(stderr).toString("utf8");
-            if (code === 0) resolve({ stdout: out, stderr: err });
-            else reject(new Error(`Git plumbing command failed: git ${args.join(" ")}
+        return this.encryptedShadowStore ? this.encryptedShadowStore.withRuntime(operation) : operation();
+      }
+      async runGitInput(args, input, cwd = this.workDir) {
+        return this.withShadowRuntime(async () => {
+          const env = this.gitEnv({});
+          return await new Promise((resolve, reject) => {
+            const child = spawn("git", args, { cwd, env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+            const stdout = [];
+            const stderr = [];
+            child.stdout.on("data", (chunk) => stdout.push(Buffer.from(chunk)));
+            child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
+            child.once("error", reject);
+            child.once("close", (code) => {
+              const out = Buffer.concat(stdout).toString("utf8");
+              const err = Buffer.concat(stderr).toString("utf8");
+              if (code === 0) resolve({ stdout: out, stderr: err });
+              else reject(new Error(`Git plumbing command failed: git ${args.join(" ")}
 Reason: ${err || out || `exit ${code}`}`));
+            });
+            child.stdin.end(input, "utf8");
           });
-          child.stdin.end(input, "utf8");
         });
       }
     };
@@ -1112,24 +1496,27 @@ Reason: ${err || out || `exit ${code}`}`));
 
 // src/index.ts
 init_esm_shims();
-import path8 from "path";
-import { createHash as createHash4 } from "crypto";
+import path12 from "path";
+import fs11 from "fs/promises";
+import fsSync from "fs";
+import { createHash as createHash6 } from "crypto";
 import Schema from "@deepseek-ai/schemastery";
 import pc2 from "picocolors";
 
 // src/service.ts
 init_esm_shims();
 init_git_plumbing();
-import path6 from "path";
-import fs5 from "fs/promises";
-import { createHash as createHash3, randomUUID as randomUUID5 } from "crypto";
+import path8 from "path";
+import fs7 from "fs/promises";
+import { createHash as createHash5, randomUUID as randomUUID6 } from "crypto";
 
 // src/core/fallback-engine.ts
 init_esm_shims();
 init_git_plumbing();
-import { createHash as createHash2, randomUUID as randomUUID2 } from "crypto";
-import path3 from "path";
-import fs2 from "fs/promises";
+init_path_safety();
+import { createHash as createHash3, randomUUID as randomUUID3 } from "crypto";
+import path5 from "path";
+import fs4 from "fs/promises";
 var FallbackSnapshotEngine = class {
   workDir;
   storageDir;
@@ -1137,52 +1524,57 @@ var FallbackSnapshotEngine = class {
   maxSnapshotFileBytes;
   maxSnapshotBytes;
   constructor(options) {
-    this.workDir = path3.resolve(options.workDir);
-    this.storageDir = path3.resolve(options.storageDir);
-    this.preservePaths = [this.storageDir, ...(options.preservePaths ?? []).map((item) => path3.resolve(this.workDir, item))];
+    this.workDir = path5.resolve(options.workDir);
+    this.storageDir = path5.resolve(options.storageDir);
+    this.preservePaths = [this.storageDir, ...(options.preservePaths ?? []).map((item) => path5.resolve(this.workDir, item))];
     this.maxSnapshotFileBytes = Math.max(0, Math.floor(options.maxSnapshotFileBytes ?? 0));
     this.maxSnapshotBytes = Math.max(0, Math.floor(options.maxSnapshotBytes ?? 0));
   }
   getCheckpointDir(sessionId, checkpointId) {
     const sessionKey = Buffer.from(sessionId, "utf8").toString("base64url") || "_";
     const checkpointKey2 = Buffer.from(checkpointId, "utf8").toString("base64url") || "_";
-    return path3.join(this.storageDir, sessionKey, checkpointKey2);
+    return path5.join(this.storageDir, sessionKey, checkpointKey2);
   }
   async createSnapshot(params) {
     const targetDir = this.getCheckpointDir(params.sessionId, params.checkpointId);
-    const temporary = `${targetDir}.${randomUUID2()}.tmp`;
-    const filesDir = path3.join(temporary, "files");
-    await fs2.mkdir(filesDir, { recursive: true });
+    const temporary = `${targetDir}.${randomUUID3()}.tmp`;
+    const filesDir = path5.join(temporary, "files");
+    await fs4.mkdir(filesDir, { recursive: true });
     try {
       const plannedEntries = await this.scanTree(this.workDir);
       await this.assertSnapshotSize(plannedEntries);
       const entries = await this.captureTree(this.workDir, filesDir, plannedEntries);
       const treeOid = await hashSnapshot(filesDir, entries);
       const manifest = { version: 1, entries, treeOid };
-      await fs2.writeFile(path3.join(temporary, "manifest.json"), `${JSON.stringify(manifest, null, 2)}
+      await fs4.writeFile(path5.join(temporary, "manifest.json"), `${JSON.stringify(manifest, null, 2)}
 `, "utf8");
-      await fs2.mkdir(path3.dirname(targetDir), { recursive: true });
-      await fs2.rename(temporary, targetDir);
+      await fs4.mkdir(path5.dirname(targetDir), { recursive: true });
+      await fs4.rename(temporary, targetDir);
       return {
         treeOid: `fallback_${treeOid}`,
         commitOid: `fallback_${treeOid}`,
         changedFiles: entries.filter((entry) => entry.type !== "directory").map((entry) => ({ path: entry.path, status: "modified" }))
       };
     } catch (error) {
-      await fs2.rm(temporary, { recursive: true, force: true }).catch(() => void 0);
+      await fs4.rm(temporary, { recursive: true, force: true }).catch(() => void 0);
       throw error;
     }
   }
-  async inspectWorkspace() {
-    const entries = await this.scanTree(this.workDir);
+  async inspectWorkspace(options = {}) {
+    const entries = await this.scanTree(this.workDir, options.omitPaths ?? []);
     return `fallback_${await hashSnapshot(this.workDir, entries)}`;
+  }
+  async snapshotTreeOid(sessionId, checkpointId, omitPaths = []) {
+    const snapshot = await this.readSnapshot(sessionId, checkpointId);
+    const entries = snapshot.manifest.entries.filter((entry) => !isPathOmitted(entry.path, omitPaths));
+    return `fallback_${await hashSnapshot(snapshot.filesDir, entries)}`;
   }
   /** Compare a persisted fallback manifest with the current workspace. */
   async getChangedFiles(sessionId, checkpointId) {
     const snapshotDir = this.getCheckpointDir(sessionId, checkpointId);
-    const raw = await fs2.readFile(path3.join(snapshotDir, "manifest.json"));
+    const raw = await fs4.readFile(path5.join(snapshotDir, "manifest.json"));
     const manifest = parseManifest(raw.toString("utf8"));
-    const filesDir = path3.join(snapshotDir, "files");
+    const filesDir = path5.join(snapshotDir, "files");
     const current = await this.scanTree(this.workDir);
     const targetByPath = new Map(manifest.entries.filter((entry) => entry.type !== "directory").map((entry) => [entry.path, entry]));
     const currentByPath = new Map(current.filter((entry) => entry.type !== "directory").map((entry) => [entry.path, entry]));
@@ -1224,35 +1616,41 @@ var FallbackSnapshotEngine = class {
     }
     return results;
   }
-  async restoreSnapshot(sessionId, checkpointId) {
+  async restoreSnapshot(sessionId, checkpointId, options = {}) {
     const snapshotDir = this.getCheckpointDir(sessionId, checkpointId);
-    const raw = await fs2.readFile(path3.join(snapshotDir, "manifest.json"), "utf8").catch((error) => {
+    const raw = await fs4.readFile(path5.join(snapshotDir, "manifest.json"), "utf8").catch((error) => {
       if (error?.code === "ENOENT") throw new Error(`Fallback snapshot '${checkpointId}' is missing or uses an unsupported legacy format.`);
       throw error;
     });
     const manifest = parseManifest(raw);
-    const filesDir = path3.join(snapshotDir, "files");
-    const targetPaths = new Set(manifest.entries.map((entry) => entry.path));
+    const filesDir = path5.join(snapshotDir, "files");
+    const preservePaths = options.preservePaths ?? [];
+    const targetPaths = new Set(manifest.entries.filter((entry) => !isPathOmitted(entry.path, preservePaths)).map((entry) => entry.path));
     const currentEntries = await this.scanTree(this.workDir);
+    await assertNoSymlinkAncestors(this.workDir, [
+      ...currentEntries.map((entry) => entry.path),
+      ...manifest.entries.map((entry) => entry.path)
+    ]);
     for (const entry of currentEntries.sort(deepestFirst)) {
+      if (isPathOmitted(entry.path, preservePaths)) continue;
       if (targetPaths.has(entry.path)) continue;
-      await fs2.rm(this.resolveSafe(entry.path), { recursive: true, force: true });
+      await fs4.rm(this.resolveSafe(entry.path), { recursive: true, force: true });
     }
-    for (const entry of manifest.entries.filter((item) => item.type === "directory").sort(shallowestFirst)) {
+    for (const entry of manifest.entries.filter((item) => item.type === "directory" && !isPathOmitted(item.path, preservePaths)).sort(shallowestFirst)) {
       const destination = this.resolveSafe(entry.path);
-      const stat = await fs2.lstat(destination).catch(() => void 0);
-      if (stat && !stat.isDirectory()) await fs2.rm(destination, { recursive: true, force: true });
-      await fs2.mkdir(destination, { recursive: true, mode: entry.mode });
+      const stat = await fs4.lstat(destination).catch(() => void 0);
+      if (stat && !stat.isDirectory()) await fs4.rm(destination, { recursive: true, force: true });
+      await fs4.mkdir(destination, { recursive: true, mode: entry.mode });
     }
-    for (const entry of manifest.entries.filter((item) => item.type !== "directory")) {
+    for (const entry of manifest.entries.filter((item) => item.type !== "directory" && !isPathOmitted(item.path, preservePaths))) {
       const destination = this.resolveSafe(entry.path);
-      await fs2.mkdir(path3.dirname(destination), { recursive: true });
-      await fs2.rm(destination, { recursive: true, force: true });
+      await fs4.mkdir(path5.dirname(destination), { recursive: true });
+      await fs4.rm(destination, { recursive: true, force: true });
       if (entry.type === "file") {
-        await fs2.copyFile(path3.join(filesDir, ...entry.path.split("/")), destination);
-        await fs2.chmod(destination, entry.mode).catch(() => void 0);
+        await fs4.copyFile(path5.join(filesDir, ...entry.path.split("/")), destination);
+        await fs4.chmod(destination, entry.mode).catch(() => void 0);
       } else {
-        await fs2.symlink(entry.linkTarget, destination);
+        await fs4.symlink(entry.linkTarget, destination);
       }
     }
   }
@@ -1266,32 +1664,36 @@ var FallbackSnapshotEngine = class {
         throw new Error(`Workspace changed after the latest checkpoint: expected ${options.expectedCurrentTreeOid}, observed ${currentTree}`);
       }
     }
-    const raw = await fs2.readFile(path3.join(snapshotDir, "manifest.json"), "utf8");
+    const raw = await fs4.readFile(path5.join(snapshotDir, "manifest.json"), "utf8");
     const manifest = parseManifest(raw);
-    const filesDir = path3.join(snapshotDir, "files");
+    const filesDir = path5.join(snapshotDir, "files");
     const selected = (entry) => normalized.some((item) => entry.path === item || entry.path.startsWith(`${item}/`));
     const currentEntries = (await this.scanTree(this.workDir)).filter(selected).sort(deepestFirst);
     const targetEntries = manifest.entries.filter(selected);
+    await assertNoSymlinkAncestors(this.workDir, [
+      ...currentEntries.map((entry) => entry.path),
+      ...targetEntries.map((entry) => entry.path)
+    ]);
     if (currentEntries.length === 0 && targetEntries.length === 0) {
       throw new Error(`None of the selected paths exist in the current or target snapshot: ${normalized.join(", ")}`);
     }
     const targetPaths = new Set(targetEntries.map((entry) => entry.path));
     for (const entry of currentEntries) {
-      if (!targetPaths.has(entry.path)) await fs2.rm(this.resolveSafe(entry.path), { recursive: true, force: true });
+      if (!targetPaths.has(entry.path)) await fs4.rm(this.resolveSafe(entry.path), { recursive: true, force: true });
     }
     for (const entry of targetEntries.filter((item) => item.type === "directory").sort(shallowestFirst)) {
       const destination = this.resolveSafe(entry.path);
-      await fs2.mkdir(destination, { recursive: true, mode: entry.mode });
+      await fs4.mkdir(destination, { recursive: true, mode: entry.mode });
     }
     for (const entry of targetEntries.filter((item) => item.type !== "directory")) {
       const destination = this.resolveSafe(entry.path);
-      await fs2.mkdir(path3.dirname(destination), { recursive: true });
-      await fs2.rm(destination, { recursive: true, force: true });
+      await fs4.mkdir(path5.dirname(destination), { recursive: true });
+      await fs4.rm(destination, { recursive: true, force: true });
       if (entry.type === "file") {
-        await fs2.copyFile(path3.join(filesDir, ...entry.path.split("/")), destination);
-        await fs2.chmod(destination, entry.mode).catch(() => void 0);
+        await fs4.copyFile(path5.join(filesDir, ...entry.path.split("/")), destination);
+        await fs4.chmod(destination, entry.mode).catch(() => void 0);
       } else {
-        await fs2.symlink(entry.linkTarget, destination);
+        await fs4.symlink(entry.linkTarget, destination);
       }
     }
     return normalized;
@@ -1299,19 +1701,19 @@ var FallbackSnapshotEngine = class {
   async removeSnapshot(sessionId, checkpointId) {
     const target = this.getCheckpointDir(sessionId, checkpointId);
     const before = await directorySize(target);
-    await fs2.rm(target, { recursive: true, force: true });
+    await fs4.rm(target, { recursive: true, force: true });
     return before;
   }
   async captureTree(sourceRoot, destinationRoot, plannedEntries) {
     const entries = plannedEntries ?? await this.scanTree(sourceRoot);
     for (const entry of entries) {
-      const source = path3.join(sourceRoot, ...entry.path.split("/"));
-      const destination = path3.join(destinationRoot, ...entry.path.split("/"));
+      const source = path5.join(sourceRoot, ...entry.path.split("/"));
+      const destination = path5.join(destinationRoot, ...entry.path.split("/"));
       if (entry.type === "directory") {
-        await fs2.mkdir(destination, { recursive: true, mode: entry.mode });
+        await fs4.mkdir(destination, { recursive: true, mode: entry.mode });
       } else if (entry.type === "file") {
-        await fs2.mkdir(path3.dirname(destination), { recursive: true });
-        await fs2.copyFile(source, destination);
+        await fs4.mkdir(path5.dirname(destination), { recursive: true });
+        await fs4.copyFile(source, destination);
       }
     }
     return entries;
@@ -1320,17 +1722,17 @@ var FallbackSnapshotEngine = class {
     if (target.type !== live.type || target.mode !== live.mode) return false;
     if (target.type === "symlink") return target.linkTarget === live.linkTarget;
     if (target.type !== "file") return true;
-    const expected = await fs2.readFile(path3.join(filesDir, ...target.path.split("/"))).catch(() => void 0);
-    const actual = await fs2.readFile(path3.join(this.workDir, ...live.path.split("/"))).catch(() => void 0);
+    const expected = await fs4.readFile(path5.join(filesDir, ...target.path.split("/"))).catch(() => void 0);
+    const actual = await fs4.readFile(path5.join(this.workDir, ...live.path.split("/"))).catch(() => void 0);
     return Boolean(expected && actual && expected.equals(actual));
   }
   async readSnapshot(sessionId, checkpointId) {
     const snapshotDir = this.getCheckpointDir(sessionId, checkpointId);
-    const manifest = parseManifest(await fs2.readFile(path3.join(snapshotDir, "manifest.json"), "utf8"));
-    return { manifest, filesDir: path3.join(snapshotDir, "files") };
+    const manifest = parseManifest(await fs4.readFile(path5.join(snapshotDir, "manifest.json"), "utf8"));
+    return { manifest, filesDir: path5.join(snapshotDir, "files") };
   }
   async entryContent(entry, filesDir) {
-    if (entry.type === "file") return fs2.readFile(path3.join(filesDir, ...entry.path.split("/")));
+    if (entry.type === "file") return fs4.readFile(path5.join(filesDir, ...entry.path.split("/")));
     if (entry.type === "symlink") return Buffer.from(`symlink -> ${entry.linkTarget ?? ""}
 `, "utf8");
     return Buffer.alloc(0);
@@ -1340,7 +1742,7 @@ var FallbackSnapshotEngine = class {
     let totalBytes = 0;
     for (const entry of entries) {
       if (entry.type !== "file") continue;
-      const stat = await fs2.stat(path3.join(this.workDir, ...entry.path.split("/")));
+      const stat = await fs4.stat(path5.join(this.workDir, ...entry.path.split("/")));
       if (this.maxSnapshotFileBytes > 0 && stat.size > this.maxSnapshotFileBytes) {
         throw new SnapshotSizeError({ file: entry.path, fileBytes: stat.size, limitBytes: this.maxSnapshotFileBytes });
       }
@@ -1350,18 +1752,19 @@ var FallbackSnapshotEngine = class {
       }
     }
   }
-  async scanTree(root) {
+  async scanTree(root, omitPaths = []) {
     const entries = [];
     const visit = async (directory, relative = "") => {
-      for (const dirent of await fs2.readdir(directory, { withFileTypes: true })) {
-        const absolute = path3.join(directory, dirent.name);
+      for (const dirent of await fs4.readdir(directory, { withFileTypes: true })) {
+        const absolute = path5.join(directory, dirent.name);
         if (this.isPreserved(absolute)) continue;
         const childRelative = relative ? `${relative}/${dirent.name}` : dirent.name;
         validateRelativePath(childRelative);
-        const stat = await fs2.lstat(absolute);
+        if (isPathOmitted(childRelative, omitPaths)) continue;
+        const stat = await fs4.lstat(absolute);
         const mode = stat.mode & 511;
         if (stat.isSymbolicLink()) {
-          entries.push({ path: childRelative, type: "symlink", mode, linkTarget: await fs2.readlink(absolute) });
+          entries.push({ path: childRelative, type: "symlink", mode, linkTarget: await fs4.readlink(absolute) });
         } else if (stat.isDirectory()) {
           entries.push({ path: childRelative, type: "directory", mode });
           await visit(absolute, childRelative);
@@ -1374,25 +1777,28 @@ var FallbackSnapshotEngine = class {
     return entries.sort((left, right) => left.path.localeCompare(right.path));
   }
   isPreserved(absolute) {
-    const resolved = path3.resolve(absolute);
-    return this.preservePaths.some((base) => resolved === base || resolved.startsWith(`${base}${path3.sep}`));
+    const resolved = path5.resolve(absolute);
+    return this.preservePaths.some((base) => resolved === base || resolved.startsWith(`${base}${path5.sep}`));
   }
   resolveSafe(relative) {
     validateRelativePath(relative);
-    const absolute = path3.resolve(this.workDir, ...relative.split("/"));
-    const relation = path3.relative(this.workDir, absolute);
-    if (!relation || relation === ".." || relation.startsWith(`..${path3.sep}`) || path3.isAbsolute(relation)) {
+    const absolute = path5.resolve(this.workDir, ...relative.split("/"));
+    const relation = path5.relative(this.workDir, absolute);
+    if (!relation || relation === ".." || relation.startsWith(`..${path5.sep}`) || path5.isAbsolute(relation)) {
       throw new Error(`Unsafe snapshot path '${relative}'.`);
     }
     if (this.isPreserved(absolute)) throw new Error(`Snapshot path overlaps protected storage: '${relative}'.`);
     return absolute;
   }
 };
+function isPathOmitted(value, omitPaths) {
+  return omitPaths.some((item) => value === item || value.startsWith(`${item}/`));
+}
 async function hashSnapshot(root, entries) {
-  const hash = createHash2("sha256");
+  const hash = createHash3("sha256");
   for (const entry of entries) {
     hash.update(`${entry.type}\0${entry.path}\0${entry.mode}\0${entry.linkTarget ?? ""}\0`);
-    if (entry.type === "file") hash.update(await fs2.readFile(path3.join(root, ...entry.path.split("/"))));
+    if (entry.type === "file") hash.update(await fs4.readFile(path5.join(root, ...entry.path.split("/"))));
   }
   return hash.digest("hex");
 }
@@ -1409,7 +1815,7 @@ function parseManifest(raw) {
   return parsed;
 }
 function validateRelativePath(value) {
-  if (!value || value.includes("\0") || value.includes("\\") || path3.posix.isAbsolute(value) || value.split("/").some((part) => part === "" || part === "." || part === "..")) {
+  if (!value || value.includes("\0") || value.includes("\\") || path5.posix.isAbsolute(value) || value.split("/").some((part) => part === "" || part === "." || part === "..")) {
     throw new Error(`Unsafe relative path '${value}'.`);
   }
 }
@@ -1468,10 +1874,10 @@ function sharedSuffix(left, right, prefix) {
 async function directorySize(root) {
   let total = 0;
   const visit = async (directory) => {
-    for (const entry of await fs2.readdir(directory, { withFileTypes: true }).catch(() => [])) {
-      const absolute = path3.join(directory, entry.name);
+    for (const entry of await fs4.readdir(directory, { withFileTypes: true }).catch(() => [])) {
+      const absolute = path5.join(directory, entry.name);
       if (entry.isDirectory()) await visit(absolute);
-      else total += (await fs2.stat(absolute).catch(() => ({ size: 0 }))).size;
+      else total += (await fs4.stat(absolute).catch(() => ({ size: 0 }))).size;
     }
   };
   await visit(root);
@@ -1480,16 +1886,30 @@ async function directorySize(root) {
 
 // src/core/dag-manager.ts
 init_esm_shims();
-import path4 from "path";
-import fs3 from "fs/promises";
-import { randomUUID as randomUUID3 } from "crypto";
+import path6 from "path";
+import fs5 from "fs/promises";
+import { createCipheriv as createCipheriv3, createDecipheriv as createDecipheriv3, createHash as createHash4, randomBytes as randomBytes3, randomUUID as randomUUID4 } from "crypto";
 import pc from "picocolors";
+var DAG_FORMAT_VERSION = 1;
+var DAG_ENVELOPE_VERSION = 1;
+var DAGStateKeyError = class extends Error {
+  code = "DAG_STATE_KEY_INVALID";
+  constructor(message = "DAG state encryption key is missing or invalid.") {
+    super(message);
+    this.name = "DAGStateKeyError";
+  }
+};
 var DAGStateManager = class {
   tree;
   storageFile;
+  encryptionKey;
+  previousEncryptionKey;
   constructor(options) {
     const branch = options.initialBranch || "main";
+    this.encryptionKey = options.encryptionKey?.trim() ? createHash4("sha256").update(options.encryptionKey).digest() : void 0;
+    this.previousEncryptionKey = options.previousEncryptionKey?.trim() ? createHash4("sha256").update(options.previousEncryptionKey).digest() : void 0;
     this.tree = {
+      formatVersion: DAG_FORMAT_VERSION,
       sessionId: options.sessionId,
       currentBranch: branch,
       currentCheckpointId: null,
@@ -1505,17 +1925,19 @@ var DAGStateManager = class {
       }
     };
     const safeSessionKey = Buffer.from(options.sessionId, "utf8").toString("base64url") || "_";
-    this.storageFile = path4.join(options.storageDir, `dag_${safeSessionKey}.json`);
+    this.storageFile = path6.join(options.storageDir, `dag_${safeSessionKey}.json`);
   }
   /**
    * 初始化并尝试从本地恢复树结构
    */
   async init() {
     try {
-      const content = await fs3.readFile(this.storageFile, "utf-8");
-      const loadedTree = JSON.parse(content);
-      this.assertTree(loadedTree);
-      this.tree = loadedTree;
+      const content = await fs5.readFile(this.storageFile, "utf-8");
+      const decoded = this.decode(content);
+      const { tree, migrated } = this.migrateTree(decoded.tree);
+      this.assertTree(tree);
+      this.tree = tree;
+      if (migrated || decoded.usedPreviousKey || this.isPlaintext(content)) await this.persist();
     } catch (error) {
       if (error?.code !== "ENOENT") throw error;
     }
@@ -1524,14 +1946,13 @@ var DAGStateManager = class {
    * 持久化当前 DAG 树到本地 JSON
    */
   async persist() {
-    await fs3.mkdir(path4.dirname(this.storageFile), { recursive: true });
-    const temporary = `${this.storageFile}.${randomUUID3()}.tmp`;
+    await fs5.mkdir(path6.dirname(this.storageFile), { recursive: true });
+    const temporary = `${this.storageFile}.${randomUUID4()}.tmp`;
     try {
-      await fs3.writeFile(temporary, `${JSON.stringify(this.tree, null, 2)}
-`, { encoding: "utf-8", flag: "wx" });
-      await fs3.rename(temporary, this.storageFile);
+      await fs5.writeFile(temporary, this.encode(this.tree), { encoding: "utf-8", flag: "wx" });
+      await fs5.rename(temporary, this.storageFile);
     } finally {
-      await fs3.rm(temporary, { force: true }).catch(() => void 0);
+      await fs5.rm(temporary, { force: true }).catch(() => void 0);
     }
   }
   /**
@@ -1767,6 +2188,9 @@ var DAGStateManager = class {
     return lines.join("\n");
   }
   assertTree(tree) {
+    if (tree.formatVersion !== DAG_FORMAT_VERSION) {
+      throw new Error(`Unsupported DAG storage format ${String(tree.formatVersion)}; expected ${DAG_FORMAT_VERSION}.`);
+    }
     if (!tree || tree.sessionId !== this.tree.sessionId || typeof tree.nodes !== "object" || typeof tree.branches !== "object") {
       throw new Error(`Invalid or foreign DAG state in '${this.storageFile}'.`);
     }
@@ -1781,12 +2205,87 @@ var DAGStateManager = class {
       if (!Array.isArray(node.sessionState.messages) || !Array.isArray(node.changedFiles)) {
         throw new Error(`DAG checkpoint '${id}' has invalid session or file state.`);
       }
+      if (node.assistantMessageId !== void 0 && (typeof node.assistantMessageId !== "string" || !node.assistantMessageId.trim())) {
+        throw new Error(`DAG checkpoint '${id}' has an invalid assistant message id.`);
+      }
+      if (node.userMessageId !== void 0 && (typeof node.userMessageId !== "string" || !node.userMessageId.trim())) {
+        throw new Error(`DAG checkpoint '${id}' has an invalid user message id.`);
+      }
+      if (node.assistantMessageIds !== void 0 && (!Array.isArray(node.assistantMessageIds) || node.assistantMessageIds.some((messageId) => typeof messageId !== "string" || !messageId.trim()))) {
+        throw new Error(`DAG checkpoint '${id}' has invalid assistant message ids.`);
+      }
+      if (node.toolMutations !== void 0 && (!Array.isArray(node.toolMutations) || node.toolMutations.some((item) => !item || typeof item.toolName !== "string" || !item.toolName.trim() || !["success", "error"].includes(item.status) || !Array.isArray(item.changedFiles) || !Number.isFinite(item.recordedAt) || item.error !== void 0 && (typeof item.error !== "string" || item.error.length > 300)))) {
+        throw new Error(`DAG checkpoint '${id}' has invalid tool mutation evidence.`);
+      }
       if (node.parentId !== null && !tree.nodes[node.parentId]) {
         throw new Error(`DAG checkpoint '${id}' references missing parent '${node.parentId}'.`);
       }
       if (!tree.branches[node.branch]) {
         throw new Error(`DAG checkpoint '${id}' references missing branch '${node.branch}'.`);
       }
+    }
+  }
+  migrateTree(tree) {
+    if (!tree || typeof tree !== "object") {
+      throw new Error(`Invalid or foreign DAG state in '${this.storageFile}'.`);
+    }
+    if (tree.formatVersion === void 0) {
+      return { tree: { ...tree, formatVersion: DAG_FORMAT_VERSION }, migrated: true };
+    }
+    if (tree.formatVersion !== DAG_FORMAT_VERSION) {
+      throw new Error(`Unsupported DAG storage format ${String(tree.formatVersion)}; expected ${DAG_FORMAT_VERSION}.`);
+    }
+    return { tree, migrated: false };
+  }
+  encode(tree) {
+    const plaintext = Buffer.from(JSON.stringify(tree, null, 2), "utf8");
+    if (!this.encryptionKey) return `${plaintext.toString("utf8")}
+`;
+    const nonce = randomBytes3(12);
+    const cipher = createCipheriv3("aes-256-gcm", this.encryptionKey, nonce);
+    const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+    const envelope = {
+      kind: "dsh-time-machine-dag",
+      version: DAG_ENVELOPE_VERSION,
+      nonce: nonce.toString("base64url"),
+      ciphertext: ciphertext.toString("base64url"),
+      tag: cipher.getAuthTag().toString("base64url")
+    };
+    return `${JSON.stringify(envelope, null, 2)}
+`;
+  }
+  decode(content) {
+    let parsed;
+    try {
+      parsed = JSON.parse(content);
+    } catch {
+      throw new Error(`Invalid DAG state JSON in '${this.storageFile}'.`);
+    }
+    if (isDagEnvelope(parsed)) {
+      if (!this.encryptionKey) throw new DAGStateKeyError("Encrypted DAG state requires the configured key.");
+      if (parsed.version !== DAG_ENVELOPE_VERSION) throw new DAGStateKeyError("Encrypted DAG state format is unsupported.");
+      const keys = [{ key: this.encryptionKey, previous: false }, ...this.previousEncryptionKey ? [{ key: this.previousEncryptionKey, previous: true }] : []];
+      for (const candidate of keys) {
+        try {
+          const decipher = createDecipheriv3("aes-256-gcm", candidate.key, Buffer.from(parsed.nonce, "base64url"));
+          decipher.setAuthTag(Buffer.from(parsed.tag, "base64url"));
+          const plaintext = Buffer.concat([
+            decipher.update(Buffer.from(parsed.ciphertext, "base64url")),
+            decipher.final()
+          ]);
+          return { tree: JSON.parse(plaintext.toString("utf8")), usedPreviousKey: candidate.previous };
+        } catch {
+        }
+      }
+      throw new DAGStateKeyError("Encrypted DAG state cannot be authenticated with the configured key.");
+    }
+    return { tree: parsed, usedPreviousKey: false };
+  }
+  isPlaintext(content) {
+    try {
+      return !isDagEnvelope(JSON.parse(content));
+    } catch {
+      return false;
     }
   }
   async commitMutation(mutate) {
@@ -1802,6 +2301,11 @@ var DAGStateManager = class {
 };
 function cloneJson(value) {
   return JSON.parse(JSON.stringify(value));
+}
+function isDagEnvelope(value) {
+  if (!value || typeof value !== "object") return false;
+  const item = value;
+  return item.kind === "dsh-time-machine-dag" && typeof item.version === "number" && typeof item.nonce === "string" && typeof item.ciphertext === "string" && typeof item.tag === "string";
 }
 
 // src/core/reflection-advisor.ts
@@ -1918,10 +2422,10 @@ var KeyedOperationLock = class {
 
 // src/core/workspace-lock.ts
 init_esm_shims();
-import fs4 from "fs/promises";
-import path5 from "path";
+import fs6 from "fs/promises";
+import path7 from "path";
 import os from "os";
-import { randomUUID as randomUUID4 } from "crypto";
+import { randomUUID as randomUUID5 } from "crypto";
 var WorkspaceBusyError = class extends Error {
   code = "WORKSPACE_BUSY";
   constructor(lockPath, timeoutMs) {
@@ -1935,13 +2439,13 @@ var WorkspaceFileLock = class {
   retryMs;
   staleMs;
   constructor(lockPath, options = {}) {
-    this.lockPath = path5.resolve(lockPath);
+    this.lockPath = path7.resolve(lockPath);
     this.timeoutMs = Math.max(0, Math.floor(options.timeoutMs ?? 3e4));
     this.retryMs = Math.max(5, Math.floor(options.retryMs ?? 25));
     this.staleMs = Math.max(this.retryMs, Math.floor(options.staleMs ?? 12e4));
   }
   async run(operation) {
-    const token = randomUUID4();
+    const token = randomUUID5();
     const handle = await this.acquire(token);
     try {
       return await operation();
@@ -1951,11 +2455,11 @@ var WorkspaceFileLock = class {
     }
   }
   async acquire(token) {
-    await fs4.mkdir(path5.dirname(this.lockPath), { recursive: true });
+    await fs6.mkdir(path7.dirname(this.lockPath), { recursive: true });
     const startedAt = Date.now();
     while (true) {
       try {
-        const handle = await fs4.open(this.lockPath, "wx");
+        const handle = await fs6.open(this.lockPath, "wx");
         await handle.writeFile(JSON.stringify({ token, pid: process.pid, host: os.hostname(), createdAt: Date.now() }), "utf8");
         return handle;
       } catch (error) {
@@ -1967,24 +2471,24 @@ var WorkspaceFileLock = class {
     }
   }
   async removeDeadOwner() {
-    const stat = await fs4.stat(this.lockPath).catch(() => void 0);
+    const stat = await fs6.stat(this.lockPath).catch(() => void 0);
     if (!stat) return;
-    const owner = await fs4.readFile(this.lockPath, "utf8").then((value) => JSON.parse(value)).catch(() => ({}));
+    const owner = await fs6.readFile(this.lockPath, "utf8").then((value) => JSON.parse(value)).catch(() => ({}));
     const age = Date.now() - (owner.createdAt ?? stat.mtimeMs);
     if (owner.pid && owner.pid !== process.pid) {
       try {
         process.kill(owner.pid, 0);
         return;
       } catch {
-        await fs4.rm(this.lockPath, { force: true }).catch(() => void 0);
+        await fs6.rm(this.lockPath, { force: true }).catch(() => void 0);
         return;
       }
     }
-    if (age > this.staleMs) await fs4.rm(this.lockPath, { force: true }).catch(() => void 0);
+    if (age > this.staleMs) await fs6.rm(this.lockPath, { force: true }).catch(() => void 0);
   }
   async release(token) {
-    const owner = await fs4.readFile(this.lockPath, "utf8").then((value) => JSON.parse(value)).catch(() => void 0);
-    if (owner?.token === token) await fs4.rm(this.lockPath, { force: true }).catch(() => void 0);
+    const owner = await fs6.readFile(this.lockPath, "utf8").then((value) => JSON.parse(value)).catch(() => void 0);
+    if (owner?.token === token) await fs6.rm(this.lockPath, { force: true }).catch(() => void 0);
   }
 };
 
@@ -2003,6 +2507,15 @@ var RestorePlanError = class extends Error {
     this.name = "RestorePlanError";
   }
 };
+var ExternalEffectsUnresolvedError = class extends Error {
+  constructor(effectIds) {
+    super(`Restore requires explicit compensation for unresolved external effects: ${effectIds.join(", ")}`);
+    this.effectIds = effectIds;
+    this.name = "ExternalEffectsUnresolvedError";
+  }
+  effectIds;
+  code = "EXTERNAL_EFFECTS_UNRESOLVED";
+};
 var TimeMachineService = class {
   workDir;
   storageDir;
@@ -2018,9 +2531,9 @@ var TimeMachineService = class {
   restorePlans = /* @__PURE__ */ new Map();
   externalEffectAdapters = /* @__PURE__ */ new Map();
   constructor(options) {
-    this.workDir = path6.resolve(options.workDir);
-    this.storageDir = options.storageDir ? path6.resolve(options.storageDir) : path6.join(this.workDir, ".dsh", "time-machine");
-    this.journalDir = path6.join(this.storageDir, "restore-journals");
+    this.workDir = path8.resolve(options.workDir);
+    this.storageDir = options.storageDir ? path8.resolve(options.storageDir) : path8.join(this.workDir, ".dsh", "time-machine");
+    this.journalDir = path8.join(this.storageDir, "restore-journals");
     this.config = {
       autoSnapshot: options.config?.autoSnapshot ?? true,
       enableReflectionAdvisor: options.config?.enableReflectionAdvisor ?? true,
@@ -2035,16 +2548,21 @@ var TimeMachineService = class {
       maxSnapshots: Math.max(0, Math.floor(options.config?.maxSnapshots ?? 0)),
       maxStorageBytes: Math.max(0, Math.floor(options.config?.maxStorageBytes ?? 0)),
       shadowStore: options.config?.shadowStore ?? false,
+      shadowStoreEncryptionKeyEnv: options.config?.shadowStoreEncryptionKeyEnv ?? "",
+      shadowStoreEncryptionPreviousKeyEnv: options.config?.shadowStoreEncryptionPreviousKeyEnv ?? "",
       autoPrune: options.config?.autoPrune ?? false,
       retentionMaxAgeMs: Math.max(0, Math.floor(options.config?.retentionMaxAgeMs ?? 0)),
       workspaceLockTimeoutMs: Math.max(0, Math.floor(options.config?.workspaceLockTimeoutMs ?? 3e4)),
       maxQuarantineBytes: Math.max(0, Math.floor(options.config?.maxQuarantineBytes ?? 0)),
       quarantineEncryptionKeyEnv: options.config?.quarantineEncryptionKeyEnv ?? "",
+      stateEncryptionKeyEnv: options.config?.stateEncryptionKeyEnv ?? "",
+      stateEncryptionPreviousKeyEnv: options.config?.stateEncryptionPreviousKeyEnv ?? "",
       restorePlanTtlMs: Math.max(0, Math.floor(options.config?.restorePlanTtlMs ?? 9e5)),
       maxSnapshotFileBytes: Math.max(0, Math.floor(options.config?.maxSnapshotFileBytes ?? 0)),
       maxSnapshotBytes: Math.max(0, Math.floor(options.config?.maxSnapshotBytes ?? 0)),
       allowPartialSnapshots: options.config?.allowPartialSnapshots ?? false,
-      enableAgentWriteLedger: options.config?.enableAgentWriteLedger ?? false,
+      enableAgentWriteLedger: options.config?.preserveVerifiedHandEditsByDefault ? true : options.config?.enableAgentWriteLedger ?? false,
+      preserveVerifiedHandEditsByDefault: options.config?.preserveVerifiedHandEditsByDefault ?? false,
       autoPreCommandSnapshot: options.config?.autoPreCommandSnapshot ?? false,
       preCommandTools: [...options.config?.preCommandTools ?? ["write", "edit", "str_replace_editor", "bash", "shell", "pwsh", "powershell", "terminal_bash", "terminal_exec", "run_code", "python"]],
       preCommandMaxPerTurn: Math.max(0, Math.floor(options.config?.preCommandMaxPerTurn ?? 1))
@@ -2053,8 +2571,10 @@ var TimeMachineService = class {
       workDir: this.workDir,
       refPrefix: this.config.refPrefix,
       preservePaths: [this.storageDir, ...this.config.preservePaths],
-      quarantineDir: path6.join(this.storageDir, "ignored-quarantine"),
-      shadowObjectDir: this.config.shadowStore ? path6.join(this.storageDir, "git-shadow", "objects") : void 0,
+      quarantineDir: path8.join(this.storageDir, "ignored-quarantine"),
+      shadowObjectDir: this.config.shadowStore ? path8.join(this.storageDir, "git-shadow", "objects") : void 0,
+      shadowEncryptionKey: this.config.shadowStoreEncryptionKeyEnv ? process.env[this.config.shadowStoreEncryptionKeyEnv] : void 0,
+      shadowEncryptionPreviousKey: this.config.shadowStoreEncryptionPreviousKeyEnv ? process.env[this.config.shadowStoreEncryptionPreviousKeyEnv] : void 0,
       maxQuarantineBytes: this.config.maxQuarantineBytes,
       quarantineEncryptionKey: this.config.quarantineEncryptionKeyEnv ? process.env[this.config.quarantineEncryptionKeyEnv] : void 0,
       maxSnapshotFileBytes: this.config.maxSnapshotFileBytes,
@@ -2063,12 +2583,12 @@ var TimeMachineService = class {
     });
     this.fallbackEngine = new FallbackSnapshotEngine({
       workDir: this.workDir,
-      storageDir: path6.join(this.storageDir, "fallback_backups"),
+      storageDir: path8.join(this.storageDir, "fallback_backups"),
       preservePaths: [this.storageDir, ...this.config.preservePaths],
       maxSnapshotFileBytes: this.config.maxSnapshotFileBytes,
       maxSnapshotBytes: this.config.maxSnapshotBytes
     });
-    this.workspaceLock = new WorkspaceFileLock(path6.join(this.storageDir, ".workspace.lock"), {
+    this.workspaceLock = new WorkspaceFileLock(path8.join(this.storageDir, ".workspace.lock"), {
       timeoutMs: this.config.workspaceLockTimeoutMs
     });
   }
@@ -2083,7 +2603,9 @@ var TimeMachineService = class {
     if (!mgr) {
       mgr = new DAGStateManager({
         sessionId,
-        storageDir: this.storageDir
+        storageDir: this.storageDir,
+        encryptionKey: this.config.stateEncryptionKeyEnv ? process.env[this.config.stateEncryptionKeyEnv] : void 0,
+        previousEncryptionKey: this.config.stateEncryptionPreviousKeyEnv ? process.env[this.config.stateEncryptionPreviousKeyEnv] : void 0
       });
       await mgr.init();
       this.dagManagers.set(sessionId, mgr);
@@ -2093,6 +2615,28 @@ var TimeMachineService = class {
       this.recoveredSessions.add(sessionId);
     }
     return mgr;
+  }
+  /** Resolve a user-facing undo distance on the active lineage, ignoring internal nodes. */
+  async resolveRelativeTurnCheckpoint(sessionId, count) {
+    if (!Number.isInteger(count) || count < 1) throw new Error("Undo count must be a positive integer.");
+    return (await this.listRelativeTurnCheckpoints(sessionId))[count] ?? null;
+  }
+  /** Return newest-first user-visible boundaries for CLI, REST, and companion projections. */
+  async listRelativeTurnCheckpoints(sessionId, limit = 500) {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 500) throw new Error("Undo list limit must be an integer between 1 and 500.");
+    const dag = await this.getDAGManager(sessionId);
+    const current = dag.getCurrentNode();
+    if (!current) return [];
+    const selected = [];
+    const seenTurns = /* @__PURE__ */ new Set();
+    for (const node of [...dag.getLineage(current.id)].reverse()) {
+      if (node.status === "running" || node.tags?.includes("pre-command") || node.tags?.includes("rescue") || node.tags?.includes("selective-restore")) continue;
+      if (seenTurns.has(node.turnIndex)) continue;
+      seenTurns.add(node.turnIndex);
+      selected.push(node);
+      if (selected.length >= limit) break;
+    }
+    return selected;
   }
   /**
    * 核心：创建原子双轨快照（状态轨 + 工作区轨）
@@ -2108,7 +2652,7 @@ var TimeMachineService = class {
       if (this.config.retentionMaxAgeMs > 0) await this.autoPruneForAge(dag);
       await this.enforceStorageQuota(dag);
     }
-    const checkpointId = `chk_t${params.turnIndex}_${randomUUID5().replace(/-/g, "").slice(0, 12)}`;
+    const checkpointId = `chk_t${params.turnIndex}_${randomUUID6().replace(/-/g, "").slice(0, 12)}`;
     const currentNode = dag.getCurrentNode();
     const parentCommitOid = currentNode ? currentNode.gitCommitOid : null;
     let treeOid = "";
@@ -2151,6 +2695,7 @@ var TimeMachineService = class {
       sessionState: cloneJson2(params.sessionState),
       changedFiles,
       status: params.status || "success",
+      ...params.userMessageId ? { userMessageId: params.userMessageId } : {},
       errorMessage: params.errorMessage,
       failedTools: params.failedTools,
       tags: params.tags,
@@ -2173,11 +2718,24 @@ var TimeMachineService = class {
         status: params.status,
         errorMessage: params.errorMessage,
         failedTools: params.failedTools,
+        ...params.assistantMessageId ? { assistantMessageId: params.assistantMessageId } : {},
+        ...params.assistantMessageIds?.length ? { assistantMessageIds: [...new Set(params.assistantMessageIds)] } : {},
         settledGitTreeOid: settled?.treeOid,
         settledIgnoredPaths: settled?.ignoredPaths,
         unattributedChanges
       });
     });
+  }
+  /** Resolve any durable user/assistant message to its turn checkpoint for message actions. */
+  async findCheckpointByMessage(sessionId, messageId) {
+    if (!messageId.trim()) return null;
+    const dag = await this.getDAGManager(sessionId);
+    const matches = Object.values(dag.tree.nodes).filter((node) => node.userMessageId === messageId || node.assistantMessageId === messageId || node.assistantMessageIds?.includes(messageId)).sort((left, right) => right.timestamp - left.timestamp);
+    return matches[0] ? cloneJson2(matches[0]) : null;
+  }
+  /** Backward-compatible assistant-specific alias. */
+  async findCheckpointByAssistantMessage(sessionId, messageId) {
+    return this.findCheckpointByMessage(sessionId, messageId);
   }
   /**
    * Record a successful Agent write. This is deliberately an integration API:
@@ -2215,6 +2773,38 @@ var TimeMachineService = class {
     if (!node) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
     return cloneJson2(node.unattributedChanges ?? []);
   }
+  async inspectCheckpointDelta(sessionId, checkpointId) {
+    return this.runWorkspaceOperation(async () => {
+      const dag = await this.getDAGManager(sessionId);
+      const node = dag.getNode(checkpointId);
+      if (!node) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
+      if (await this.gitEngine.isGitRepo()) {
+        const settled = await this.gitEngine.inspectWorkspace({ omitPaths: node.omittedPaths ?? [] });
+        return (await this.gitEngine.getDiffBetween(node.gitTreeOid, settled.treeOid)).map((item) => ({ path: item.file, status: item.status }));
+      }
+      return this.fallbackEngine.getChangedFiles(sessionId, checkpointId);
+    });
+  }
+  async recordToolMutation(sessionId, checkpointId, mutation) {
+    return this.runWorkspaceOperation(async () => {
+      const toolName = mutation.toolName.trim();
+      if (!toolName) throw new Error("Tool mutation toolName is required.");
+      if (mutation.status !== "success" && mutation.status !== "error") throw new Error("Tool mutation status must be success or error.");
+      const dag = await this.getDAGManager(sessionId);
+      const node = dag.getNode(checkpointId);
+      if (!node) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
+      const changedFiles = [...new Map(mutation.changedFiles.map((item) => [item.path, { path: item.path, status: item.status }])).values()].sort((a, b) => a.path.localeCompare(b.path));
+      const error = mutation.error?.trim().slice(0, 300);
+      const record = { toolName, status: mutation.status, changedFiles, recordedAt: Date.now(), ...mutation.callId?.trim() ? { callId: mutation.callId.trim() } : {}, ...error ? { error } : {} };
+      return dag.updateNode(checkpointId, { toolMutations: [...node.toolMutations ?? [], record] });
+    });
+  }
+  async getToolMutationLedger(sessionId, checkpointId) {
+    const dag = await this.getDAGManager(sessionId);
+    const node = dag.getNode(checkpointId);
+    if (!node) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
+    return cloneJson2(node.toolMutations ?? []);
+  }
   /**
    * Record an external mutation against a checkpoint. The core deliberately
    * does not execute compensation; an adapter can later use this declaration
@@ -2244,7 +2834,7 @@ var TimeMachineService = class {
         ...effect.compensation?.trim() ? { compensation: effect.compensation.trim() } : {},
         failureSemantics: effect.failureSemantics.trim(),
         status: effect.status,
-        id: effect.id?.trim() || randomUUID5(),
+        id: effect.id?.trim() || randomUUID6(),
         recordedAt: Date.now()
       };
       if ((node.externalEffects ?? []).some((item) => item.id === record.id)) {
@@ -2276,6 +2866,14 @@ var TimeMachineService = class {
   }
   listExternalEffectAdapters() {
     return [...this.externalEffectAdapters.keys()].sort();
+  }
+  /** Read external effects on a checkpoint lineage without executing compensation. */
+  async listExternalEffects(sessionId, checkpointId, unresolvedOnly = false) {
+    const dag = await this.getDAGManager(sessionId);
+    const node = checkpointId === void 0 ? dag.getCurrentNode() : dag.getNode(checkpointId);
+    if (!node) throw new Error(checkpointId === void 0 ? `Session '${sessionId}' has no current checkpoint.` : `Checkpoint '${checkpointId}' does not exist in DAG.`);
+    const effects = dag.getLineage(node.id).flatMap((item) => item.externalEffects ?? []);
+    return cloneJson2(unresolvedOnly ? effects.filter((effect) => effect.status !== "compensated") : effects);
   }
   /**
    * Perform one adapter compensation only when the caller explicitly opts in.
@@ -2353,8 +2951,10 @@ var TimeMachineService = class {
       const dag = await this.getDAGManager(sessionId);
       const target = dag.getNode(checkpointId);
       if (!target) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
-      await this.consumeRestorePlan(sessionId, checkpointId, options.restorePlanId, dag);
-      const restored = await this.restoreWithRescue(dag, target, options);
+      const reviewedPreserve = await this.consumeRestorePlan(sessionId, checkpointId, options.restorePlanId, dag);
+      const effectiveOptions = this.applyReviewedRestorePolicy(options, reviewedPreserve);
+      this.assertExternalEffectsResolved(dag, checkpointId, effectiveOptions.requireExternalEffectsResolved);
+      const restored = await this.restoreWithRescue(dag, target, effectiveOptions);
       try {
         await dag.rewindTo(checkpointId);
       } catch (error) {
@@ -2461,8 +3061,10 @@ var TimeMachineService = class {
     return this.runWorkspaceOperation(async () => {
       const dag = await this.getDAGManager(params.sessionId);
       const baseNode = dag.validateFork(params.fromCheckpointId, params.newBranchName);
-      await this.consumeRestorePlan(params.sessionId, params.fromCheckpointId, params.restore?.restorePlanId, dag);
-      const restored = await this.restoreWithRescue(dag, baseNode, params.restore ?? {}, "fork");
+      const reviewedPreserve = await this.consumeRestorePlan(params.sessionId, params.fromCheckpointId, params.restore?.restorePlanId, dag);
+      const effectiveRestore = this.applyReviewedRestorePolicy(params.restore ?? {}, reviewedPreserve);
+      this.assertExternalEffectsResolved(dag, params.fromCheckpointId, effectiveRestore.requireExternalEffectsResolved);
+      const restored = await this.restoreWithRescue(dag, baseNode, effectiveRestore, "fork");
       let forkedNode;
       try {
         forkedNode = await dag.forkBranch(params.fromCheckpointId, params.newBranchName, params.description);
@@ -2496,6 +3098,20 @@ var TimeMachineService = class {
       };
     });
   }
+  /** Read the reflection advisory for branches abandoned after a checkpoint without mutating state. */
+  async getReflection(sessionId, checkpointId) {
+    const dag = await this.getDAGManager(sessionId);
+    const forkPoint = dag.getNode(checkpointId);
+    if (!forkPoint) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
+    if (!this.config.enableReflectionAdvisor) {
+      return { hasPastFailures: false, failedNodeCount: 0, summaryNote: "", suggestedPromptPrefix: "" };
+    }
+    const abandonedNodes = dag.getAbandonedSubtrees(checkpointId, dag.tree.currentBranch);
+    const forkPointHasFailure = forkPoint.status === "failed" || forkPoint.errorMessage !== void 0 || (forkPoint.failedTools?.length ?? 0) > 0;
+    return this.advisor.generateReflectionNote(
+      forkPointHasFailure ? [forkPoint, ...abandonedNodes] : abandonedNodes
+    );
+  }
   /**
    * 获取指定快照与当前（或另一快照）的代码差异
    */
@@ -2514,7 +3130,7 @@ var TimeMachineService = class {
    * Produce a read-only impact report before a rewind/fork. This deliberately
    * does not create a rescue point, mutate the DAG, or touch workspace files.
    */
-  async previewRestore(sessionId, checkpointId) {
+  async previewRestore(sessionId, checkpointId, options = {}) {
     return this.runWorkspaceOperation(async () => {
       const dag = await this.getDAGManager(sessionId);
       const target = dag.getNode(checkpointId);
@@ -2532,15 +3148,21 @@ var TimeMachineService = class {
       }));
       const expectedTree = current?.settledGitTreeOid ?? current?.gitTreeOid;
       const expectedIgnored = current?.settledIgnoredPaths ?? current?.ignoredPaths ?? [];
-      const driftDiffs = isGit && current && expectedTree && currentState.treeOid !== expectedTree ? await this.gitEngine.getDiffBetween(expectedTree, currentState.treeOid) : [];
-      const conflictingPaths = [.../* @__PURE__ */ new Set([
+      const preserveHandEdits = options.preserveVerifiedHandEdits === true || options.preserveVerifiedHandEdits === void 0 && this.config.preserveVerifiedHandEditsByDefault;
+      const preservedHandEditPaths = preserveHandEdits && current ? await this.findVerifiedHandEdits(current) : [];
+      const driftDiffs = isGit && current && expectedTree && currentState.treeOid !== expectedTree ? await this.gitEngine.getDiffBetween(expectedTree, currentState.treeOid) : !isGit && current && expectedTree && currentState.treeOid !== expectedTree ? (await this.fallbackEngine.getChangedFiles(sessionId, current.id)).map((item) => ({ file: item.path })) : [];
+      const allConflictingPaths = [.../* @__PURE__ */ new Set([
         ...driftDiffs.map((diff) => diff.file),
-        ...!isGit && current && expectedTree && currentState.treeOid !== expectedTree && diffs.length === 0 ? ["(fallback workspace; no file diff available)"] : [],
         ...symmetricDifference2(expectedIgnored, currentState.ignoredPaths).map((item) => `(ignored) ${item}`)
       ])].sort();
+      const conflictingPaths = allConflictingPaths.filter((file) => !preservedHandEditPaths.some((path13) => file === path13 || file.startsWith(`${path13}/`)));
+      const currentLineage = current ? dag.getLineage(current.id) : [];
+      const targetIndex = currentLineage.findIndex((node) => node.id === checkpointId);
+      const externalEffects = currentLineage.slice(targetIndex >= 0 ? targetIndex + 1 : 0).flatMap((node) => node.externalEffects ?? []).map((effect) => cloneJson2(effect));
+      const unresolvedExternalEffectIds = externalEffects.filter((effect) => effect.status !== "compensated").map((effect) => effect.id);
       const workspaceDrifted = Boolean(current && (currentState.treeOid !== expectedTree || !sameStrings(currentState.ignoredPaths, expectedIgnored)));
       this.expireRestorePlans();
-      const planId = `plan_${randomUUID5().replace(/-/g, "")}`;
+      const planId = `plan_${randomUUID6().replace(/-/g, "")}`;
       const createdAt = Date.now();
       const expiresAt = this.config.restorePlanTtlMs > 0 ? createdAt + this.config.restorePlanTtlMs : null;
       this.restorePlans.set(planId, {
@@ -2554,7 +3176,8 @@ var TimeMachineService = class {
         branch: controlPlane.branch,
         operation: controlPlane.operation,
         createdAt,
-        expiresAt
+        expiresAt,
+        preserveVerifiedHandEdits: preserveHandEdits
       });
       return {
         sessionId,
@@ -2568,8 +3191,12 @@ var TimeMachineService = class {
         ignoredPathsToDelete: currentState.ignoredPaths.filter((item) => !targetIgnoredPaths.includes(item)),
         diffs,
         conflictingPaths,
+        preservedHandEditPaths,
+        externalEffects,
+        unresolvedExternalEffectIds,
+        requiresExternalEffectsReview: unresolvedExternalEffectIds.length > 0,
         workspaceDrifted,
-        requiresForce: workspaceDrifted,
+        requiresForce: conflictingPaths.length > 0,
         restorePlanId: planId,
         restorePlanExpiresAt: expiresAt
       };
@@ -2582,7 +3209,7 @@ var TimeMachineService = class {
   }
   /** Consume a preview token and fail closed if the reviewed workspace changed. */
   async consumeRestorePlan(sessionId, checkpointId, planId, dag) {
-    if (!planId) return;
+    if (!planId) return void 0;
     this.expireRestorePlans();
     const plan = this.restorePlans.get(planId);
     this.restorePlans.delete(planId);
@@ -2602,6 +3229,14 @@ var TimeMachineService = class {
     if (controlPlane.headOid !== plan.headOid || controlPlane.branch !== plan.branch || controlPlane.operation !== plan.operation) {
       throw new RestorePlanError("Git HEAD, branch, or in-progress operation changed after preview; run preview again.");
     }
+    return plan.preserveVerifiedHandEdits;
+  }
+  applyReviewedRestorePolicy(options, reviewedPreserve) {
+    if (reviewedPreserve === void 0) return options;
+    if (options.preserveVerifiedHandEdits !== void 0 && options.preserveVerifiedHandEdits !== reviewedPreserve) {
+      throw new RestorePlanError("Restore request hand-edit policy differs from the reviewed preview; run preview again.");
+    }
+    return options.preserveVerifiedHandEdits === void 0 ? { ...options, preserveVerifiedHandEdits: reviewedPreserve } : options;
   }
   async inspectWorkspaceSignature(omitPaths = []) {
     return await this.gitEngine.isGitRepo() ? await this.gitEngine.inspectWorkspace({ omitPaths }) : { treeOid: await this.fallbackEngine.inspectWorkspace(), ignoredPaths: [] };
@@ -2623,6 +3258,7 @@ var TimeMachineService = class {
     const leaves = managers.reduce((sum, manager) => sum + this.pruneCandidates(manager).length, 0);
     const files = await countFiles(this.storageDir);
     const bytes = await directoryBytes2(this.storageDir);
+    const shadowStatus = await this.gitEngine.encryptedShadowStatus();
     return {
       storageDir: this.storageDir,
       bytes,
@@ -2631,19 +3267,33 @@ var TimeMachineService = class {
       checkpoints,
       pruneCandidates: leaves,
       gitObjectsShared: await this.gitEngine.isGitRepo() && !this.config.shadowStore,
-      gitObjectsEncrypted: false,
+      gitObjectsEncrypted: shadowStatus.ready,
+      dagStateEncrypted: Boolean(this.config.stateEncryptionKeyEnv && process.env[this.config.stateEncryptionKeyEnv]),
       quarantineEncrypted: Boolean(this.config.quarantineEncryptionKeyEnv && process.env[this.config.quarantineEncryptionKeyEnv])
     };
   }
+  /** Explicitly migrate a plaintext shadow object directory into the encrypted archive. */
+  async migrateShadowStore() {
+    return this.runWorkspaceOperation(() => this.gitEngine.migrateShadowStore());
+  }
   /** Enumerate persisted sessions without creating a new empty DAG. */
   async listSessions() {
-    const entries = await fs5.readdir(this.storageDir, { withFileTypes: true }).catch(() => []);
+    const entries = await fs7.readdir(this.storageDir, { withFileTypes: true }).catch(() => []);
     const summaries = [];
     for (const entry of entries) {
       if (!entry.isFile() || !entry.name.startsWith("dag_") || !entry.name.endsWith(".json")) continue;
       try {
-        const tree = JSON.parse(await fs5.readFile(path6.join(this.storageDir, entry.name), "utf8"));
-        if (typeof tree.sessionId !== "string") continue;
+        const encodedSessionId = entry.name.slice("dag_".length, -".json".length);
+        const sessionId = encodedSessionId === "_" ? "" : Buffer.from(encodedSessionId, "base64url").toString("utf8");
+        if (!sessionId) continue;
+        const manager = new DAGStateManager({
+          sessionId,
+          storageDir: this.storageDir,
+          encryptionKey: this.config.stateEncryptionKeyEnv ? process.env[this.config.stateEncryptionKeyEnv] : void 0,
+          previousEncryptionKey: this.config.stateEncryptionPreviousKeyEnv ? process.env[this.config.stateEncryptionPreviousKeyEnv] : void 0
+        });
+        await manager.init();
+        const tree = manager.tree;
         const nodes = Object.values(tree.nodes ?? {});
         summaries.push({
           sessionId: tree.sessionId,
@@ -2652,7 +3302,8 @@ var TimeMachineService = class {
           currentCheckpointId: tree.currentCheckpointId,
           updatedAt: nodes.length ? Math.max(...nodes.map((node) => node.timestamp)) : null
         });
-      } catch {
+      } catch (error) {
+        if (error?.code === "DAG_STATE_KEY_INVALID") throw error;
       }
     }
     return summaries.sort((left, right) => (right.updatedAt ?? 0) - (left.updatedAt ?? 0) || left.sessionId.localeCompare(right.sessionId));
@@ -2660,30 +3311,45 @@ var TimeMachineService = class {
   /** Report runtime capabilities so Web/CLI integrations can fail early. */
   async getCapabilities() {
     const git = await this.gitEngine.isGitRepo();
-    const workspace = git ? await this.gitEngine.inspectWorkspaceCapabilities() : { sparseCheckout: false, submodulePaths: [], inProgressOperation: null };
-    const usable = git && !workspace.sparseCheckout && workspace.submodulePaths.length === 0 && !workspace.inProgressOperation;
+    const shadowStatus = await this.gitEngine.encryptedShadowStatus();
+    const workspace = git && !shadowStatus.migrationRequired ? await this.gitEngine.inspectWorkspaceCapabilities() : { sparseCheckout: false, submodulePaths: [], inProgressOperation: null };
+    const usable = git && !shadowStatus.migrationRequired && !workspace.sparseCheckout && workspace.submodulePaths.length === 0 && !workspace.inProgressOperation;
     return {
       version: 1,
+      dagStorageFormatVersion: DAG_FORMAT_VERSION,
       git,
       fallback: !git,
       mergeRestore: usable,
       fallbackTextDiff: !git,
       selectiveRestore: usable || !git,
       shadowStore: git && this.config.shadowStore,
-      shadowStoreEncryption: false,
+      shadowStoreEncryption: git && this.gitEngine.usesEncryptedShadowStore && shadowStatus.ready,
+      shadowStoreMigrationRequired: git && this.gitEngine.usesEncryptedShadowStore && shadowStatus.migrationRequired,
+      shadowStoreKeyRotation: Boolean(
+        this.config.shadowStoreEncryptionKeyEnv && process.env[this.config.shadowStoreEncryptionKeyEnv] && this.config.shadowStoreEncryptionPreviousKeyEnv && process.env[this.config.shadowStoreEncryptionPreviousKeyEnv]
+      ),
+      dagStateEncryption: Boolean(this.config.stateEncryptionKeyEnv && process.env[this.config.stateEncryptionKeyEnv]),
+      dagStateKeyRotation: Boolean(
+        this.config.stateEncryptionKeyEnv && process.env[this.config.stateEncryptionKeyEnv] && this.config.stateEncryptionPreviousKeyEnv && process.env[this.config.stateEncryptionPreviousKeyEnv]
+      ),
       quarantineEncryption: Boolean(this.config.quarantineEncryptionKeyEnv && process.env[this.config.quarantineEncryptionKeyEnv]),
       quarantineMigration: git && Boolean(this.config.quarantineEncryptionKeyEnv),
       partialSnapshots: git && this.config.allowPartialSnapshots && (this.config.maxSnapshotFileBytes > 0 || this.config.maxSnapshotBytes > 0),
       incrementalCapture: usable && this.config.maxSnapshotFileBytes === 0 && this.config.maxSnapshotBytes === 0,
-      handEditPolicy: this.config.enableAgentWriteLedger ? "ledger-opt-in" : "reject-drift",
+      handEditPolicy: this.config.preserveVerifiedHandEditsByDefault ? "ledger-default" : this.config.enableAgentWriteLedger ? "ledger-opt-in" : "reject-drift",
       agentWriteLedger: this.config.enableAgentWriteLedger,
       preCommandSnapshots: this.config.autoPreCommandSnapshot,
       preCommandTools: [...this.config.preCommandTools],
       preCommandMaxPerTurn: this.config.preCommandMaxPerTurn,
+      toolMutationLedger: this.config.autoPreCommandSnapshot,
       unattributedMutationInventory: true,
       externalEffectLedger: true,
       externalEffectAdapters: this.listExternalEffectAdapters(),
+      workspaceRouting: "single-root",
+      workspaceRouteInspection: true,
+      messageAnchors: ["assistant", "user"],
       workspaceIsolation: "shared-lock",
+      rewindSessionMode: "fork",
       workspace,
       policies: {
         restoreMode: this.config.restoreMode,
@@ -2694,6 +3360,7 @@ var TimeMachineService = class {
         maxSnapshotBytes: this.config.maxSnapshotBytes,
         allowPartialSnapshots: this.config.allowPartialSnapshots,
         enableAgentWriteLedger: this.config.enableAgentWriteLedger,
+        preserveVerifiedHandEditsByDefault: this.config.preserveVerifiedHandEditsByDefault,
         autoPreCommandSnapshot: this.config.autoPreCommandSnapshot,
         preCommandTools: [...this.config.preCommandTools],
         preCommandMaxPerTurn: this.config.preCommandMaxPerTurn,
@@ -2711,27 +3378,44 @@ var TimeMachineService = class {
       const olderThanMs = options.olderThanMs !== void 0 ? Math.max(0, Math.floor(options.olderThanMs)) : void 0;
       const cutoff = olderThanMs !== void 0 && olderThanMs > 0 ? Date.now() - olderThanMs : void 0;
       let removed = [];
+      const dryRun = options.dryRun === true;
+      const currentLineageIds = new Set(dag.getLineage(dag.tree.currentCheckpointId ?? "").map((node) => node.id));
+      const protectedIds = /* @__PURE__ */ new Set([
+        ...dag.tree.currentCheckpointId ? [dag.tree.currentCheckpointId] : [],
+        ...Object.values(dag.tree.branches).map((branch) => branch.headId).filter(Boolean)
+      ]);
+      const plannedBranchRemoval = options.abandonedBranches ? nodes.filter((node) => node.branch !== dag.tree.currentBranch && !currentLineageIds.has(node.id)) : [];
       if (options.abandonedBranches) {
-        const abandonedBranches = Object.keys(dag.tree.branches).filter((branch) => branch !== dag.tree.currentBranch);
-        for (const branch of abandonedBranches) removed.push(...await dag.removeBranch(branch));
+        if (dryRun) removed.push(...plannedBranchRemoval);
+        else {
+          const abandonedBranches = Object.keys(dag.tree.branches).filter((branch) => branch !== dag.tree.currentBranch);
+          for (const branch of abandonedBranches) removed.push(...await dag.removeBranch(branch));
+        }
       }
-      const candidates = Object.values(dag.tree.nodes).filter((node) => !keep.has(node.id) && (cutoff === void 0 || node.timestamp < cutoff));
+      const remainingNodes = dryRun ? nodes.filter((node) => !plannedBranchRemoval.some((item) => item.id === node.id)) : Object.values(dag.tree.nodes);
+      const candidates = remainingNodes.filter((node) => !keep.has(node.id) && (cutoff === void 0 || node.timestamp < cutoff));
+      const childIds = new Set(remainingNodes.map((node) => node.parentId).filter((id) => Boolean(id)));
+      const plannedCandidates = options.compactHistory ? candidates.filter((node) => !protectedIds.has(node.id)) : candidates.filter((node) => !protectedIds.has(node.id) && !childIds.has(node.id));
       if (options.compactHistory) {
-        removed.push(...await dag.compactNodes(candidates.map((node) => node.id)));
+        if (dryRun) removed.push(...plannedCandidates);
+        else removed.push(...await dag.compactNodes(candidates.map((node) => node.id)));
       } else {
-        removed.push(...await dag.removeLeafNodes(candidates.map((node) => node.id)));
+        if (dryRun) removed.push(...plannedCandidates);
+        else removed.push(...await dag.removeLeafNodes(candidates.map((node) => node.id)));
       }
-      const reclaimed = await this.reclaimNodes(sessionId, removed);
-      const shadowRepack = options.repackShadowObjects && this.config.shadowStore ? await this.gitEngine.repackShadowObjects() : void 0;
+      const reclaimed = dryRun ? { reclaimedBytes: 0, gitRefsRemoved: 0, quarantineReclaimedBytes: 0 } : await this.reclaimNodes(sessionId, removed);
+      const shadowRepack = !dryRun && options.repackShadowObjects && this.config.shadowStore ? await this.gitEngine.repackShadowObjects() : void 0;
       return {
         sessionId,
-        removedCheckpointIds: removed.map((node) => node.id),
+        dryRun,
+        ...dryRun ? { wouldRemoveCheckpointIds: removed.map((node) => node.id) } : {},
+        removedCheckpointIds: dryRun ? [] : removed.map((node) => node.id),
         reclaimedBytes: reclaimed.reclaimedBytes,
         gitRefsRemoved: reclaimed.gitRefsRemoved,
         quarantineReclaimedBytes: reclaimed.quarantineReclaimedBytes,
         shadowObjectsReclaimedBytes: shadowRepack?.reclaimedBytes,
         shadowRepackSkippedReason: shadowRepack?.skippedReason,
-        note: reclaimed.gitRefsRemoved > 0 ? this.config.shadowStore ? "Plugin refs and shadow objects were pruned; the user repository was not garbage-collected." : "Git objects are shared; run repository maintenance only if you understand its impact." : cutoff === void 0 ? "Fallback snapshot bytes were removed from plugin storage." : `Only checkpoints older than ${olderThanMs} ms were eligible; protected DAG nodes were retained.`
+        note: dryRun ? `Dry run: ${removed.length} checkpoint(s) would be removed; no DAG, quarantine, or Git objects were changed.` : reclaimed.gitRefsRemoved > 0 ? this.config.shadowStore ? "Plugin refs and shadow objects were pruned; the user repository was not garbage-collected." : "Git objects are shared; run repository maintenance only if you understand its impact." : cutoff === void 0 ? "Fallback snapshot bytes were removed from plugin storage." : `Only checkpoints older than ${olderThanMs} ms were eligible; protected DAG nodes were retained.`
       };
     });
   }
@@ -2787,9 +3471,9 @@ var TimeMachineService = class {
       }
     };
     for (const manager of this.dagManagers.values()) collect(manager.tree);
-    for (const entry of await fs5.readdir(this.storageDir, { withFileTypes: true }).catch(() => [])) {
+    for (const entry of await fs7.readdir(this.storageDir, { withFileTypes: true }).catch(() => [])) {
       if (!entry.isFile() || !entry.name.startsWith("dag_") || !entry.name.endsWith(".json")) continue;
-      const raw = await fs5.readFile(path6.join(this.storageDir, entry.name), "utf8").then((value) => JSON.parse(value)).catch(() => void 0);
+      const raw = await fs7.readFile(path8.join(this.storageDir, entry.name), "utf8").then((value) => JSON.parse(value)).catch(() => void 0);
       if (raw) collect(raw);
     }
     return keys;
@@ -2820,16 +3504,17 @@ var TimeMachineService = class {
   async restoreWithRescue(dag, target, options, kind = "rewind") {
     const current = dag.getCurrentNode() ?? void 0;
     const mode = options.mode ?? this.config.restoreMode;
-    const preserveHandEdits = options.preserveVerifiedHandEdits === true;
+    const preserveHandEdits = options.preserveVerifiedHandEdits === true || options.preserveVerifiedHandEdits === void 0 && this.config.preserveVerifiedHandEditsByDefault;
     const preservedPaths = preserveHandEdits && current ? await this.findVerifiedHandEdits(current) : [];
-    if (await this.gitEngine.isGitRepo()) await this.gitEngine.assertSupportedWorkspace();
+    const isGit = await this.gitEngine.isGitRepo();
+    if (isGit) await this.gitEngine.assertSupportedWorkspace();
     if (mode === "safe" && current) {
-      const actual = await this.gitEngine.isGitRepo() ? await this.gitEngine.inspectWorkspace({ omitPaths: current.omittedPaths ?? [] }) : { treeOid: await this.fallbackEngine.inspectWorkspace(), ignoredPaths: [] };
+      const actual = isGit ? await this.gitEngine.inspectWorkspace({ omitPaths: current.omittedPaths ?? [] }) : { treeOid: await this.fallbackEngine.inspectWorkspace(), ignoredPaths: [] };
       const expectedTree = current.settledGitTreeOid ?? current.gitTreeOid;
       const expectedIgnored = current.settledIgnoredPaths ?? current.ignoredPaths ?? [];
       if (actual.treeOid !== expectedTree || !sameStrings(actual.ignoredPaths, expectedIgnored)) {
         const { WorkspaceDriftError: WorkspaceDriftError2 } = await Promise.resolve().then(() => (init_git_plumbing(), git_plumbing_exports));
-        const changed = actual.treeOid === expectedTree ? [] : (await this.gitEngine.getDiffBetween(expectedTree, actual.treeOid)).map((item) => item.file).filter((file) => !preservedPaths.some((path9) => file === path9 || file.startsWith(`${path9}/`)));
+        const changed = actual.treeOid === expectedTree ? [] : (isGit ? (await this.gitEngine.getDiffBetween(expectedTree, actual.treeOid)).map((item) => item.file) : current ? (await this.fallbackEngine.getChangedFiles(dag.tree.sessionId, current.id)).map((item) => item.path) : []).filter((file) => !preservedPaths.some((path13) => file === path13 || file.startsWith(`${path13}/`)));
         const ignoredDrift = !sameStrings(actual.ignoredPaths, expectedIgnored);
         if (changed.length || ignoredDrift) {
           const details = actual.treeOid === expectedTree ? ["workspace no longer matches the active checkpoint"] : [`managed tree changed (expected ${expectedTree}, observed ${actual.treeOid})${changed.length ? `: ${changed.join(", ")}` : ""}`];
@@ -2883,6 +3568,18 @@ var TimeMachineService = class {
       throw error;
     }
   }
+  unresolvedExternalEffects(dag, targetCheckpointId) {
+    const current = dag.getCurrentNode();
+    if (!current) return [];
+    const lineage = dag.getLineage(current.id);
+    const targetIndex = lineage.findIndex((node) => node.id === targetCheckpointId);
+    return lineage.slice(targetIndex >= 0 ? targetIndex + 1 : 0).flatMap((node) => node.externalEffects ?? []).filter((effect) => effect.status !== "compensated");
+  }
+  assertExternalEffectsResolved(dag, targetCheckpointId, required) {
+    if (!required) return;
+    const unresolved = this.unresolvedExternalEffects(dag, targetCheckpointId);
+    if (unresolved.length) throw new ExternalEffectsUnresolvedError(unresolved.map((effect) => effect.id));
+  }
   async restoreNode(target, expected, options) {
     const isGit = await this.gitEngine.isGitRepo();
     if (isGit && target.gitCommitOid && !target.gitCommitOid.startsWith("fallback_")) {
@@ -2899,11 +3596,11 @@ var TimeMachineService = class {
         preservePaths: options.preservePaths ?? []
       });
       if (target.ignoredBackupKey) await this.gitEngine.restoreIgnoredBackup(target.ignoredBackupKey);
-      const preservePaths = options.preservePaths ?? [];
-      const verified2 = await this.gitEngine.inspectWorkspace({ omitPaths: [...target.omittedPaths ?? [], ...preservePaths] });
-      const expectedTree = options.mode === "merge" ? result.restoredTreeOid : target.gitTreeOid;
-      const treeMismatch = verified2.treeOid !== expectedTree;
-      const allowedMismatch = treeMismatch && preservePaths.length ? (await this.gitEngine.getDiffBetween(expectedTree, verified2.treeOid)).every((item) => preservePaths.some((path9) => item.file === path9 || item.file.startsWith(`${path9}/`))) : false;
+      const preservePaths2 = options.preservePaths ?? [];
+      const verified2 = await this.gitEngine.inspectWorkspace({ omitPaths: [...target.omittedPaths ?? [], ...preservePaths2] });
+      const expectedTree2 = options.mode === "merge" ? result.restoredTreeOid : target.gitTreeOid;
+      const treeMismatch = verified2.treeOid !== expectedTree2;
+      const allowedMismatch = treeMismatch && preservePaths2.length ? (await this.gitEngine.getDiffBetween(expectedTree2, verified2.treeOid)).every((item) => preservePaths2.some((path13) => item.file === path13 || item.file.startsWith(`${path13}/`))) : false;
       if (treeMismatch && !allowedMismatch || !sameStrings(verified2.ignoredPaths, target.ignoredPaths ?? [])) {
         throw new Error(`Workspace integrity check failed after restoring checkpoint '${target.id}'.`);
       }
@@ -2912,9 +3609,11 @@ var TimeMachineService = class {
     if (options.mode === "merge") {
       throw new Error("Merge restore is only supported for Git-backed checkpoints.");
     }
-    await this.fallbackEngine.restoreSnapshot(target.sessionState.sessionId, target.id);
-    const verified = await this.fallbackEngine.inspectWorkspace();
-    if (verified !== target.gitTreeOid) {
+    const preservePaths = options.preservePaths ?? [];
+    await this.fallbackEngine.restoreSnapshot(target.sessionState.sessionId, target.id, { preservePaths });
+    const verified = await this.fallbackEngine.inspectWorkspace({ omitPaths: preservePaths });
+    const expectedTree = preservePaths.length ? await this.fallbackEngine.snapshotTreeOid(target.sessionState.sessionId, target.id, preservePaths) : target.gitTreeOid;
+    if (verified !== expectedTree) {
       throw new Error(`Fallback workspace integrity check failed after restoring checkpoint '${target.id}'.`);
     }
     return { deletedIgnoredPaths: [] };
@@ -2932,64 +3631,64 @@ var TimeMachineService = class {
     return preserved;
   }
   async hashWorkspacePath(relative) {
-    const absolute = path6.resolve(this.workDir, relative);
-    if (!absolute.startsWith(`${path6.resolve(this.workDir)}${path6.sep}`)) throw new Error("Path escapes workspace.");
-    const stat = await fs5.lstat(absolute);
-    const hash = createHash3("sha256");
-    if (stat.isSymbolicLink()) hash.update(`symlink:${await fs5.readlink(absolute)}`);
-    else if (stat.isFile()) hash.update(await fs5.readFile(absolute));
+    const absolute = path8.resolve(this.workDir, relative);
+    if (!absolute.startsWith(`${path8.resolve(this.workDir)}${path8.sep}`)) throw new Error("Path escapes workspace.");
+    const stat = await fs7.lstat(absolute);
+    const hash = createHash5("sha256");
+    if (stat.isSymbolicLink()) hash.update(`symlink:${await fs7.readlink(absolute)}`);
+    else if (stat.isFile()) hash.update(await fs7.readFile(absolute));
     else throw new Error(`Agent write path '${relative}' is not a regular file or symlink.`);
     return hash.digest("hex");
   }
   async completeRestoreJournal(journalId) {
     if (!journalId) return;
-    await fs5.rm(path6.join(this.journalDir, `${journalId}.json`), { force: true }).catch(() => void 0);
+    await fs7.rm(path8.join(this.journalDir, `${journalId}.json`), { force: true }).catch(() => void 0);
   }
   async createRestoreJournal(params) {
-    const id = `restore_${randomUUID5().replace(/-/g, "")}`;
+    const id = `restore_${randomUUID6().replace(/-/g, "")}`;
     const journal = { version: 1, id, phase: "prepared", createdAt: Date.now(), ...params };
-    await fs5.mkdir(this.journalDir, { recursive: true });
-    const file = path6.join(this.journalDir, `${id}.json`);
-    const temporary = `${file}.${randomUUID5()}.tmp`;
+    await fs7.mkdir(this.journalDir, { recursive: true });
+    const file = path8.join(this.journalDir, `${id}.json`);
+    const temporary = `${file}.${randomUUID6()}.tmp`;
     try {
-      await fs5.writeFile(temporary, `${JSON.stringify(journal, null, 2)}
+      await fs7.writeFile(temporary, `${JSON.stringify(journal, null, 2)}
 `, { encoding: "utf8", flag: "wx" });
-      await fs5.rename(temporary, file);
+      await fs7.rename(temporary, file);
     } finally {
-      await fs5.rm(temporary, { force: true }).catch(() => void 0);
+      await fs7.rm(temporary, { force: true }).catch(() => void 0);
     }
     return id;
   }
   async updateRestoreJournal(journalId, phase) {
     if (!journalId) return;
-    const file = path6.join(this.journalDir, `${journalId}.json`);
-    const raw = await fs5.readFile(file, "utf8").catch(() => void 0);
+    const file = path8.join(this.journalDir, `${journalId}.json`);
+    const raw = await fs7.readFile(file, "utf8").catch(() => void 0);
     if (!raw) return;
     const journal = JSON.parse(raw);
     journal.phase = phase;
-    await fs5.writeFile(file, `${JSON.stringify(journal, null, 2)}
+    await fs7.writeFile(file, `${JSON.stringify(journal, null, 2)}
 `, "utf8");
   }
   async recoverInterruptedRestores(sessionId, dag) {
-    const entries = await fs5.readdir(this.journalDir, { withFileTypes: true }).catch(() => []);
+    const entries = await fs7.readdir(this.journalDir, { withFileTypes: true }).catch(() => []);
     for (const entry of entries) {
       if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
-      const file = path6.join(this.journalDir, entry.name);
+      const file = path8.join(this.journalDir, entry.name);
       let journal;
       try {
-        journal = JSON.parse(await fs5.readFile(file, "utf8"));
+        journal = JSON.parse(await fs7.readFile(file, "utf8"));
       } catch {
         continue;
       }
       if (journal.version !== 1 || journal.sessionId !== sessionId) continue;
       const rescue = dag.getNode(journal.rescueCheckpointId);
       if (!rescue) {
-        await fs5.rm(file, { force: true });
+        await fs7.rm(file, { force: true });
         continue;
       }
       await this.restoreNode(rescue, void 0, { mode: "force", createRescuePoint: false });
       await dag.rewindTo(rescue.id);
-      await fs5.rm(file, { force: true });
+      await fs7.rm(file, { force: true });
     }
   }
 };
@@ -3014,10 +3713,10 @@ function symmetricDifference2(left, right) {
 async function directoryBytes2(root) {
   let total = 0;
   const visit = async (directory) => {
-    for (const entry of await fs5.readdir(directory, { withFileTypes: true }).catch(() => [])) {
-      const absolute = path6.join(directory, entry.name);
+    for (const entry of await fs7.readdir(directory, { withFileTypes: true }).catch(() => [])) {
+      const absolute = path8.join(directory, entry.name);
       if (entry.isDirectory()) await visit(absolute);
-      else total += (await fs5.stat(absolute).catch(() => ({ size: 0 }))).size;
+      else total += (await fs7.stat(absolute).catch(() => ({ size: 0 }))).size;
     }
   };
   await visit(root);
@@ -3026,8 +3725,8 @@ async function directoryBytes2(root) {
 async function countFiles(root) {
   let total = 0;
   const visit = async (directory) => {
-    for (const entry of await fs5.readdir(directory, { withFileTypes: true }).catch(() => [])) {
-      const absolute = path6.join(directory, entry.name);
+    for (const entry of await fs7.readdir(directory, { withFileTypes: true }).catch(() => [])) {
+      const absolute = path8.join(directory, entry.name);
       if (entry.isDirectory()) await visit(absolute);
       else total += 1;
     }
@@ -3039,9 +3738,34 @@ async function countFiles(root) {
 // src/web/server.ts
 init_esm_shims();
 import http from "http";
-import path7 from "path";
-import fs6 from "fs/promises";
+import path10 from "path";
+import fs9 from "fs/promises";
 import { URL } from "url";
+
+// src/core/workspace-route.ts
+init_esm_shims();
+import fs8 from "fs/promises";
+import path9 from "path";
+async function validateWorkspaceRoute(route) {
+  if (!route || typeof route.workspaceId !== "string" || !route.workspaceId.trim() || /[\0\r\n]/.test(route.workspaceId)) {
+    throw Object.assign(new Error("Workspace route workspaceId is invalid."), { code: "BAD_REQUEST" });
+  }
+  if (typeof route.cwd !== "string" || !path9.isAbsolute(route.cwd) || /[\0\r\n]/.test(route.cwd)) {
+    throw Object.assign(new Error("Workspace route cwd must be an absolute path."), { code: "BAD_REQUEST" });
+  }
+  let canonicalPath;
+  try {
+    canonicalPath = path9.resolve(await fs8.realpath(route.cwd));
+  } catch (error) {
+    throw Object.assign(new Error("Workspace route cwd does not exist."), { code: "BAD_REQUEST" });
+  }
+  if (!["shared-lock", "isolated-worktree", "isolated-container"].includes(route.isolation)) {
+    throw Object.assign(new Error("Workspace route isolation is invalid."), { code: "BAD_REQUEST" });
+  }
+  return route;
+}
+
+// src/web/server.ts
 var TimeMachineWebServer = class {
   server = null;
   port;
@@ -3082,7 +3806,7 @@ var TimeMachineWebServer = class {
           }
           await this.handleStatic(res, pathname);
         } catch (err) {
-          const status = err?.code === "BAD_REQUEST" ? 400 : err?.code === "SESSION_NOT_FOUND" ? 404 : err?.code === "RESTORE_PLAN_INVALID" || err?.code === "RESTORE_MERGE_CONFLICT" || err?.code === "QUARANTINE_KEY_INVALID" || err?.code === "EXTERNAL_COMPENSATION_UNKNOWN" || err?.code === "EXTERNAL_ADAPTER_UNAVAILABLE" || err?.code === "EXTERNAL_EFFECT_DUPLICATE" ? 409 : err?.code === "UNSUPPORTED_WORKSPACE_STATE" ? 422 : err?.code === "SNAPSHOT_SIZE_LIMIT" ? 413 : 500;
+          const status = err?.code === "BAD_REQUEST" ? 400 : err?.code === "SESSION_NOT_FOUND" || err?.code === "UNDO_TARGET_NOT_FOUND" || err?.code === "CHECKPOINT_NOT_FOUND" ? 404 : err?.code === "RESTORE_PLAN_INVALID" || err?.code === "RESTORE_MERGE_CONFLICT" || err?.code === "QUARANTINE_KEY_INVALID" || err?.code === "EXTERNAL_COMPENSATION_UNKNOWN" || err?.code === "EXTERNAL_ADAPTER_UNAVAILABLE" || err?.code === "EXTERNAL_EFFECT_DUPLICATE" || err?.code === "WORKSPACE_ROUTE_MISMATCH" || err?.code === "EXTERNAL_EFFECTS_UNRESOLVED" ? 409 : err?.code === "UNSUPPORTED_WORKSPACE_STATE" ? 422 : err?.code === "SNAPSHOT_SIZE_LIMIT" ? 413 : 500;
           res.writeHead(status, { "Content-Type": "application/json" });
           res.end(JSON.stringify({
             error: err.message || "Internal Server Error",
@@ -3135,6 +3859,17 @@ var TimeMachineWebServer = class {
       res.end(JSON.stringify({ sessions }));
       return;
     }
+    if (pathname === "/api/checkpoint-for-message" && req.method === "GET") {
+      const sessionId = this.requireSessionId(query.get("sessionId"));
+      const messageId = query.get("messageId") || "";
+      if (!messageId.trim()) throw Object.assign(new Error("Missing messageId query parameter"), { code: "BAD_REQUEST" });
+      await this.requirePersistedSession(sessionId);
+      const checkpoint = await this.service.findCheckpointByMessage(sessionId, messageId);
+      if (!checkpoint) throw Object.assign(new Error("No checkpoint is associated with this message."), { code: "CHECKPOINT_NOT_FOUND" });
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ sessionId, messageId, checkpoint }));
+      return;
+    }
     if (pathname === "/api/storage" && req.method === "GET") {
       const rawSessionId = query.get("sessionId");
       const sessionId = rawSessionId ? this.requireSessionId(rawSessionId) : void 0;
@@ -3145,8 +3880,32 @@ var TimeMachineWebServer = class {
       return;
     }
     if (pathname === "/api/capabilities" && req.method === "GET") {
+      const capabilities = await this.service.getCapabilities();
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ capabilities: await this.service.getCapabilities() }));
+      res.end(JSON.stringify({ capabilities: {
+        ...capabilities,
+        rewindSessionMode: this.hooks.rewindSessionMode?.() ?? capabilities.rewindSessionMode,
+        workspaceIsolation: this.hooks.workspaceIsolation?.() ?? capabilities.workspaceIsolation
+      } }));
+      return;
+    }
+    if (pathname === "/api/reflection" && req.method === "GET") {
+      const sessionId = this.requireSessionId(query.get("sessionId"));
+      const checkpointId = query.get("checkpoint") || "";
+      if (!checkpointId) throw Object.assign(new Error("Missing checkpoint query parameter"), { code: "BAD_REQUEST" });
+      await this.requirePersistedSession(sessionId);
+      const reflection = await this.service.getReflection(sessionId, checkpointId);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ sessionId, checkpointId, reflection }));
+      return;
+    }
+    if (pathname === "/api/workspace-route" && req.method === "GET") {
+      const sessionId = this.requireSessionId(query.get("sessionId"));
+      await this.requirePersistedSession(sessionId);
+      const route = this.hooks.workspaceRoute ? await this.hooks.workspaceRoute(sessionId) : { workspaceId: "configured-root", cwd: this.service.workDir, isolation: "shared-lock" };
+      await validateWorkspaceRoute(route);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ sessionId, route, adapter: Boolean(this.hooks.workspaceRoute) }));
       return;
     }
     if (pathname === "/api/agent-writes" && req.method === "GET") {
@@ -3169,6 +3928,29 @@ var TimeMachineWebServer = class {
       res.end(JSON.stringify({ sessionId, checkpointId, changes }));
       return;
     }
+    if (pathname === "/api/tool-mutations" && req.method === "GET") {
+      const sessionId = this.requireSessionId(query.get("sessionId"));
+      const checkpointId = query.get("checkpoint") || "";
+      if (!checkpointId) throw Object.assign(new Error("Missing checkpoint query parameter"), { code: "BAD_REQUEST" });
+      await this.requirePersistedSession(sessionId);
+      const mutations = await this.service.getToolMutationLedger(sessionId, checkpointId);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ sessionId, checkpointId, enabled: this.service.config.autoPreCommandSnapshot === true, mutations }));
+      return;
+    }
+    if (pathname === "/api/external-effects" && req.method === "GET") {
+      const sessionId = this.requireSessionId(query.get("sessionId"));
+      const checkpointId = query.get("checkpoint") || void 0;
+      const unresolved = query.get("unresolved");
+      if (unresolved !== null && unresolved !== "true" && unresolved !== "false") {
+        throw Object.assign(new Error("unresolved must be true or false"), { code: "BAD_REQUEST" });
+      }
+      await this.requirePersistedSession(sessionId);
+      const effects = await this.service.listExternalEffects(sessionId, checkpointId, unresolved === "true");
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ sessionId, checkpointId: checkpointId ?? null, unresolvedOnly: unresolved === "true", effects }));
+      return;
+    }
     if (pathname === "/api/diff" && req.method === "GET") {
       const sessionId = this.requireSessionId(query.get("sessionId"));
       const baseId = query.get("base") || "";
@@ -3184,7 +3966,11 @@ var TimeMachineWebServer = class {
       const checkpointId = query.get("checkpoint") || "";
       if (!checkpointId) throw Object.assign(new Error("Missing checkpoint query parameter"), { code: "BAD_REQUEST" });
       await this.requirePersistedSession(sessionId);
-      const preview = await this.service.previewRestore(sessionId, checkpointId);
+      const preserveHandEdits = query.get("preserveHandEdits");
+      if (preserveHandEdits !== null && preserveHandEdits !== "true" && preserveHandEdits !== "false") {
+        throw Object.assign(new Error("preserveHandEdits must be true or false"), { code: "BAD_REQUEST" });
+      }
+      const preview = await this.service.previewRestore(sessionId, checkpointId, preserveHandEdits === null ? {} : { preserveVerifiedHandEdits: preserveHandEdits === "true" });
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ preview }));
       return;
@@ -3200,7 +3986,8 @@ var TimeMachineWebServer = class {
       await this.requirePersistedSession(sourceSessionId);
       const result = await this.service.rewindToCheckpoint(sourceSessionId, checkpointId, {
         mode: body.force === true ? "force" : body.merge === true ? "merge" : void 0,
-        preserveVerifiedHandEdits: body.preserveVerifiedHandEdits === true,
+        ...typeof body.preserveVerifiedHandEdits === "boolean" ? { preserveVerifiedHandEdits: body.preserveVerifiedHandEdits } : {},
+        ...body.requireExternalEffectsResolved === true ? { requireExternalEffectsResolved: true } : {},
         deleteNewIgnoredPaths: body.deleteNewIgnoredPaths === true,
         restorePlanId: typeof body.restorePlanId === "string" ? body.restorePlanId : void 0
       });
@@ -3217,6 +4004,36 @@ var TimeMachineWebServer = class {
       res.end(JSON.stringify({ success: true, result, conversation }));
       return;
     }
+    if (pathname === "/api/undo" && req.method === "POST") {
+      const body = await this.readJsonBody(req);
+      const sourceSessionId = this.requireSessionId(body.sessionId);
+      const count = Number(body.count ?? 1);
+      if (!Number.isInteger(count) || count < 1 || count > 500) {
+        throw Object.assign(new Error("count must be a positive integer no greater than 500"), { code: "BAD_REQUEST" });
+      }
+      if (!this.hooks.restartConversation) throw new Error("Conversation restart capability is unavailable; refusing workspace-only undo.");
+      await this.requirePersistedSession(sourceSessionId);
+      const target = await this.service.resolveRelativeTurnCheckpoint(sourceSessionId, count);
+      if (!target) throw Object.assign(new Error(`No completed turn exists ${count} step(s) before the active checkpoint.`), { code: "UNDO_TARGET_NOT_FOUND" });
+      const result = await this.service.rewindToCheckpoint(sourceSessionId, target.id, {
+        mode: body.force === true ? "force" : body.merge === true ? "merge" : void 0,
+        ...typeof body.preserveVerifiedHandEdits === "boolean" ? { preserveVerifiedHandEdits: body.preserveVerifiedHandEdits } : {},
+        ...body.requireExternalEffectsResolved === true ? { requireExternalEffectsResolved: true } : {},
+        deleteNewIgnoredPaths: body.deleteNewIgnoredPaths === true
+      });
+      let conversation;
+      try {
+        conversation = await this.hooks.restartConversation(sourceSessionId, result.targetNode);
+      } catch (error) {
+        await this.compensate(sourceSessionId, result.rescueCheckpointId);
+        await this.service.completeRestoreJournal(result.restoreJournalId);
+        throw error;
+      }
+      await this.service.completeRestoreJournal(result.restoreJournalId);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: true, count, targetCheckpointId: target.id, result, conversation }));
+      return;
+    }
     if (pathname === "/api/restore-workspace" && req.method === "POST") {
       const body = await this.readJsonBody(req);
       const sessionId = this.requireSessionId(body.sessionId);
@@ -3226,7 +4043,8 @@ var TimeMachineWebServer = class {
       await this.requirePersistedSession(sessionId);
       const result = await this.service.restoreWorkspaceToCheckpoint(sessionId, body.checkpointId, {
         mode: body.force === true ? "force" : body.merge === true ? "merge" : void 0,
-        preserveVerifiedHandEdits: body.preserveVerifiedHandEdits === true,
+        ...typeof body.preserveVerifiedHandEdits === "boolean" ? { preserveVerifiedHandEdits: body.preserveVerifiedHandEdits } : {},
+        ...body.requireExternalEffectsResolved === true ? { requireExternalEffectsResolved: true } : {},
         deleteNewIgnoredPaths: body.deleteNewIgnoredPaths === true,
         restorePlanId: typeof body.restorePlanId === "string" ? body.restorePlanId : void 0
       });
@@ -3254,6 +4072,12 @@ var TimeMachineWebServer = class {
         throw Object.assign(new Error("backupKey is required and must not contain whitespace"), { code: "BAD_REQUEST" });
       }
       const result = await this.service.migrateIgnoredBackup(body.backupKey);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: true, result }));
+      return;
+    }
+    if (pathname === "/api/shadow-migrate" && req.method === "POST") {
+      const result = await this.service.migrateShadowStore();
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ success: true, result }));
       return;
@@ -3321,7 +4145,8 @@ var TimeMachineWebServer = class {
         olderThanMs,
         abandonedBranches: body.abandonedBranches === true,
         compactHistory: body.compactHistory === true,
-        repackShadowObjects: body.repackShadowObjects === true
+        repackShadowObjects: body.repackShadowObjects === true,
+        dryRun: body.dryRun === true
       });
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ success: true, result }));
@@ -3416,21 +4241,21 @@ var TimeMachineWebServer = class {
       res.end("Not found");
       return;
     }
-    const currentFileDir = path7.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
+    const currentFileDir = path10.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
     const candidateDirs = [
-      path7.join(currentFileDir, "client"),
-      path7.join(currentFileDir, "../src/web/client"),
-      path7.join(currentFileDir, "web/client"),
-      path7.join(process.cwd(), "src/web/client"),
-      path7.join(process.cwd(), "dist/client")
+      path10.join(currentFileDir, "client"),
+      path10.join(currentFileDir, "../src/web/client"),
+      path10.join(currentFileDir, "web/client"),
+      path10.join(process.cwd(), "src/web/client"),
+      path10.join(process.cwd(), "dist/client")
     ];
     let fullPath = "";
     for (const dir of candidateDirs) {
-      const candidate = path7.resolve(dir, filePath);
-      const relative = path7.relative(path7.resolve(dir), candidate);
-      if (relative.startsWith("..") || path7.isAbsolute(relative)) continue;
+      const candidate = path10.resolve(dir, filePath);
+      const relative = path10.relative(path10.resolve(dir), candidate);
+      if (relative.startsWith("..") || path10.isAbsolute(relative)) continue;
       try {
-        await fs6.access(candidate);
+        await fs9.access(candidate);
         fullPath = candidate;
         break;
       } catch {
@@ -3438,8 +4263,8 @@ var TimeMachineWebServer = class {
     }
     try {
       if (!fullPath) throw new Error("Asset not found");
-      const content = await fs6.readFile(fullPath);
-      const ext = path7.extname(fullPath);
+      const content = await fs9.readFile(fullPath);
+      const ext = path10.extname(fullPath);
       const contentTypes = {
         ".html": "text/html; charset=utf-8",
         ".css": "text/css; charset=utf-8",
@@ -3528,6 +4353,27 @@ function registerCliCommands(ctx, service) {
       })
     });
     scope.commands.register({
+      name: "tm-list",
+      description: "List recent checkpoints with relative undo numbers",
+      input: { hint: "[limit]" },
+      recordInput: false,
+      handler: async ({ agent, rawInput }) => {
+        const rawLimit = rawInput.trim().split(/\s+/).filter(Boolean)[0];
+        const limit = rawLimit === void 0 ? 10 : Number(rawLimit);
+        if (!Number.isInteger(limit) || limit < 1 || limit > 100) return { kind: "error", text: "Usage: /tm-list [limit 1-100]" };
+        const lineage = await service.listRelativeTurnCheckpoints(agent.session.id, limit);
+        if (lineage.length === 0) return { kind: "success", text: "No completed checkpoints recorded for this session yet." };
+        const lines = lineage.map((node, index) => {
+          const undo = index === 0 ? "current" : `undo ${index}`;
+          const summary = node.summary || node.prompt || node.status;
+          return `${String(index).padStart(2, " ")}  ${undo.padEnd(8, " ")} turn=${node.turnIndex} ${node.id}  ${summary}`;
+        });
+        return { kind: "success", text: `Recent checkpoints for ${agent.session.id}:
+${lines.join("\n")}
+Use /tm-undo N to restore and fork from the numbered active-lineage checkpoint.` };
+      }
+    });
+    scope.commands.register({
       name: "tm-doctor",
       description: "Diagnose Time Machine profile capabilities and recovery readiness",
       recordInput: false,
@@ -3545,14 +4391,25 @@ function registerCliCommands(ctx, service) {
           `Session: ${sessionId}`,
           `Workspace engine: ${capabilities.git ? "Git plumbing" : "fallback snapshots"}`,
           `Conversation fork/rewind: ${sessionController ? "available" : "unavailable (no sessionController)"}`,
+          `Workspace isolation: ${capabilities.workspaceIsolation}`,
+          `Workspace routing: ${capabilities.workspaceRouting}`,
+          `Shadow Git object encryption: ${capabilities.shadowStoreEncryption ? "enabled" : capabilities.shadowStoreMigrationRequired ? "migration required (legacy plaintext objects detected)" : "not available (objects are plaintext at rest)"}`,
+          `Shadow Git key rotation: ${capabilities.shadowStoreKeyRotation ? "ready (current + previous keys configured)" : "not configured"}`,
+          `DAG/session metadata encryption: ${capabilities.dagStateEncryption ? "enabled" : "disabled (metadata is plaintext at rest)"}`,
+          `DAG/session key rotation: ${capabilities.dagStateKeyRotation ? "ready (current + previous keys configured)" : "not configured"}`,
           `Web dashboard: ${service.config.enableWebUI === false ? "disabled" : `available on ${service.config.webHost ?? "127.0.0.1"}:${service.config.webPort ?? 3088}`}`,
           `Pre-command checkpoints: ${service.config.autoPreCommandSnapshot ? "enabled" : "disabled"}`,
-          `Agent-write ledger: ${service.config.enableAgentWriteLedger ? "enabled" : "disabled"}`,
+          `Agent-write ledger: ${service.config.enableAgentWriteLedger ? service.config.preserveVerifiedHandEditsByDefault ? "enabled (preserve hand-edits by default)" : "enabled" : "disabled"}`,
           `Storage: ${formatBytes(storage.bytes)} in ${storage.files} files; ${storage.checkpoints} checkpoints`
         ];
         const warnings = [];
         if (!capabilities.git) warnings.push("Git is unavailable; restores use fallback snapshots and textual diffs only.");
         if (!sessionController) warnings.push("Workspace restore can run, but the conversation cannot be switched automatically.");
+        if (capabilities.workspaceIsolation === "shared-lock") warnings.push("Forked sessions share the configured workspace; this is not an isolated Git worktree or container.");
+        if (capabilities.workspaceRouting === "single-root") warnings.push("Sessions whose cwd differs from the configured workspace are skipped; run one plugin instance per workspace.");
+        if (capabilities.shadowStoreMigrationRequired) warnings.push("Legacy plaintext Shadow Git objects detected; run /tm-shadow-migrate before creating new checkpoints.");
+        if (!capabilities.shadowStoreEncryption && capabilities.shadowStore) warnings.push("Shadow Git objects are plaintext at rest; protect the storage directory with OS-level encryption and permissions.");
+        if (!capabilities.dagStateEncryption) warnings.push("DAG/session metadata is plaintext at rest; set stateEncryptionKeyEnv when prompts or tool inputs are sensitive.");
         if (!service.config.autoPreCommandSnapshot) warnings.push("High-risk tool boundaries are not captured; enable autoPreCommandSnapshot for stronger crash recovery.");
         if (warnings.length > 0) lines.push(`Warnings:
 - ${warnings.join("\n- ")}`);
@@ -3598,9 +4455,23 @@ ${changes.map((item) => `${item.status} ${item.path}`).join("\n")}` };
       }
     });
     scope.commands.register({
+      name: "tm-tool-mutations",
+      description: "Show per-tool workspace mutation evidence for a checkpoint",
+      input: { hint: "<checkpoint>" },
+      handler: async ({ agent, rawInput }) => {
+        const checkpointId = rawInput.trim().split(/\s+/).filter(Boolean)[0];
+        if (!checkpointId) return { kind: "error", text: "Usage: /tm-tool-mutations <checkpoint>" };
+        const records = await service.getToolMutationLedger(agent.session.id, checkpointId);
+        if (records.length === 0) return { kind: "success", text: `No tool mutation evidence recorded for ${checkpointId}.` };
+        const lines = records.map((item) => `${item.status} ${item.toolName}${item.callId ? ` [${item.callId}]` : ""}: ${item.changedFiles.map((change) => `${change.status} ${change.path}`).join(", ") || "no workspace delta"}${item.error ? ` \u2014 ${item.error}` : ""}`);
+        return { kind: "success", text: `Tool mutation evidence for ${checkpointId}:
+${lines.join("\n")}` };
+      }
+    });
+    scope.commands.register({
       name: "tm-prune",
       description: "Prune old non-head Time Machine checkpoints",
-      input: { hint: "[keep-latest] [--older-than=<duration>] [--abandoned-branches] [--compact-history] [--repack-shadow]" },
+      input: { hint: "[keep-latest] [--older-than=<duration>] [--abandoned-branches] [--compact-history] [--repack-shadow] [--dry-run]" },
       handler: async ({ agent, rawInput }) => {
         const args = rawInput.trim().split(/\s+/).filter(Boolean);
         const keepArg = args.find((arg) => !arg.startsWith("--"));
@@ -3614,12 +4485,14 @@ ${changes.map((item) => `${item.status} ${item.path}`).join("\n")}` };
           olderThanMs,
           abandonedBranches: args.includes("--abandoned-branches"),
           compactHistory: args.includes("--compact-history"),
-          repackShadowObjects: args.includes("--repack-shadow")
+          repackShadowObjects: args.includes("--repack-shadow"),
+          dryRun: args.includes("--dry-run")
         });
         const quarantine = result.quarantineReclaimedBytes ? ` Quarantine reclaimed ${formatBytes(result.quarantineReclaimedBytes)}.` : "";
         const shadow = result.shadowObjectsReclaimedBytes ? ` Shadow packs reclaimed ${formatBytes(result.shadowObjectsReclaimedBytes)}.` : "";
         const warning = result.shadowRepackSkippedReason ? ` Shadow repack skipped: ${result.shadowRepackSkippedReason}.` : "";
-        return { kind: "success", text: `Pruned ${result.removedCheckpointIds.length} checkpoint(s), reclaimed ${formatBytes(result.reclaimedBytes)}.${quarantine}${shadow}${warning} ${result.note}` };
+        const planned = result.dryRun ? ` Would remove: ${(result.wouldRemoveCheckpointIds ?? []).join(", ") || "(none)"}.` : "";
+        return { kind: "success", text: `${result.dryRun ? "Dry run." : `Pruned ${result.removedCheckpointIds.length} checkpoint(s), reclaimed ${formatBytes(result.reclaimedBytes)}.`}${planned}${quarantine}${shadow}${warning} ${result.note}` };
       }
     });
     scope.commands.register({
@@ -3633,6 +4506,18 @@ ${changes.map((item) => `${item.status} ${item.path}`).join("\n")}` };
         return {
           kind: "success",
           text: result.migrated ? `Encrypted quarantine backup ${key}: ${result.entryCount} ${result.entryCount === 1 ? "entry" : "entries"} rewritten (${formatBytes(result.bytesRewritten)}).` : `Quarantine backup ${key} is already encrypted or empty.`
+        };
+      }
+    });
+    scope.commands.register({
+      name: "tm-shadow-migrate",
+      description: "Encrypt the existing plaintext Git shadow object store",
+      recordInput: false,
+      handler: async () => {
+        const result = await service.migrateShadowStore();
+        return {
+          kind: "success",
+          text: result.migrated ? `Encrypted shadow store: ${result.entries} ${result.entries === 1 ? "file" : "files"} rewritten (${formatBytes(result.bytes)}).` : "Shadow store is empty or already encrypted."
         };
       }
     });
@@ -3652,6 +4537,38 @@ ${changes.map((item) => `${item.status} ${item.path}`).join("\n")}` };
           kind: "success",
           text: result.dryRun ? `Dry run: adapter '${result.adapter}' is available for effect ${positionals[1]}; no external mutation was executed. Use --execute with key ${result.idempotencyKey}.` : `${result.replayed ? "Replayed" : "Executed"} compensation for ${positionals[1]} via '${result.adapter}' with key ${result.idempotencyKey}; status=${result.effect.status}.`
         };
+      }
+    });
+    scope.commands.register({
+      name: "tm-external-list",
+      description: "List recorded external effects without executing compensation",
+      input: { hint: "[checkpoint] [--all]" },
+      handler: async ({ agent, rawInput }) => {
+        const args = rawInput.trim().split(/\s+/).filter(Boolean);
+        const checkpointId = args.find((arg) => !arg.startsWith("--"));
+        const effects = await service.listExternalEffects(agent.session.id, checkpointId, !args.includes("--all"));
+        if (effects.length === 0) return { kind: "success", text: "No unresolved external effects recorded on this lineage." };
+        return {
+          kind: "success",
+          text: `${args.includes("--all") ? "Recorded" : "Unresolved"} external effects${checkpointId ? ` through ${checkpointId}` : ""}:
+${effects.map((effect) => `${effect.status} ${effect.id} ${effect.adapter}:${effect.operation}${effect.compensation ? ` \u2014 ${effect.compensation}` : ""}`).join("\n")}`
+        };
+      }
+    });
+    scope.commands.register({
+      name: "tm-reflection",
+      description: "Show failure and external-effect lessons before a new branch",
+      input: { hint: "<checkpoint>" },
+      handler: async ({ agent, rawInput }) => {
+        const checkpointId = rawInput.trim().split(/\s+/).filter(Boolean)[0];
+        if (!checkpointId) return { kind: "error", text: "Usage: /tm-reflection <checkpoint>" };
+        const reflection = await service.getReflection(agent.session.id, checkpointId);
+        if (!reflection.hasPastFailures && !reflection.hasExternalEffects) {
+          return { kind: "success", text: reflection.summaryNote || "No abandoned-branch failures or external-effect warnings were recorded." };
+        }
+        return { kind: "success", text: `${reflection.summaryNote || "Reflection advisory available."}
+
+${reflection.suggestedPromptPrefix}` };
       }
     });
     scope.commands.register({
@@ -3679,7 +4596,7 @@ ${changes.map((item) => `${item.status} ${item.path}`).join("\n")}` };
     scope.commands.register({
       name: "tm-rewind",
       description: "Restore workspace and fork conversation at a checkpoint",
-      input: { hint: "<checkpoint> [--merge|--force] [--preserve-hand-edits] [--delete-new-ignored] [--plan=<id>]" },
+      input: { hint: "<checkpoint> [--merge|--force] [--preserve-hand-edits|--no-preserve-hand-edits] [--require-effects-resolved] [--delete-new-ignored] [--plan=<id>]" },
       handler: async ({ agent, rawInput }) => {
         const args = rawInput.trim().split(/\s+/).filter(Boolean);
         const checkpointId = args.find((arg) => !arg.startsWith("--"));
@@ -3689,8 +4606,9 @@ ${changes.map((item) => `${item.status} ${item.path}`).join("\n")}` };
         const sessionId = agent.session.id;
         const result = await service.rewindToCheckpoint(sessionId, checkpointId, {
           mode: args.includes("--force") ? "force" : args.includes("--merge") ? "merge" : void 0,
-          preserveVerifiedHandEdits: args.includes("--preserve-hand-edits"),
+          ...args.includes("--preserve-hand-edits") ? { preserveVerifiedHandEdits: true } : args.includes("--no-preserve-hand-edits") ? { preserveVerifiedHandEdits: false } : {},
           deleteNewIgnoredPaths: args.includes("--delete-new-ignored"),
+          requireExternalEffectsResolved: args.includes("--require-effects-resolved"),
           restorePlanId: optionValue(args, "--plan")
         });
         try {
@@ -3708,9 +4626,43 @@ ${changes.map((item) => `${item.status} ${item.path}`).join("\n")}` };
       }
     });
     scope.commands.register({
+      name: "tm-undo",
+      description: "Undo recent turns by restoring and forking from the active checkpoint lineage",
+      input: { hint: "[count] [--merge|--force] [--preserve-hand-edits|--no-preserve-hand-edits] [--require-effects-resolved] [--delete-new-ignored]" },
+      handler: async ({ agent, rawInput }) => {
+        const args = rawInput.trim().split(/\s+/).filter(Boolean);
+        const positionals = args.filter((arg) => !arg.startsWith("--"));
+        const count = positionals.length ? Number(positionals[0]) : 1;
+        if (!Number.isInteger(count) || count < 1) return { kind: "error", text: "Usage: /tm-undo [positive-count] [--merge|--force] [--preserve-hand-edits|--no-preserve-hand-edits] [--delete-new-ignored]" };
+        const controller = scope.get("sessionController");
+        if (!controller) return { kind: "error", text: "This DSH profile has no sessionController; conversation undo is unavailable." };
+        const sessionId = agent.session.id;
+        const checkpointId = await resolveRelativeCheckpoint(service, sessionId, count);
+        if (!checkpointId) return { kind: "error", text: `Cannot undo ${count} turn(s): the active session has fewer than ${count + 1} completed turns.` };
+        const result = await service.rewindToCheckpoint(sessionId, checkpointId, {
+          mode: args.includes("--force") ? "force" : args.includes("--merge") ? "merge" : void 0,
+          ...args.includes("--preserve-hand-edits") ? { preserveVerifiedHandEdits: true } : args.includes("--no-preserve-hand-edits") ? { preserveVerifiedHandEdits: false } : {},
+          deleteNewIgnoredPaths: args.includes("--delete-new-ignored"),
+          requireExternalEffectsResolved: args.includes("--require-effects-resolved")
+        });
+        try {
+          const created = await restartConversation(controller, sessionId, result.targetNode, service.workDir);
+          await service.completeRestoreJournal(result.restoreJournalId);
+          return {
+            kind: "success",
+            text: `Undid ${count} turn${count === 1 ? "" : "s"} to ${checkpointId}. Continue in forked session ${created.sessionId}. Rescue point: ${result.rescueCheckpointId ?? "none"}.${result.preservedHandEditPaths?.length ? ` Preserved hand-edited paths: ${result.preservedHandEditPaths.join(", ")}.` : ""}`
+          };
+        } catch (error) {
+          await compensate(service, sessionId, result.rescueCheckpointId);
+          await service.completeRestoreJournal(result.restoreJournalId);
+          throw error;
+        }
+      }
+    });
+    scope.commands.register({
       name: "tm-restore",
       description: "Restore the full workspace to a checkpoint without forking the conversation",
-      input: { hint: "<checkpoint> [--merge|--force] [--delete-new-ignored] [--plan=<id>]" },
+      input: { hint: "<checkpoint> [--merge|--force] [--require-effects-resolved] [--delete-new-ignored] [--plan=<id>]" },
       handler: async ({ agent, rawInput }) => {
         const args = rawInput.trim().split(/\s+/).filter(Boolean);
         const checkpointId = args.find((arg) => !arg.startsWith("--"));
@@ -3718,6 +4670,7 @@ ${changes.map((item) => `${item.status} ${item.path}`).join("\n")}` };
         const result = await service.restoreWorkspaceToCheckpoint(agent.session.id, checkpointId, {
           mode: args.includes("--force") ? "force" : args.includes("--merge") ? "merge" : void 0,
           deleteNewIgnoredPaths: args.includes("--delete-new-ignored"),
+          requireExternalEffectsResolved: args.includes("--require-effects-resolved"),
           restorePlanId: optionValue(args, "--plan")
         });
         return { kind: "success", text: `Restored workspace to ${checkpointId}; conversation unchanged. Rescue point: ${result.rescueCheckpointId ?? "none"}.` };
@@ -3726,18 +4679,22 @@ ${changes.map((item) => `${item.status} ${item.path}`).join("\n")}` };
     scope.commands.register({
       name: "tm-preview",
       description: "Preview workspace changes before a rewind or fork",
-      input: { hint: "<checkpoint>" },
+      input: { hint: "<checkpoint> [--preserve-hand-edits|--no-preserve-hand-edits]" },
       handler: async ({ agent, rawInput }) => {
-        const checkpointId = rawInput.trim().split(/\s+/).filter(Boolean)[0];
-        if (!checkpointId) return { kind: "error", text: "Usage: /tm-preview <checkpoint>" };
-        const preview = await service.previewRestore(agent.session.id, checkpointId);
+        const args = rawInput.trim().split(/\s+/).filter(Boolean);
+        const checkpointId = args.find((arg) => !arg.startsWith("--"));
+        if (!checkpointId) return { kind: "error", text: "Usage: /tm-preview <checkpoint> [--preserve-hand-edits|--no-preserve-hand-edits]" };
+        const preserveVerifiedHandEdits = args.includes("--preserve-hand-edits") ? true : args.includes("--no-preserve-hand-edits") ? false : void 0;
+        const preview = await service.previewRestore(agent.session.id, checkpointId, { preserveVerifiedHandEdits });
         const drift = preview.requiresForce ? "workspace drift detected; --force may be required" : "workspace matches active checkpoint";
         const files = preview.diffs.length ? preview.diffs.map((item) => `${item.status} ${item.file}`).join(", ") : "no managed file changes";
         const ignored = preview.ignoredPathsToDelete.length ? ` Ignored paths to delete: ${preview.ignoredPathsToDelete.join(", ")}.` : "";
         const omitted = preview.targetOmittedPaths?.length ? ` INCOMPLETE checkpoint: omitted paths preserved live: ${preview.targetOmittedPaths.join(", ")}.` : "";
         const conflicts = preview.conflictingPaths.length ? ` Conflicting paths: ${preview.conflictingPaths.join(", ")}.` : "";
+        const effects = preview.requiresExternalEffectsReview ? ` Unresolved external effects: ${preview.unresolvedExternalEffectIds.join(", ")}; use --require-effects-resolved to fail closed until compensated.` : "";
+        const preserved = preview.preservedHandEditPaths?.length ? ` Preserved hand-edits: ${preview.preservedHandEditPaths.join(", ")}.` : "";
         const plan = ` Restore plan: ${preview.restorePlanId}${preview.restorePlanExpiresAt ? ` (expires ${new Date(preview.restorePlanExpiresAt).toISOString()})` : " (no expiry)"}.`;
-        return { kind: "success", text: `Preview ${checkpointId}: ${drift}. Changes: ${files}.${ignored}${omitted}${conflicts}${plan}` };
+        return { kind: "success", text: `Preview ${checkpointId}: ${drift}. Changes: ${files}.${ignored}${omitted}${conflicts}${preserved}${effects}${plan}` };
       }
     });
     scope.commands.register({
@@ -3758,7 +4715,7 @@ ${changes.map((item) => `${item.status} ${item.path}`).join("\n")}` };
     scope.commands.register({
       name: "tm-fork",
       description: "Create a named exploration branch from a checkpoint",
-      input: { hint: "<checkpoint> <branch> [--merge|--force]" },
+      input: { hint: "<checkpoint> <branch> [--merge|--force] [--require-effects-resolved]" },
       handler: async ({ agent, rawInput }) => {
         const args = rawInput.trim().split(/\s+/).filter(Boolean);
         const positionals = args.filter((arg) => !arg.startsWith("--"));
@@ -3770,7 +4727,7 @@ ${changes.map((item) => `${item.status} ${item.path}`).join("\n")}` };
           sessionId,
           fromCheckpointId: positionals[0],
           newBranchName: positionals[1],
-          restore: { mode: args.includes("--force") ? "force" : args.includes("--merge") ? "merge" : void 0 }
+          restore: { mode: args.includes("--force") ? "force" : args.includes("--merge") ? "merge" : void 0, requireExternalEffectsResolved: args.includes("--require-effects-resolved") }
         });
         try {
           const created = await restartConversation(controller, sessionId, result.forkedNode, service.workDir);
@@ -3793,6 +4750,9 @@ function optionValue(args, name2) {
   const inline = args.find((arg) => arg.startsWith(prefix));
   return inline ? inline.slice(prefix.length) || void 0 : void 0;
 }
+async function resolveRelativeCheckpoint(service, sessionId, count) {
+  return (await service.resolveRelativeTurnCheckpoint(sessionId, count))?.id;
+}
 function parseDurationMs(value) {
   const match = /^(\d+(?:\.\d+)?)(ms|s|m|h|d|w)$/i.exec(value.trim());
   if (!match) return void 0;
@@ -3808,6 +4768,9 @@ function formatBytes(bytes) {
 }
 async function restartConversation(controller, sourceSessionId, checkpoint, cwd) {
   const boundary = checkpoint.sessionState.boundarySeq;
+  if (boundary !== void 0 && controller.rewind) {
+    return controller.rewind({ sessionId: sourceSessionId, atSeq: boundary });
+  }
   return boundary === void 0 ? controller.create({ cwd }) : controller.fork({ sessionId: sourceSessionId, atSeq: boundary });
 }
 async function compensate(service, sessionId, rescueCheckpointId) {
@@ -3816,6 +4779,35 @@ async function compensate(service, sessionId, rescueCheckpointId) {
     mode: "force",
     createRescuePoint: false
   });
+}
+
+// src/core/workspace-host.ts
+init_esm_shims();
+import fs10 from "fs/promises";
+import path11 from "path";
+async function forkThroughWorkspaceHost(host, sourceSessionId, atSeq, configuredRoot) {
+  const route = await validateWorkspaceRoute(await host.resolveSessionWorkspace(sourceSessionId));
+  const configured = path11.resolve(await fs10.realpath(configuredRoot).catch(() => configuredRoot));
+  let routed;
+  try {
+    routed = path11.resolve(await fs10.realpath(route.cwd));
+  } catch {
+    throw Object.assign(new Error(`Workspace route '${route.workspaceId}' changed before fork.`), { code: "WORKSPACE_ROUTE_CHANGED" });
+  }
+  const sameRoot = process.platform === "win32" ? configured.toLowerCase() === routed.toLowerCase() : configured === routed;
+  if (!sameRoot) {
+    throw Object.assign(new Error(`Workspace route '${route.workspaceId}' resolves outside the configured single-root service.`), { code: "WORKSPACE_ROUTE_MISMATCH" });
+  }
+  const result = await host.forkSession({
+    sourceSessionId,
+    ...atSeq !== void 0 ? { atSeq } : {},
+    workspaceId: route.workspaceId,
+    cwd: routed
+  });
+  if (!result || typeof result.sessionId !== "string" || !result.sessionId.trim()) {
+    throw Object.assign(new Error("Workspace host returned an invalid child session id."), { code: "WORKSPACE_HOST_INVALID_RESULT" });
+  }
+  return { sessionId: result.sessionId };
 }
 
 // src/types.ts
@@ -3856,6 +4848,10 @@ var TimeMachineClient = class {
   async storage(sessionId) {
     return this.get(`/api/storage${sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ""}`);
   }
+  /** Explicitly migrate a legacy plaintext shadow store into the encrypted archive. */
+  async migrateShadowStore() {
+    return this.post("/api/shadow-migrate", {});
+  }
   async dag(sessionId) {
     return this.get(`/api/dag?sessionId=${encodeURIComponent(sessionId)}`);
   }
@@ -3863,8 +4859,25 @@ var TimeMachineClient = class {
     const body = await this.get("/api/sessions");
     return objectField(body, "sessions");
   }
-  async preview(sessionId, checkpointId) {
-    const body = await this.get(`/api/preview?sessionId=${encodeURIComponent(sessionId)}&checkpoint=${encodeURIComponent(checkpointId)}`);
+  async workspaceRoute(sessionId) {
+    if (!sessionId.trim()) throw new Error("workspaceRoute requires sessionId.");
+    return this.get(`/api/workspace-route?sessionId=${encodeURIComponent(sessionId)}`);
+  }
+  /** Resolve the checkpoint anchored to a finalized assistant message. */
+  async checkpointForMessage(sessionId, messageId) {
+    if (!sessionId.trim() || !messageId.trim()) throw new Error("checkpointForMessage requires sessionId and messageId.");
+    const body = await this.get(`/api/checkpoint-for-message?sessionId=${encodeURIComponent(sessionId)}&messageId=${encodeURIComponent(messageId)}`);
+    return objectField(body, "checkpoint");
+  }
+  /** Build a bounded, newest-first timeline without coupling consumers to React or DSH slots. */
+  async timeline(sessionId, limit = 50) {
+    if (!sessionId.trim()) throw new Error("timeline requires a non-empty sessionId.");
+    if (!Number.isInteger(limit) || limit < 1 || limit > 500) throw new Error("timeline limit must be an integer between 1 and 500.");
+    return buildCompanionTimeline(await this.dag(sessionId), limit);
+  }
+  async preview(sessionId, checkpointId, options = {}) {
+    const preserve = options.preserveVerifiedHandEdits === void 0 ? "" : `&preserveHandEdits=${String(options.preserveVerifiedHandEdits)}`;
+    const body = await this.get(`/api/preview?sessionId=${encodeURIComponent(sessionId)}&checkpoint=${encodeURIComponent(checkpointId)}${preserve}`);
     const preview = objectField(body, "preview");
     if (preview.sessionId !== sessionId || preview.checkpointId !== checkpointId || typeof preview.restorePlanId !== "string" || !preview.restorePlanId) {
       throw new Error("Time Machine returned an invalid restore preview binding.");
@@ -3874,6 +4887,13 @@ var TimeMachineClient = class {
   async rewind(action, options = {}) {
     this.assertBinding(action);
     return this.post("/api/rewind", { ...options, sessionId: action.sessionId, checkpointId: action.checkpointId, restorePlanId: action.restorePlanId });
+  }
+  /** Direct relative-turn undo for CLI-like companions; preview-first UIs may use timeline()+preview()+rewind(). */
+  async undo(request) {
+    if (!request.sessionId) throw new Error("undo requires sessionId.");
+    const count = request.count ?? 1;
+    if (!Number.isInteger(count) || count < 1 || count > 500) throw new Error("undo count must be an integer between 1 and 500.");
+    return this.post("/api/undo", { ...request, count });
   }
   async fork(action, branchName, options = {}) {
     this.assertBinding(action);
@@ -3908,6 +4928,25 @@ var TimeMachineClient = class {
     }
     return this.post("/api/external-effects/compensate", request);
   }
+  async externalEffects(sessionId, checkpointId, unresolvedOnly = false) {
+    const params = new URLSearchParams({ sessionId, unresolved: String(unresolvedOnly) });
+    if (checkpointId) params.set("checkpoint", checkpointId);
+    return this.get(`/api/external-effects?${params}`);
+  }
+  async reflection(sessionId, checkpointId) {
+    if (!sessionId.trim() || !checkpointId.trim()) throw new Error("reflection requires sessionId and checkpointId.");
+    return this.get(`/api/reflection?sessionId=${encodeURIComponent(sessionId)}&checkpoint=${encodeURIComponent(checkpointId)}`);
+  }
+  async prune(request) {
+    if (!request.sessionId) throw new Error("prune requires sessionId.");
+    if (request.keepLatest !== void 0 && (!Number.isInteger(request.keepLatest) || request.keepLatest < 0)) {
+      throw new Error("prune keepLatest must be a non-negative integer.");
+    }
+    if (request.olderThanMs !== void 0 && (!Number.isSafeInteger(request.olderThanMs) || request.olderThanMs <= 0)) {
+      throw new Error("prune olderThanMs must be a positive integer.");
+    }
+    return this.post("/api/prune", request);
+  }
   async diff(sessionId, baseCheckpointId, targetCheckpointId) {
     return this.get(`/api/diff?sessionId=${encodeURIComponent(sessionId)}&base=${encodeURIComponent(baseCheckpointId)}&target=${encodeURIComponent(targetCheckpointId)}`);
   }
@@ -3916,6 +4955,10 @@ var TimeMachineClient = class {
   }
   async unattributedChanges(sessionId, checkpointId) {
     return this.get(`/api/unattributed-changes?sessionId=${encodeURIComponent(sessionId)}&checkpoint=${encodeURIComponent(checkpointId)}`);
+  }
+  async toolMutations(sessionId, checkpointId) {
+    if (!sessionId.trim() || !checkpointId.trim()) throw new Error("toolMutations requires sessionId and checkpointId.");
+    return this.get(`/api/tool-mutations?sessionId=${encodeURIComponent(sessionId)}&checkpoint=${encodeURIComponent(checkpointId)}`);
   }
   assertBinding(action) {
     if (!action || action.preview.sessionId !== action.sessionId || action.preview.checkpointId !== action.checkpointId || action.preview.restorePlanId !== action.restorePlanId) {
@@ -3939,6 +4982,51 @@ function objectField(value, field) {
   if (!value || typeof value !== "object" || !(field in value)) throw new Error(`Time Machine response is missing '${field}'.`);
   return value[field];
 }
+function buildCompanionTimeline(dag, limit = 50) {
+  if (!Number.isInteger(limit) || limit < 1 || limit > 500) throw new Error("timeline limit must be an integer between 1 and 500.");
+  const currentId = dag.currentCheckpointId;
+  const lineage = currentId ? lineageFor(dag, currentId) : [];
+  const relativeById = /* @__PURE__ */ new Map();
+  const seenTurns = /* @__PURE__ */ new Set();
+  let relativeUndo = 0;
+  for (const node of [...lineage].reverse()) {
+    if (!isUserVisible(node) || seenTurns.has(node.turnIndex)) continue;
+    seenTurns.add(node.turnIndex);
+    relativeById.set(node.id, relativeUndo);
+    relativeUndo += 1;
+  }
+  return Object.values(dag.nodes).sort((left, right) => right.timestamp - left.timestamp).slice(0, limit).map((checkpoint) => {
+    const userVisible = isUserVisible(checkpoint);
+    const warnings = [];
+    if (checkpoint.status === "running") warnings.push("turn is still running");
+    if (checkpoint.omittedPaths?.length) warnings.push(`${checkpoint.omittedPaths.length} path(s) omitted`);
+    if (checkpoint.unattributedChanges?.length) warnings.push(`${checkpoint.unattributedChanges.length} unattributed change(s)`);
+    if (checkpoint.externalEffects?.some((effect) => effect.status !== "compensated")) warnings.push("external effects require review");
+    const relative = relativeById.get(checkpoint.id);
+    return {
+      checkpoint,
+      relativeUndo: relative ?? null,
+      isCurrent: checkpoint.id === currentId,
+      userVisible,
+      canUndo: userVisible && checkpoint.status !== "running" && relative !== void 0 && relative > 0,
+      warnings
+    };
+  });
+}
+function isUserVisible(node) {
+  return node.status !== "running" && !node.tags?.includes("pre-command") && !node.tags?.includes("rescue") && !node.tags?.includes("selective-restore");
+}
+function lineageFor(dag, checkpointId) {
+  const result = [];
+  let cursor = checkpointId;
+  while (cursor) {
+    const node = dag.nodes[cursor];
+    if (!node) break;
+    result.unshift(node);
+    cursor = node.parentId;
+  }
+  return result;
+}
 
 // src/index.ts
 var name = "dsh-plugin-time-machine";
@@ -3956,32 +5044,70 @@ var Config = Schema.object({
   maxSnapshots: Schema.number().default(0),
   maxStorageBytes: Schema.number().default(0),
   shadowStore: Schema.boolean().default(false),
+  shadowStoreEncryptionKeyEnv: Schema.string().default(""),
+  shadowStoreEncryptionPreviousKeyEnv: Schema.string().default(""),
   autoPrune: Schema.boolean().default(false),
   retentionMaxAgeMs: Schema.number().default(0),
   workspaceLockTimeoutMs: Schema.number().default(3e4),
   maxQuarantineBytes: Schema.number().default(0),
   quarantineEncryptionKeyEnv: Schema.string().default(""),
+  stateEncryptionKeyEnv: Schema.string().default(""),
+  stateEncryptionPreviousKeyEnv: Schema.string().default(""),
   restorePlanTtlMs: Schema.number().default(9e5),
   maxSnapshotFileBytes: Schema.number().default(0),
   maxSnapshotBytes: Schema.number().default(0),
   allowPartialSnapshots: Schema.boolean().default(false),
   enableAgentWriteLedger: Schema.boolean().default(false),
+  preserveVerifiedHandEditsByDefault: Schema.boolean().default(false),
   autoPreCommandSnapshot: Schema.boolean().default(false),
   preCommandTools: Schema.array(Schema.string()).default(["write", "edit", "str_replace_editor", "bash", "shell", "pwsh", "powershell", "terminal_bash", "terminal_exec", "run_code", "python"]),
   preCommandMaxPerTurn: Schema.number().step(1).min(0).default(1)
 });
+function boundedToolError(result) {
+  if (result.isError !== true || result.error === void 0 || result.error === null) return void 0;
+  const value = result.error;
+  if (typeof value === "string") return value.replace(/\s+/g, " ").trim().slice(0, 300) || void 0;
+  if (typeof value === "object") {
+    const record = value;
+    const fields = ["code", "name", "reason", "message"].map((key) => typeof record[key] === "string" ? `${key}=${String(record[key]).replace(/\s+/g, " ").trim()}` : void 0).filter((item) => Boolean(item));
+    return fields.join("; ").slice(0, 300) || void 0;
+  }
+  return void 0;
+}
 function apply(ctx, config = {}) {
-  const workDir = path8.resolve(process.cwd());
+  const workDir = path12.resolve(process.cwd());
   const service = new TimeMachineService({ workDir, storageDir: config.storageDir, config });
   ctx.provide("timeMachine", service);
+  const canonicalWorkDir = fs11.realpath(service.workDir).catch(() => service.workDir);
+  let workspaceHost;
+  try {
+    workspaceHost = ctx.get("workspaceHost");
+  } catch {
+    workspaceHost = void 0;
+  }
   registerCliCommands(ctx, service);
   if (config.enableWebUI !== false) {
     const webServer = new TimeMachineWebServer(service, config.webPort ?? 3088, config.webHost ?? "127.0.0.1", {
       restartConversation: async (sourceSessionId, checkpoint) => {
+        if (workspaceHost) {
+          const boundary2 = checkpoint.sessionState.boundarySeq;
+          return forkThroughWorkspaceHost(workspaceHost, sourceSessionId, boundary2, service.workDir);
+        }
         const controller = ctx.get("sessionController");
         if (!controller) throw new Error("This DSH profile has no sessionController.");
         const boundary = checkpoint.sessionState.boundarySeq;
+        if (boundary !== void 0 && controller.rewind) {
+          return controller.rewind({ sessionId: sourceSessionId, atSeq: boundary });
+        }
         return boundary === void 0 ? controller.create({ cwd: service.workDir }) : controller.fork({ sessionId: sourceSessionId, atSeq: boundary });
+      },
+      rewindSessionMode: () => {
+        try {
+          const controller = ctx.get("sessionController");
+          return controller?.rewind ? "in-place" : "fork";
+        } catch {
+          return "fork";
+        }
       },
       sessionExists: async (sessionId) => {
         const controller = ctx.get("sessionController");
@@ -3992,7 +5118,8 @@ function apply(ctx, config = {}) {
         } catch {
           return false;
         }
-      }
+      },
+      ...workspaceHost ? { workspaceRoute: async (sessionId) => workspaceHost.resolveSessionWorkspace(sessionId) } : {}
     }, config.webAllowedOrigins ?? []);
     ctx.effect(() => {
       void webServer.start().then((url) => {
@@ -4004,12 +5131,19 @@ function apply(ctx, config = {}) {
     }, "time-machine.web");
   }
   const checkpoints = /* @__PURE__ */ new Map();
+  const checkpointAssistantBaselines = /* @__PURE__ */ new Map();
   const observedWrites = /* @__PURE__ */ new Map();
   const pendingLedgerWrites = /* @__PURE__ */ new Map();
   const preCommandCalls = /* @__PURE__ */ new Set();
+  const preCommandCheckpoints = /* @__PURE__ */ new Map();
   const preCommandCounts = /* @__PURE__ */ new Map();
   const anonymousExecutionIds = /* @__PURE__ */ new WeakMap();
   let nextAnonymousExecutionId = 0;
+  const preCommandCallKey = (execution, sessionId, turn) => {
+    const callId = execution.callId?.trim() || void 0;
+    const identity = callId || `anonymous:${executionIdentity(execution, anonymousExecutionIds, () => nextAnonymousExecutionId++)}`;
+    return { key: `${sessionId}\0${identity}\0${turn}`, callId };
+  };
   let installAgentToolBoundary;
   if (service.config.autoPreCommandSnapshot) {
     const installedAgents = /* @__PURE__ */ new WeakSet();
@@ -4024,8 +5158,7 @@ function apply(ctx, config = {}) {
         const turnCheckpoint = session && Number.isSafeInteger(turn) ? checkpoints.get(checkpointKey(session.id, turn)) : void 0;
         const configured = service.config.preCommandTools ?? [];
         if (!session || !toolName || !configured.includes(toolName) || !turnCheckpoint) return;
-        const callIdentity = execution.callId?.trim() || `anonymous:${executionIdentity(execution, anonymousExecutionIds, () => nextAnonymousExecutionId++)}`;
-        const callKey = `${session.id}\0${callIdentity}\0${turn}`;
+        const { key: callKey, callId } = preCommandCallKey(execution, session.id, turn);
         if (preCommandCalls.has(callKey)) return;
         const turnKey = `${session.id}\0${turn}`;
         const maxPerTurn = service.config.preCommandMaxPerTurn;
@@ -4046,9 +5179,16 @@ function apply(ctx, config = {}) {
             status: "success",
             tags: ["pre-command", `tool:${toolName}`]
           });
+          const expiresAt = setTimeout(() => {
+            const pending = preCommandCheckpoints.get(callKey);
+            if (pending?.checkpointId === boundary.id) preCommandCheckpoints.delete(callKey);
+          }, 5 * 60 * 1e3);
+          expiresAt.unref?.();
+          preCommandCheckpoints.set(callKey, { sessionId: session.id, turn, checkpointId: boundary.id, toolName, ...callId ? { callId } : {}, expiresAt });
           ctx.logger.info(`[time-machine] captured pre-command checkpoint ${boundary.id} before ${toolName}`);
         } catch (error) {
           preCommandCalls.delete(callKey);
+          preCommandCheckpoints.delete(callKey);
           const nextCount = (preCommandCounts.get(turnKey) ?? 1) - 1;
           if (nextCount > 0) preCommandCounts.set(turnKey, nextCount);
           else preCommandCounts.delete(turnKey);
@@ -4067,6 +5207,41 @@ function apply(ctx, config = {}) {
     ctx.on("agent/created", ({ agent }) => {
       installAgentToolBoundary?.(agent);
       return void 0;
+    });
+  }
+  if (service.config.autoPreCommandSnapshot) {
+    ctx.on("tools/result", (execution, result) => {
+      const session = execution.agent?.session;
+      if (!session) return;
+      const turn = currentSessionTurn(session);
+      const { key, callId } = Number.isSafeInteger(turn) ? preCommandCallKey(execution, session.id, turn) : { key: "", callId: execution.callId?.trim() || void 0 };
+      let boundaryKey = key;
+      let boundary = key ? preCommandCheckpoints.get(key) : void 0;
+      if (!boundary) {
+        for (const [candidateKey, candidate] of preCommandCheckpoints) {
+          if (candidate.sessionId !== session.id) continue;
+          if (callId && candidate.callId === callId) {
+            boundaryKey = candidateKey;
+            boundary = candidate;
+            break;
+          }
+          if (!callId && candidateKey.includes(`\0anonymous:${executionIdentity(execution, anonymousExecutionIds, () => nextAnonymousExecutionId++)}\0`)) {
+            boundaryKey = candidateKey;
+            boundary = candidate;
+            break;
+          }
+        }
+      }
+      if (!boundary) return;
+      clearTimeout(boundary.expiresAt);
+      preCommandCheckpoints.delete(boundaryKey);
+      void service.inspectCheckpointDelta(boundary.sessionId, boundary.checkpointId).then((changedFiles) => service.recordToolMutation(boundary.sessionId, boundary.checkpointId, {
+        toolName: boundary.toolName,
+        callId: boundary.callId,
+        status: result?.isError === true ? "error" : "success",
+        changedFiles,
+        ...boundedToolError(result) ? { error: boundedToolError(result) } : {}
+      })).catch((error) => ctx.logger.warn(`[time-machine] could not record tool mutation for ${boundary.toolName}: ${errorMessage(error)}`));
     });
   }
   if (service.config.enableAgentWriteLedger) {
@@ -4094,7 +5269,7 @@ function apply(ctx, config = {}) {
       for (const [displayPath, operation] of observed.paths) {
         const relative = workspaceRelativePath(workDir, displayPath);
         if (!relative) continue;
-        const sha256 = operation === "delete" ? createHash4("sha256").update(`dsh-time-machine:absent:${relative}`).digest("hex") : void 0;
+        const sha256 = operation === "delete" ? createHash6("sha256").update(`dsh-time-machine:absent:${relative}`).digest("hex") : void 0;
         chain = chain.then(() => service.recordAgentWrite(observed.sessionId, checkpointId, { path: relative, operation, ...sha256 ? { sha256 } : {} }).then(() => void 0).catch((error) => {
           ctx.logger.warn(`[time-machine] could not record Agent write ${relative}: ${errorMessage(error)}`);
         }));
@@ -4110,6 +5285,8 @@ function apply(ctx, config = {}) {
     const checkpointId = checkpoints.get(key);
     if (!checkpointId) return;
     checkpoints.delete(key);
+    const baseline = checkpointAssistantBaselines.get(key) ?? /* @__PURE__ */ new Set();
+    checkpointAssistantBaselines.delete(key);
     const reason = asRecord(event.data.reason);
     const kind = typeof reason?.kind === "string" ? reason.kind : "error";
     const failure = asRecord(reason?.error);
@@ -4120,12 +5297,15 @@ function apply(ctx, config = {}) {
       if (callKey.startsWith(`${session.id}\0`) && callKey.endsWith(`\0${turn}`)) preCommandCalls.delete(callKey);
     }
     preCommandCounts.delete(`${session.id}\0${turn}`);
+    const assistantMessageIds = assistantMessageIdsForTurn(getMessages(session), baseline);
     void ledgerWrites.then(() => service.finalizeTurnCheckpoint({
       sessionId: session.id,
       checkpointId,
       status: kind === "completed" ? "success" : kind === "aborted" || kind === "interrupted" ? "aborted" : "failed",
       errorMessage: typeof failure?.message === "string" ? failure.message : kind === "completed" ? void 0 : `Turn ended: ${kind}`,
-      failedTools: failedTools.length > 0 ? failedTools : void 0
+      failedTools: failedTools.length > 0 ? failedTools : void 0,
+      assistantMessageId: assistantMessageIds.at(-1),
+      assistantMessageIds
     })).catch((error) => {
       ctx.logger.error(`[time-machine] could not finalize ${checkpointId}: ${errorMessage(error)}`);
     });
@@ -4135,8 +5315,12 @@ function apply(ctx, config = {}) {
       if (!service.config.autoSnapshot || step !== 1) return next();
       installAgentToolBoundary?.(agent);
       const session = agent.session;
-      const cwd = session.header.cwd ? path8.resolve(session.header.cwd) : workDir;
-      if (cwd !== service.workDir) {
+      const cwd = session.header.cwd ? path12.resolve(session.header.cwd) : workDir;
+      const [canonicalCwd, canonicalRoot] = await Promise.all([
+        fs11.realpath(cwd).catch(() => cwd),
+        canonicalWorkDir
+      ]);
+      if (canonicalCwd !== canonicalRoot) {
         scope.logger.warn(`[time-machine] skipped session ${session.id}: cwd ${cwd} differs from configured workspace ${service.workDir}`);
         return next();
       }
@@ -4157,9 +5341,14 @@ function apply(ctx, config = {}) {
             messages: getMessages(session),
             ...start.seq > 0 ? { boundarySeq: start.seq - 1 } : {}
           },
+          userMessageId: latestUserMessageId(getMessages(session)),
           status: "running"
         });
         checkpoints.set(checkpointKey(session.id, turn), checkpoint.id);
+        checkpointAssistantBaselines.set(
+          checkpointKey(session.id, turn),
+          new Set(allAssistantMessageIds(getMessages(session)))
+        );
       } catch (error) {
         scope.logger.error(`[time-machine] checkpoint for turn ${turn} failed: ${errorMessage(error)}`);
         throw error;
@@ -4173,11 +5362,26 @@ function isNativeWriteTool(name2) {
   return name2 === "write" || name2 === "edit" || name2 === "str_replace_editor";
 }
 function workspaceRelativePath(workDir, displayPath) {
-  const absolute = path8.resolve(workDir, displayPath);
-  const root = path8.resolve(workDir);
-  const relative = path8.relative(root, absolute).replace(/\\/g, "/");
-  if (!relative || relative === ".." || relative.startsWith("../") || path8.isAbsolute(relative)) return void 0;
+  const absolute = canonicalPathForComparison(path12.resolve(workDir, displayPath));
+  const root = canonicalPathForComparison(path12.resolve(workDir));
+  const relative = path12.relative(root, absolute).replace(/\\/g, "/");
+  if (!relative || relative === ".." || relative.startsWith("../") || path12.isAbsolute(relative)) return void 0;
   return relative;
+}
+function canonicalPathForComparison(candidate) {
+  let cursor = candidate;
+  const suffix = [];
+  while (true) {
+    try {
+      const resolved = fsSync.realpathSync.native(cursor);
+      return path12.join(resolved, ...suffix.reverse());
+    } catch {
+      const parent = path12.dirname(cursor);
+      if (parent === cursor) return candidate;
+      suffix.push(path12.basename(cursor));
+      cursor = parent;
+    }
+  }
 }
 function executionIdentity(execution, identities, allocate) {
   const object = execution;
@@ -4228,6 +5432,25 @@ function getMessages(session) {
   if (typeof session.deriveMessages !== "function") return [];
   return session.deriveMessages().map((message) => message);
 }
+function assistantMessageIdsForTurn(messages, baseline) {
+  const ids = [];
+  for (const message of messages) {
+    const candidate = message;
+    if (candidate.role !== "assistant" || typeof candidate.id !== "string" || !candidate.id.trim() || baseline.has(candidate.id)) continue;
+    ids.push(candidate.id);
+  }
+  return [...new Set(ids)];
+}
+function latestUserMessageId(messages) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role === "user" && typeof message.id === "string" && message.id.trim()) return message.id;
+  }
+  return void 0;
+}
+function allAssistantMessageIds(messages) {
+  return assistantMessageIdsForTurn(messages, /* @__PURE__ */ new Set());
+}
 function findLastEvent(events, predicate) {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     if (predicate(events[index])) return events[index];
@@ -4259,7 +5482,10 @@ var TimeMachinePlugin = class {
 var index_default = TimeMachinePlugin;
 export {
   Config,
+  DAGStateKeyError,
   DAGStateManager,
+  DAG_FORMAT_VERSION,
+  ExternalEffectsUnresolvedError,
   FallbackSnapshotEngine,
   GitPlumbingEngine,
   QuarantineKeyError,
@@ -4274,9 +5500,11 @@ export {
   TimeMachineService,
   UnsupportedWorkspaceStateError,
   WorkspaceDriftError,
+  WorkspaceHardLinkError,
   WorkspaceMergeConflictError,
   WorkspaceRestoreConflictError,
   apply,
+  buildCompanionTimeline,
   collectFailedTools,
   index_default as default,
   name

@@ -251,6 +251,7 @@ node <dsh-source>/apps/cli/lib/bin.js --profile tm-live --dump-config
 |---|---|---|
 | `/api/status` | 返回 online、workspace、version | 服务停止后连接失败 |
 | `/api/sessions` | 列出持久化 session 摘要并按最近更新时间排序 | 损坏/半写 DAG 被忽略，不创建 `default` |
+| `/api/checkpoint-for-message` | finalized assistant / turn-opening user message 映射到 checkpoint | 未知 message 返回 `CHECKPOINT_NOT_FOUND`，不猜测目标 |
 | `/api/dag` | 返回指定 session DAG | 不存在 session、默认 session |
 | `/api/diff` | 两 checkpoint diff | 空 id、无效 id |
 | `/api/rewind` | safe、force、delete ignored | 非法 JSON、缺 checkpoint、无 sessionController |
@@ -295,22 +296,36 @@ artifacts/<run-id>/
 
 当前已经有证据：
 
-- 当前仓库全量自动化测试 96/96 通过；Web 21/21、CLI 10/10，覆盖 DSH durable `tool/call`/`tool/result` 失败配对、反思输入提取、失败 fork 点反思，以及 Web fork 失败补偿测试。
+- 当前仓库全量自动化测试 143/143 通过；Web 29/29、CLI 16/16、companion client 10/10，另有 service 36/36、Git plumbing 24/24、plugin 7/7、workspace-host 4/4、fallback 5/5、path-safety 2/2、DAG 7/7、lock 2/2、reflection 1/1。覆盖 DSH durable `tool/call`/`tool/result` 失败配对、反思输入提取、失败 fork 点反思、只读 `/api/reflection`、外部副作用 preview/listing 与严格 restore gate、prune dry-run、版本化 DAG 迁移、加密 session metadata、加密密钥轮换、加密 shadow objects、明文 shadow 显式迁移与 migration-required 能力状态、Shadow archive journal 恢复、截断 payload fail-closed、单根 workspace 路由拒绝、canonical workspace route 校验（含 symlink alias）、host fork 跨根拒绝和无效结果拒绝、Git hard-link restore fail-closed、fallback symlink ancestor fail-closed、消息级 checkpoint 映射、companion shadow 迁移调用，以及 Web fork 失败补偿测试。CLI 与 Web `/api/undo` 回归还验证了同一 turn 内 pre-command 节点不会改变按 turn 的回退距离，并且不会把 running checkpoint 当作已完成 turn；client timeline、prune 与 reflection 回归锁定相同的 UI 安全规则。
+- Windows Node 22 合成 benchmark 已实测 100/1,000/10,000 文件（每组 5 turns）：Git 平均快照相对传统复制分别为 2.61×、0.42×、0.19×；对应 Git P50/P95 为 805/868ms、1,406/1,515ms、2,935/3,004ms。该数据只作为可复现实验基线，不替代真实仓库性能承诺；绝对延迟会随机器负载变化。
+- 2026-09-19 同机复测 1,000/10,000 文件（每组 5 turns）分别得到 Git 平均 1,427.76ms（P50/P95 1,395.57/1,505.04ms）和 2,833.09ms（2,809.01/2,894.54ms）；传统复制平均 2,661.89ms 和 12,180.30ms。该复测用于持续回归，不替代前一组基线或真实仓库 SLA。
+- 2026-09-19 当前工作树追加复测（`TM_BENCH_FORMAT=json`，每组 5 turns）：1,000 文件 Git P50/P95 为 1,380.26/1,506.88ms，传统复制为 2,762.75/2,827.74ms，延迟比 0.511、存储比 0.090；10,000 文件 Git P50/P95 为 2,749.18/2,909.88ms，传统复制为 13,220.61/14,361.37ms，延迟比 0.211、存储比 0.139。该结果用于本次提交的可复现回归，仍受机器负载影响，不构成 SLA。
+- 100 文件、100-turn 长会话基线已实测：Git 平均相对传统复制 2.76×，P50/P95 为 679/769ms，存储比例 0.038×；长期存储收益明显，但小仓库单轮 Git 进程开销仍存在。
+- `client-companion/` 已在实际安装的 DSH `0.1.6-alpha.2` 和隔离临时目录中的 `0.1.6-alpha.1` client 包上完成严格 typecheck、`tsdown` 构建和双 slot 注册 smoke；跨版本 `0.1.6-alpha.1/.2` slot CI 与独立 npm 发布流程已配置，仍需首次 GitHub runner/npm 发布证据。
+- finalized assistant 与 turn-opening user message 映射已覆盖：checkpoint 在 turn 结束时记录该 turn 的全部 assistant message ids（包含工具循环中的中间消息），并在 turn 开始时记录 user message id；`/api/checkpoint-for-message` 对未知消息 fail-closed，companion 目前只对可解析的 assistant 消息显示 rewind action。
 - Git 与 fallback 恢复完成后均执行工作区摘要校验；持久化 DAG 加载会校验节点、父节点、分支和会话归属。
 - 真实 DSH 源码宿主加载插件通过。
+- 2026-09-19 使用本地 DSH 源码宿主 `0.1.6-alpha.1` 与 OpenAI-compatible
+  Gemini 网关（`gemini-3.8-flash`）复测通过：`TM_DSH_LIVE=1`、重启、工具失败
+  和 pre-command 开关同时启用时，成功落盘 finalized checkpoint、Agent-write
+  ledger、重启后的 DAG、`failedTools` 证据和高风险工具前置 checkpoint。
 - 真实本地模型请求、文件创建、turn 结束后的 finalized checkpoint 落盘通过。
 - 使用同一 `DSH_HOME` 与 workspace 的 live restart 测试通过，第二次运行保留并新增 DAG checkpoint。
 - live restart 还验证每个持久化节点的 `sessionState.sessionId` 与 DAG 所属 session 一致，且原 session DAG 未丢失。
 - 真实 DSH Web 宿主通过 `session/create`、`session/prompt` 驱动 turn，并完成真实 `/api/fork` 与 `/api/rewind`。
+- 2026-09-19 通过同一本地 Gemini 网关重跑真实 Web smoke：`session/create`、
+  `session/prompt`、finalized checkpoint、fork、rewind，以及缺失 session 的
+  `SessionController` fork 失败补偿全部通过。
 - 同一真实 Web session 中，失败工具证据会在从失败 checkpoint 分叉时进入 `reflectionAdvisory`。
 - 真实 DSH 不可达模型端点会产生并持久化 `failed` checkpoint，且保留错误证据。
 - 真实 DSH 强制执行退出码非零的 shell 命令后，checkpoint 持久化了 `failedTools` 证据。
 - 真实 DSH source smoke 在 `TM_DSH_LIVE_PRECOMMAND=1` 下已验证：高风险 shell 工具执行前实际持久化了 `pre-command` checkpoint。
+- 插件回归还验证了宿主先发 `turn/end`、再发 `tools/result` 时仍能按 callId 归因并持久化 `toolMutations`；未返回的调用由 5 分钟 unref 超时清理，避免账本内存泄漏。
 - 真实 DSH Web smoke 在 Windows 上通过有效本地网关完成真实 turn、fork、rewind，并触发真实缺失 session 的 `SessionController` fork 拒绝；rescue 补偿恢复了 fork 调用前工作区。
 - 真实 DSH Web smoke 在新增 `Sec-Fetch-Site` 围栏后仍通过，说明正常宿主 API 请求未被 CSRF 防护误拦截。
 - Web UI 在 fork/rewind 后采用服务端返回的新 conversation sessionId，后续 DAG 查询不再使用旧会话。
 - CLI 命令注册层已自动化覆盖 `/tm-tree`、`/tm-fork`、`/tm-rewind`，包括 sessionController 返回的新会话身份和工作区恢复。
-- CLI 命令注册层已自动化覆盖 `/tm-tree`、`/tm-doctor`、`/tm-restore`、`/tm-fork`、`/tm-rewind`，包括不分叉会话的完整工作区恢复。
+- CLI 命令注册层已自动化覆盖 `/tm-tree`、`/tm-list`、`/tm-doctor`、`/tm-restore`、`/tm-fork`、`/tm-rewind`、`/tm-undo`，包括不分叉会话的完整工作区恢复、活动 lineage 展示和按活动 DAG lineage 解析相对回退步数。
 - `turn/end` 生命周期会从 DSH 持久事件中提取失败工具、输入和错误原因，并传入 checkpoint 反思顾问；已用接近真实 DSH 消息结构的单元测试覆盖。
 - 真实 checkpoint DAG 和 Dashboard status/dag 通过；`/api/restore-workspace` 通过 Web 回归并保持当前会话不变。
 - Web API rewind/fork、Host/JSON 安全、Session fork 失败补偿和重启 DAG 持久化已有自动化覆盖。

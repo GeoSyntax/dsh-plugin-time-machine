@@ -36,6 +36,8 @@ jobs:
       - name: Run full test suite
         run: pnpm test
       - run: pnpm build
+      - name: Verify empty-directory consumer install
+        run: pnpm test:consumer
       - name: Verify committed distribution
         if: matrix.os == 'ubuntu-latest' && matrix.node == '22.19.0'
         run: git diff --exit-code -- dist/index.cjs dist/index.js dist/index.d.ts dist/index.d.cts dist/client
@@ -55,6 +57,80 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm audit --prod --audit-level=high
+
+  client-companion:
+    name: Native DSH client companion
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.29.1
+          run_install: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22.19.0
+          cache: pnpm
+      - name: Install and build the core package
+        run: pnpm install --frozen-lockfile && pnpm build
+      - name: Install companion dependencies
+        working-directory: client-companion
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck companion
+        working-directory: client-companion
+        run: pnpm typecheck
+      - name: Build companion
+        working-directory: client-companion
+        run: pnpm build
+      - name: Smoke-test slot registration
+        working-directory: client-companion
+        run: pnpm test:smoke
+      - name: Verify consumer package metadata
+        working-directory: client-companion
+        run: pnpm test:package
+      - name: Verify companion package contents
+        working-directory: client-companion
+        run: pnpm pack --dry-run
+
+  client-companion-compat:
+    name: Companion DSH client ${{ matrix.client-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        client-version: [0.1.6-alpha.1, 0.1.6-alpha.2]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.29.1
+          run_install: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22.19.0
+          cache: pnpm
+      - name: Install and build the core package
+        run: pnpm install --frozen-lockfile && pnpm build
+      - name: Install selected DSH client version
+        working-directory: client-companion
+        shell: bash
+        env:
+          DSH_CLIENT_VERSION: ${{ matrix.client-version }}
+        run: >-
+          pnpm add --save-exact --ignore-workspace
+          @deepseek-ai/dsh-client-ui-chat@$DSH_CLIENT_VERSION
+          @deepseek-ai/dsh-client-ui-conversation@$DSH_CLIENT_VERSION
+          @deepseek-ai/dsh-client-ui-renderer@$DSH_CLIENT_VERSION
+          @deepseek-ai/dsh-client-ui-session@$DSH_CLIENT_VERSION
+          @deepseek-ai/dsh-client-ui-slots@$DSH_CLIENT_VERSION
+          @deepseek-ai/dsh-client-ui-workspace@$DSH_CLIENT_VERSION
+          @deepseek-ai/dsh-session@$DSH_CLIENT_VERSION
+      - name: Typecheck selected DSH client version
+        working-directory: client-companion
+        run: pnpm typecheck
+      - name: Build selected DSH client version
+        working-directory: client-companion
+        run: pnpm test:smoke
 
   dsh-bundle-smoke:
     name: DSH bundle smoke

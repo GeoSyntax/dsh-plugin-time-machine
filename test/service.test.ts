@@ -188,6 +188,34 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
     expect((await ledgerService.getAgentWriteLedger(sessionId, agent.id))[0].path).toBe('ledger.txt');
   });
 
+  it('can preserve verified hand-edits by default without a per-command flag', async () => {
+    const defaultLedger = new TimeMachineService({
+      workDir: tmpDir,
+      storageDir: path.join(tmpDir, '.dsh-tm-ledger-default'),
+      config: { preserveVerifiedHandEditsByDefault: true },
+    });
+    const sessionId = 'agent-write-ledger-default';
+    const file = path.join(tmpDir, 'ledger-default.txt');
+    await fs.writeFile(file, 'base\n', 'utf8');
+    const base = await defaultLedger.createTurnCheckpoint({ sessionId, turnIndex: 1, prompt: 'base', sessionState: { sessionId, messages: [] } });
+    await fs.writeFile(file, 'agent\n', 'utf8');
+    const agent = await defaultLedger.createTurnCheckpoint({ sessionId, turnIndex: 2, prompt: 'agent write', sessionState: { sessionId, messages: [] } });
+    await defaultLedger.recordAgentWrite(sessionId, agent.id, { path: 'ledger-default.txt', operation: 'modify' });
+    await fs.writeFile(file, 'human\n', 'utf8');
+
+    const preview = await defaultLedger.previewRestore(sessionId, base.id);
+    expect(preview.workspaceDrifted).toBe(true);
+    expect(preview.conflictingPaths).toEqual([]);
+    expect(preview.preservedHandEditPaths).toEqual(['ledger-default.txt']);
+    expect(preview.requiresForce).toBe(false);
+    const result = await defaultLedger.rewindToCheckpoint(sessionId, base.id);
+    expect(await fs.readFile(file, 'utf8')).toBe('human\n');
+    expect(result.preservedHandEditPaths).toEqual(['ledger-default.txt']);
+    expect((await defaultLedger.getCapabilities()).handEditPolicy).toBe('ledger-default');
+      expect((await defaultLedger.getCapabilities()).agentWriteLedger).toBe(true);
+      expect((await defaultLedger.getCapabilities()).workspaceRouting).toBe('single-root');
+  });
+
   it('previews rewind impact without mutating files or DAG state', async () => {
     const sessionId = 'preview-session';
     const file = path.join(tmpDir, 'preview.txt');
@@ -208,6 +236,26 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
     expect(preview.requiresForce).toBe(false);
     expect(await fs.readFile(file, 'utf8')).toBe(before);
     expect((await service.getDAGManager(sessionId)).tree.currentCheckpointId).toBe(second.id);
+  });
+
+  it('surfaces external effects that file restore cannot undo', async () => {
+    const sessionId = 'preview-external-effects';
+    const first = await service.createTurnCheckpoint({ sessionId, turnIndex: 1, prompt: 'base', sessionState: { sessionId, messages: [] } });
+    await service.finalizeTurnCheckpoint({ sessionId, checkpointId: first.id, status: 'success' });
+    const second = await service.createTurnCheckpoint({ sessionId, turnIndex: 2, prompt: 'remote mutation', sessionState: { sessionId, messages: [] } });
+    await service.recordExternalEffect(sessionId, second.id, {
+      adapter: 'database', operation: 'insert', reversible: true,
+      failureSemantics: 'manual verification required', status: 'unresolved',
+    });
+    await service.finalizeTurnCheckpoint({ sessionId, checkpointId: second.id, status: 'success' });
+    const preview = await service.previewRestore(sessionId, first.id);
+    expect(preview.externalEffects).toHaveLength(1);
+    expect(preview.externalEffects?.[0]).toMatchObject({ adapter: 'database', operation: 'insert', status: 'unresolved' });
+    expect(preview.unresolvedExternalEffectIds).toHaveLength(1);
+    expect(preview.requiresExternalEffectsReview).toBe(true);
+    await expect(service.rewindToCheckpoint(sessionId, first.id, {
+      mode: 'force', requireExternalEffectsResolved: true,
+    })).rejects.toMatchObject({ code: 'EXTERNAL_EFFECTS_UNRESOLVED', effectIds: [preview.unresolvedExternalEffectIds[0]] });
   });
 
   it('binds a preview plan to the reviewed workspace and consumes it once', async () => {
@@ -400,6 +448,21 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
     expect((await service.getDAGManager(sessionId)).getNode(current.id)).toBeTruthy();
   });
 
+  it('supports a non-mutating prune dry-run with the same candidate policy', async () => {
+    const sessionId = 'dry-prune-session';
+    const file = path.join(tmpDir, 'dry-prune.txt');
+    await fs.writeFile(file, 'one\n', 'utf8');
+    const first = await service.createTurnCheckpoint({ sessionId, turnIndex: 1, prompt: 'one', sessionState: { sessionId, messages: [] } });
+    await fs.writeFile(file, 'two\n', 'utf8');
+    const current = await service.createTurnCheckpoint({ sessionId, turnIndex: 2, prompt: 'two', sessionState: { sessionId, messages: [] } });
+    const result = await service.prune(sessionId, { keepLatest: 0, compactHistory: true, dryRun: true });
+    expect(result.dryRun).toBe(true);
+    expect(result.removedCheckpointIds).toEqual([]);
+    expect(result.wouldRemoveCheckpointIds).toContain(first.id);
+    expect(result.wouldRemoveCheckpointIds).not.toContain(current.id);
+    expect((await service.getDAGManager(sessionId)).getNode(first.id)).not.toBeNull();
+  });
+
   it('recovers an interrupted restore journal on the next service startup', async () => {
     const sessionId = 'journal-recovery';
     const file = path.join(tmpDir, 'journal.txt');
@@ -489,6 +552,61 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
     expect((await fs.readdir(path.join(tmpDir, '.shadow-service', 'git-shadow', 'objects'), { withFileTypes: true })).some(entry => entry.isDirectory())).toBe(true);
     const prune = await shadowService.prune(sessionId, { keepLatest: 0, compactHistory: true, repackShadowObjects: true });
     expect(prune.shadowObjectsReclaimedBytes).toBeDefined();
+  });
+
+  it('reports and restores an encrypted shadow store through the service', async () => {
+    const envName = `DSH_TM_SHADOW_KEY_${process.pid}_${Date.now()}`;
+    const previous = process.env[envName];
+    process.env[envName] = 'service-shadow-secret';
+    try {
+      const encrypted = new TimeMachineService({
+        workDir: tmpDir,
+        storageDir: path.join(tmpDir, '.encrypted-shadow-service'),
+        config: { shadowStore: true, shadowStoreEncryptionKeyEnv: envName },
+      });
+      const sessionId = 'encrypted-shadow-service';
+      const file = path.join(tmpDir, 'encrypted-service.txt');
+      await fs.writeFile(file, 'before\n', 'utf8');
+      const checkpoint = await encrypted.createTurnCheckpoint({ sessionId, turnIndex: 1, prompt: 'encrypted', sessionState: { sessionId, messages: [] } });
+      await fs.writeFile(file, 'after\n', 'utf8');
+      await encrypted.rewindToCheckpoint(sessionId, checkpoint.id, { mode: 'force' });
+      expect(await fs.readFile(file, 'utf8')).toBe('before\n');
+      expect((await encrypted.getCapabilities()).shadowStoreEncryption).toBe(true);
+      expect((await encrypted.getStorageStatus(sessionId)).gitObjectsEncrypted).toBe(true);
+      expect(await fs.access(path.join(tmpDir, '.encrypted-shadow-service', 'git-shadow-encrypted', 'manifest.v1.json')).then(() => true, () => false)).toBe(true);
+      const prune = await encrypted.prune(sessionId, { keepLatest: 1, repackShadowObjects: true });
+      expect(prune.shadowRepackSkippedReason).toBeUndefined();
+    } finally {
+      if (previous === undefined) delete process.env[envName];
+      else process.env[envName] = previous;
+    }
+  });
+
+  it('surfaces migration-required state for a legacy plaintext shadow store', async () => {
+    const envName = `DSH_TM_SHADOW_MIGRATION_KEY_${process.pid}_${Date.now()}`;
+    const previous = process.env[envName];
+    process.env[envName] = 'migration-required-secret';
+    const storageDir = path.join(tmpDir, '.migration-required-shadow-service');
+    try {
+      const legacy = new TimeMachineService({ workDir: tmpDir, storageDir, config: { shadowStore: true } });
+      await fs.writeFile(path.join(tmpDir, 'migration-required.txt'), 'legacy\n', 'utf8');
+      await legacy.createTurnCheckpoint({ sessionId: 'migration-required', turnIndex: 1, prompt: 'legacy', sessionState: { sessionId: 'migration-required', messages: [] } });
+      const encrypted = new TimeMachineService({
+        workDir: tmpDir,
+        storageDir,
+        config: { shadowStore: true, shadowStoreEncryptionKeyEnv: envName },
+      });
+      expect((await encrypted.getCapabilities()).shadowStoreMigrationRequired).toBe(true);
+      expect((await encrypted.getCapabilities()).shadowStoreEncryption).toBe(false);
+      expect((await encrypted.getCapabilities()).mergeRestore).toBe(false);
+      expect((await encrypted.getStorageStatus()).gitObjectsEncrypted).toBe(false);
+      await encrypted.migrateShadowStore();
+      expect((await encrypted.getCapabilities()).shadowStoreMigrationRequired).toBe(false);
+      expect((await encrypted.getCapabilities()).shadowStoreEncryption).toBe(true);
+    } finally {
+      if (previous === undefined) delete process.env[envName];
+      else process.env[envName] = previous;
+    }
   });
 
   it('compacts old linear checkpoints only when explicitly requested', async () => {
@@ -615,6 +733,18 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
 
     expect(result.reflectionAdvisory.hasPastFailures).toBe(true);
     expect(result.reflectionAdvisory.suggestedPromptPrefix).toContain('Failed tool [shell]');
+  });
+
+  it('exposes reflection lessons as a read-only query', async () => {
+    const sessionId = 'reflection-query';
+    const checkpoint = await service.createTurnCheckpoint({
+      sessionId, turnIndex: 1, prompt: 'failed query boundary', sessionState: { sessionId, messages: [] },
+      status: 'success', failedTools: [{ toolName: 'shell', input: {}, error: 'command failed' }],
+    });
+    const reflection = await service.getReflection(sessionId, checkpoint.id);
+    expect(reflection.hasPastFailures).toBe(true);
+    expect(reflection.suggestedPromptPrefix).toContain('Failed tool [shell]');
+    expect((await service.getDAGManager(sessionId)).getCurrentNode()?.id).toBe(checkpoint.id);
   });
 
   it('persists external effect declarations and warns on a fork', async () => {
@@ -788,6 +918,29 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
       expect(diffs).toEqual(expect.arrayContaining([
         expect.objectContaining({ file: 'state.txt', status: 'modified', diffText: expect.stringContaining('-v1') }),
       ]));
+      await fs.writeFile(file, 'v4\n', 'utf8');
+      await expect(fallback.rewindToCheckpoint('fallback-session', checkpoint.id)).rejects.toMatchObject({ code: 'WORKSPACE_DRIFT' });
+
+      const ledgerFallback = new TimeMachineService({
+        workDir: fallbackRoot,
+        storageDir: path.join(fallbackRoot, '.dsh-tm-ledger'),
+        config: { preserveVerifiedHandEditsByDefault: true },
+      });
+      const ledgerFile = path.join(fallbackRoot, 'fallback-ledger.txt');
+      const ledgerSession = 'fallback-ledger-session';
+      await fs.writeFile(ledgerFile, 'base\n', 'utf8');
+      const ledgerBase = await ledgerFallback.createTurnCheckpoint({
+        sessionId: ledgerSession, turnIndex: 1, prompt: 'base', sessionState: { sessionId: ledgerSession, messages: [] },
+      });
+      await fs.writeFile(ledgerFile, 'agent\n', 'utf8');
+      const ledgerAgent = await ledgerFallback.createTurnCheckpoint({
+        sessionId: ledgerSession, turnIndex: 2, prompt: 'agent', sessionState: { sessionId: ledgerSession, messages: [] },
+      });
+      await ledgerFallback.recordAgentWrite(ledgerSession, ledgerAgent.id, { path: 'fallback-ledger.txt', operation: 'modify' });
+      await fs.writeFile(ledgerFile, 'human\n', 'utf8');
+      const fallbackPreserve = await ledgerFallback.rewindToCheckpoint(ledgerSession, ledgerBase.id);
+      expect(await fs.readFile(ledgerFile, 'utf8')).toBe('human\n');
+      expect(fallbackPreserve.preservedHandEditPaths).toEqual(['fallback-ledger.txt']);
     } finally {
       await fs.rm(fallbackRoot, { recursive: true, force: true });
     }
@@ -809,5 +962,39 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
     });
     const restarted = new TimeMachineService({ workDir: tmpDir, storageDir: path.join(tmpDir, '.dsh-tm') });
     expect((await restarted.listSessions()).map(item => item.sessionId).sort()).toEqual(['session-alpha', 'session-beta']);
+  });
+
+  it('encrypts persisted session metadata and keeps discovery key-aware', async () => {
+    const envName = 'TM_TEST_STATE_ENCRYPTION_KEY';
+    const previous = process.env[envName];
+    process.env[envName] = 'session-state-secret';
+    const encryptedRoot = path.join(tmpDir, '.dsh-tm-encrypted');
+    try {
+      const encrypted = new TimeMachineService({
+        workDir: tmpDir,
+        storageDir: encryptedRoot,
+        config: { stateEncryptionKeyEnv: envName },
+      });
+      const checkpoint = await encrypted.createTurnCheckpoint({
+        sessionId: 'encrypted-service-session', turnIndex: 1, prompt: 'do not persist this plaintext',
+        sessionState: { sessionId: 'encrypted-service-session', messages: [{ role: 'user', content: 'private' }] },
+      });
+      const capabilities = await encrypted.getCapabilities();
+      expect(capabilities.dagStateEncryption).toBe(true);
+      expect((await encrypted.getStorageStatus()).dagStateEncrypted).toBe(true);
+      const dagFile = path.join(encryptedRoot, `dag_${Buffer.from('encrypted-service-session').toString('base64url')}.json`);
+      const raw = await fs.readFile(dagFile, 'utf8');
+      expect(raw).not.toContain('do not persist this plaintext');
+      const restarted = new TimeMachineService({ workDir: tmpDir, storageDir: encryptedRoot, config: { stateEncryptionKeyEnv: envName } });
+      expect((await restarted.listSessions()).map(item => item.sessionId)).toEqual(['encrypted-service-session']);
+      expect((await restarted.getDAGManager('encrypted-service-session')).getNode(checkpoint.id)?.prompt).toContain('do not persist');
+      const wrong = new TimeMachineService({ workDir: tmpDir, storageDir: encryptedRoot, config: { stateEncryptionKeyEnv: envName } });
+      process.env[envName] = 'wrong-key';
+      await expect(wrong.listSessions()).rejects.toMatchObject({ code: 'DAG_STATE_KEY_INVALID' });
+      await expect(wrong.getDAGManager('encrypted-service-session')).rejects.toMatchObject({ code: 'DAG_STATE_KEY_INVALID' });
+    } finally {
+      if (previous === undefined) delete process.env[envName];
+      else process.env[envName] = previous;
+    }
   });
 });

@@ -22,6 +22,91 @@ describe('DSH Cordis plugin entry', () => {
     expect(failures).toEqual([{ toolName: 'shell', input: { cmd: 'false' }, error: 'exit code 1' }]);
   });
 
+  it('fails closed for sessions routed to a different workspace root', async () => {
+    const previousCwd = process.cwd();
+    const workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-plugin-root-routing-'));
+    const otherDir = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-plugin-other-root-'));
+    let ctx: Context | undefined;
+    let eventScope: Context | undefined;
+    try {
+      process.chdir(workDir);
+      ctx = new Context();
+      ctx.provide('agents', {} as never);
+      ctx.provide('sessions', {} as never);
+      new TimeMachinePlugin(ctx, { enableWebUI: false, enableAgentWriteLedger: true, storageDir: path.join(workDir, '.dsh-tm') });
+      await ctx.inject(['agents', 'sessions'], (scope: Context) => { eventScope = scope; });
+      const session = {
+        id: 'other-root-session',
+        header: { cwd: otherDir },
+        events: [{ type: 'turn/start', seq: 1, data: { turn: 1 } }],
+        snapshotEvents() { return this.events; },
+        deriveMessages() { return []; },
+      } as any;
+      await eventScope!.waterfall('agent/pre-step', {
+        agent: { session },
+        turn: 1,
+        step: 1,
+        signal: new AbortController().signal,
+      }, async () => undefined);
+      const service = ctx.get('timeMachine') as TimeMachineService;
+      expect((await service.getCapabilities()).workspaceRouting).toBe('single-root');
+      expect(Object.keys((await service.getDAGManager(session.id)).tree.nodes)).toHaveLength(0);
+    } finally {
+      await (ctx?.fiber?.dispose?.() ?? Promise.resolve());
+      process.chdir(previousCwd);
+      await fs.rm(workDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      await fs.rm(otherDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
+  });
+
+  it('accepts a symlink alias of the configured workspace root', async () => {
+    const previousCwd = process.cwd();
+    const workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-plugin-canonical-root-'));
+    const aliasParent = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-plugin-canonical-alias-'));
+    const alias = path.join(aliasParent, 'workspace-alias');
+    let ctx: Context | undefined;
+    let eventScope: Context | undefined;
+    try {
+      await fs.symlink(workDir, alias, process.platform === 'win32' ? 'junction' : 'dir');
+      process.chdir(workDir);
+      ctx = new Context();
+      ctx.provide('agents', {} as never);
+      ctx.provide('sessions', {} as never);
+      new TimeMachinePlugin(ctx, { enableWebUI: false, enableAgentWriteLedger: true, storageDir: path.join(workDir, '.dsh-tm') });
+      await ctx.inject(['agents', 'sessions'], (scope: Context) => { eventScope = scope; });
+      const session = {
+        id: 'canonical-alias-session',
+        header: { cwd: alias },
+        events: [{ type: 'turn/start', seq: 1, data: { turn: 1 } }],
+        snapshotEvents() { return this.events; },
+        deriveMessages() { return []; },
+      } as any;
+      await eventScope!.waterfall('agent/pre-step', {
+        agent: { session }, turn: 1, step: 1, signal: new AbortController().signal,
+      }, async () => undefined);
+      const file = path.join(workDir, 'alias-observed.txt');
+      await fs.writeFile(file, 'alias\n', 'utf8');
+      const execution = { callId: 'alias-write', name: 'write', agent: { session } };
+      ctx.emit('fs/observed', { displayPath: path.join(alias, 'alias-observed.txt') }, { kind: 'present' }, execution);
+      ctx.emit('tools/result', execution, { isError: false });
+      ctx.emit('session/event', session, { type: 'turn/end', seq: 2, data: { turn: 1, reason: { kind: 'completed' } } });
+      const service = ctx.get('timeMachine') as TimeMachineService;
+      let node = (await service.getDAGManager(session.id)).getCurrentNode();
+      for (let attempt = 0; attempt < 100 && !node?.agentWrites?.length; attempt += 1) {
+        await new Promise(resolve => setTimeout(resolve, 10));
+        node = (await service.getDAGManager(session.id)).getCurrentNode();
+      }
+      expect(node?.agentWrites).toEqual(expect.arrayContaining([
+        expect.objectContaining({ path: 'alias-observed.txt', operation: 'modify', sha256: expect.any(String) }),
+      ]));
+    } finally {
+      await (ctx?.fiber?.dispose?.() ?? Promise.resolve());
+      process.chdir(previousCwd);
+      await fs.rm(workDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      await fs.rm(aliasParent, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
+  });
+
   it('waits for native write ledger evidence before turn finalization', async () => {
     const previousCwd = process.cwd();
     const workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-plugin-native-ledger-'));
@@ -44,7 +129,7 @@ describe('DSH Cordis plugin entry', () => {
         header: { cwd: workDir },
         events: [{ type: 'turn/start', seq: 1, data: { turn: 1 } }],
         snapshotEvents() { return this.events; },
-        deriveMessages() { return []; },
+        deriveMessages() { return [{ id: 'user-turn-1', role: 'user', content: 'make the change' }]; },
       } as any;
       const agent = { session };
       const file = path.join(workDir, 'native.txt');
@@ -66,7 +151,9 @@ describe('DSH Cordis plugin entry', () => {
       const service = ctx.get('timeMachine') as TimeMachineService;
       expect(service.storageDir).toBe(path.join(workDir, '.dsh-tm'));
       let node = (await service.getDAGManager(session.id)).getCurrentNode();
-      for (let attempt = 0; attempt < 100 && !node?.agentWrites?.length; attempt += 1) {
+      // turn/end finalization is intentionally fire-and-forget on the host
+      // event bus; allow slower hosted runners to settle the ledger and DAG.
+      for (let attempt = 0; attempt < 300 && (!node?.agentWrites?.length || node?.status === 'running'); attempt += 1) {
         await new Promise(resolve => setTimeout(resolve, 20));
         node = (await service.getDAGManager(session.id)).getCurrentNode();
       }
@@ -75,6 +162,7 @@ describe('DSH Cordis plugin entry', () => {
         expect.objectContaining({ path: 'removed.txt', operation: 'delete', sha256: expect.any(String) }),
       ]));
       expect(node?.status).toBe('success');
+      expect(node?.userMessageId).toBe('user-turn-1');
     } finally {
       await (ctx?.fiber?.dispose?.() ?? Promise.resolve());
       process.chdir(previousCwd);
@@ -126,7 +214,19 @@ describe('DSH Cordis plugin entry', () => {
         name: 'bash',
         arguments: { command: 'rm -rf build' },
         agent,
-      }, async () => ({ isError: false }));
+      }, async () => { await fs.writeFile(path.join(workDir, 'tool-created.txt'), 'created by bash\n', 'utf8'); return { isError: false }; });
+      // The host may finalize the turn before a streamed tool/result callback arrives.
+      ctx.emit('session/event', session, { type: 'turn/end', seq: 2, data: { turn: 1, reason: { kind: 'completed' } } });
+      ctx.emit('tools/result', { callId: 'high-risk-call', name: 'bash', agent }, { isError: false });
+      const service = ctx.get('timeMachine') as TimeMachineService;
+      let firstNode = Object.values((await service.getDAGManager(session.id)).tree.nodes).find(node => node.tags?.includes('pre-command'));
+      for (let attempt = 0; attempt < 50 && !firstNode?.toolMutations?.length; attempt += 1) {
+        await new Promise(resolve => setTimeout(resolve, 10));
+        firstNode = Object.values((await service.getDAGManager(session.id)).tree.nodes).find(node => node.tags?.includes('pre-command'));
+      }
+      expect(firstNode?.toolMutations).toEqual(expect.arrayContaining([
+        expect.objectContaining({ toolName: 'bash', status: 'success', changedFiles: expect.arrayContaining([{ path: 'tool-created.txt', status: 'added' }]) }),
+      ]));
       await ctx.waterfall('tools/pre-execute', {
         callId: 'second-high-risk-call',
         name: 'bash',
@@ -153,9 +253,18 @@ describe('DSH Cordis plugin entry', () => {
         arguments: { command: 'rm -rf build' },
         agent,
       }, async () => ({ kind: 'allow' }));
-      const nextNodes = Object.values((await (ctx.get('timeMachine') as TimeMachineService).getDAGManager(session.id)).tree.nodes);
+      ctx.emit('tools/result', { callId: 'high-risk-call', name: 'bash', agent }, { isError: true, error: { code: 'EXIT_NONZERO', reason: 'exit code 1' } });
+      let nextNodes = Object.values((await (ctx.get('timeMachine') as TimeMachineService).getDAGManager(session.id)).tree.nodes);
+      for (let attempt = 0; attempt < 50 && !nextNodes.some(node => node.toolMutations?.some(item => item.status === 'error')); attempt += 1) {
+        await new Promise(resolve => setTimeout(resolve, 10));
+        nextNodes = Object.values((await (ctx.get('timeMachine') as TimeMachineService).getDAGManager(session.id)).tree.nodes);
+      }
       expect(nextNodes).toHaveLength(4);
       expect(nextNodes.filter(node => node.tags?.includes('pre-command'))).toHaveLength(2);
+      const failedBoundary = nextNodes.find(node => node.tags?.includes('pre-command') && node.turnIndex === 2);
+      expect(failedBoundary?.toolMutations).toEqual(expect.arrayContaining([
+        expect.objectContaining({ status: 'error', error: 'code=EXIT_NONZERO; reason=exit code 1' }),
+      ]));
     } finally {
       await (ctx?.fiber?.dispose?.() ?? Promise.resolve());
       process.chdir(previousCwd);

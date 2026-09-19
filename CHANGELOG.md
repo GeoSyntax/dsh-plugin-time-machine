@@ -2,6 +2,94 @@
 
 ## Unreleased
 
+- Compare workspace roots by canonical `realpath` before attaching DSH turns,
+  so macOS `/var`/`/private/var` aliases and other symlinked workspace roots do
+  not silently skip checkpoints or native tool ledgers.
+
+- Add an opt-in strict external-effect restore gate. Preview reports unresolved
+  effect IDs, and rewind/fork/restore can fail closed until explicit adapter
+  compensation marks them resolved.
+
+- Fail closed before restore when any workspace path traverses a symlink or
+  non-directory ancestor, closing the workspace-escape gap identified in
+  comparable rewind plugins.
+
+- Keep delayed `tools/result` events attributable after `turn/end` by matching
+  the pre-command boundary by call id or execution identity; pending entries
+  expire after five minutes without keeping the Node process alive.
+- Record a bounded, whitespace-normalized failure summary in tool mutation
+  evidence without persisting raw tool arguments or full command output.
+
+- Add a documented host workspace-routing contract covering multi-root
+  services, isolated fork requirements, capability states, and failure
+  acceptance tests; keep the current single-root behavior fail-closed until
+  DSH exposes the required fork API.
+- Advertise `messageAnchors: ["assistant", "user"]` through capabilities so
+  third-party clients can discover the user-message checkpoint contract.
+- Bind checkpoints to the turn-opening user message as well as finalized
+  assistant messages, so `/api/checkpoint-for-message` and the client contract
+  can support message-level rewind UI without breaking the assistant-only API.
+- Preserve legacy plaintext Shadow objects when encrypted capability discovery
+  detects that explicit migration is required; expose a fail-closed
+  `shadowStoreMigrationRequired` state instead of deleting the migration source.
+- Add opt-in AES-256-GCM encryption for plugin-owned Git shadow objects via
+  `shadowStoreEncryptionKeyEnv`. Git receives a disposable runtime object
+  directory; durable payloads are authenticated, explicit `/tm-shadow-migrate`
+  converts legacy plaintext, and `shadowStoreEncryptionPreviousKeyEnv` enables
+  authenticated key rotation. Add CLI, Web API, and companion client migration
+  surfaces with fail-closed `SHADOW_KEY_INVALID`/`SHADOW_ARCHIVE_CORRUPT`
+  errors.
+- Add opt-in AES-256-GCM encryption for persisted DAG/session metadata via
+  `stateEncryptionKeyEnv`; wrong or missing keys fail closed during restart and
+  session discovery, while validated legacy plaintext migrates atomically. Add
+  `stateEncryptionPreviousKeyEnv` for authenticated, atomic key rotation.
+- Cap the optional companion's DSH client peer range at `>=0.1.6-alpha.1 <0.2.0`
+  (and Cordis at 4.x) until a new host API matrix is verified; sync the lockfile
+  and document the tested `.1/.2` slot matrix.
+- Version persisted DAG history and add an atomic legacy migration path; future
+  formats fail closed without rewriting user history, and capabilities expose
+  `dagStorageFormatVersion` for client compatibility checks.
+- Add an explicit host `workspaceIsolation()` capability seam; shared-lock
+  remains the default, while isolated worktree/container claims are only
+  surfaced when the host supplies and routes those workspaces.
+- Include active-lineage external-effect records in restore previews and the
+  Dashboard confirmation text, making the non-transactional boundary visible
+  before a user restores files or forks a conversation.
+- Add a read-only `/tm-external-list`, Web API, and client method for auditing
+  unresolved external effects without accidentally invoking compensation.
+- Add prune dry-run support for CLI and Web API so retention/branch cleanup can
+  be reviewed before any DAG, quarantine, or Git-object deletion occurs.
+- Expose the same prune policy through the typed `TimeMachineClient.prune()`
+  companion method.
+- Add read-only reflection queries via `/tm-reflection`, `GET /api/reflection`,
+  and `TimeMachineClient.reflection()` so users can inspect abandoned-branch
+  lessons before starting another exploration.
+- Extend `/tm-doctor` to surface the shared-lock workspace boundary and the
+  current plaintext-at-rest status of Shadow Git objects, with actionable
+  warnings for community installations.
+- Make the real DSH Web smoke fixture explicitly use the native file-write
+  tool, reducing model-dependent false negatives while retaining the
+  assistant-message, failed-tool, fork, and rewind assertions.
+- Add opt-in `preserveVerifiedHandEditsByDefault`, which enables the
+  Agent-write ledger and preserves verified post-write hand-edits without a
+  per-command flag; CLI/API callers can explicitly disable preservation.
+- Add companion consumer-package metadata smoke tests and Windows-safe
+  serialized Vitest execution to prevent publish/type-entry and temporary-file
+  lock regressions.
+- Align fallback restore safety with Git restore: manifest diffs now detect
+  workspace drift, and verified hand-edit preservation works in non-Git
+  workspaces with digest verification excluding only explicitly preserved paths.
+- Make preview results policy-aware: preserved verified hand-edits are listed
+  separately from paths that still require force/merge, including fallback
+  workspaces and the standalone dashboard.
+- Add an empty-directory consumer smoke that installs the actual core tarball
+  and imports both the main package and `./client` export before release.
+- Add an optional host `sessionController.rewind()` seam; hosts that provide it
+  are advertised as `rewindSessionMode: in-place`, while current DSH alpha
+  hosts continue to use the tested fork path.
+- Make preview hand-edit policy explicit and session-bound: CLI, Web API, and
+  `TimeMachineClient.preview()` can request preservation, and the consumed
+  restore plan rejects a later policy mismatch.
 - 收紧 companion API 的 session 边界：恢复、分叉、预览、diff、账本查询与存储裁剪不再隐式回落到 `default`，未知或未持久化 session 统一返回 `SESSION_NOT_FOUND`。
 - 新增 `/tm-doctor`，在社区 profile 中诊断双轨恢复所需能力并提示缺失配置。
 - 接入可选的 DSH `sessionController.inspect` 宿主核验，避免展示或操作已经从 DSH 会话目录删除的孤儿 session。
@@ -9,6 +97,33 @@
 - 更新合成基准记录：100/1,000/10,000 文件 fixture 的实际延迟与存储比例。
 - 收紧 `/api/storage?sessionId=...` 的宿主边界，未知 session 不再创建空 DAG。
 - 补充 100-turn 长会话基准，记录长期 checkpoint 存储密度与小仓库延迟边界。
+
+- Add finalized assistant-message checkpoint mapping and a native
+  `conversation.chat.assistant-actions` companion action. Messages without a
+  durable checkpoint remain hidden instead of offering an unsafe guess.
+- Expose `rewindSessionMode: fork` in capability discovery and surface the
+  shared-lock/new-session semantics in the native client companion, so users
+  cannot mistake this append-only-safe rewind for in-place context undo.
+- Add an optional `client-companion/` source package for DSH Web clients. It
+  contributes a session-header action with timeline warnings, preview-first
+  confirmation, and navigation to the forked session while keeping React and
+  DSH UI dependencies out of the core service package.
+- Add `/tm-undo [count]`, a relative-turn CLI shortcut that resolves the active
+  DAG lineage and reuses the same safe restore, rescue, and session-fork path as
+  `/tm-rewind`.
+- Add `/tm-list [limit]` so users can discover those relative active-lineage
+  numbers without copying opaque checkpoint IDs.
+- Resolve `/tm-undo N` by completed turn rather than raw checkpoint count;
+  internal pre-command, rescue, and selective-restore nodes no longer shift
+  the user-visible undo distance.
+- Exclude still-running checkpoints from the user-visible undo lineage.
+- Publish the dependency-free companion contract from the `./client` package
+  subpath, including `timeline()` and its shared safety-aware projection.
+- Add the shared `POST /api/undo` and `TimeMachineClient.undo()` relative-turn
+  contract for CLI-like companions; confirmation UIs should still use preview
+  plans before mutation.
+- Add a Dashboard `Undo latest turn` action wired to the same REST contract,
+  with explicit confirmation and new-session feedback.
 
 ## 0.2.0 — 2026-09-19
 
@@ -54,8 +169,9 @@
 ### Safety boundaries
 
 - `handEditPolicy` remains `reject-drift` by default. `ledger-opt-in` is
-  available only when integrations enable the explicit Agent-write ledger; the
-  core still never guesses authorship.
+  available when integrations enable the explicit Agent-write ledger, and
+  `ledger-default` is available through `preserveVerifiedHandEditsByDefault`;
+  the core still never guesses authorship.
 - `workspaceIsolation` is `shared-lock`, not an independent worktree or
   container.
 - `shadowStoreEncryption` and native DSH message-action UI are not implemented.

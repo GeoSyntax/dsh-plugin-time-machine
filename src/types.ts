@@ -83,6 +83,17 @@ export interface AgentWriteRecord {
   operation?: 'create' | 'modify' | 'delete';
 }
 
+/** Evidence linking a high-risk tool invocation to the workspace paths it changed. */
+export interface ToolMutationRecord {
+  toolName: string;
+  status: 'success' | 'error';
+  changedFiles: FileChange[];
+  recordedAt: number;
+  callId?: string;
+  /** Bounded, sanitized failure summary; raw tool input/output is never persisted. */
+  error?: string;
+}
+
 export interface CheckpointNode {
   id: string;
   parentId: string | null;
@@ -96,6 +107,12 @@ export interface CheckpointNode {
   sessionState: SessionState;
   changedFiles: FileChange[];
   status: 'running' | 'success' | 'failed' | 'aborted';
+  /** Durable assistant message produced by this turn, when the host exposes one. */
+  assistantMessageId?: string;
+  /** All finalized assistant messages produced by this turn, including tool-loop intermediates. */
+  assistantMessageIds?: string[];
+  /** User message that opened this turn, when the host exposes message ids. */
+  userMessageId?: string;
   errorMessage?: string;
   failedTools?: Array<{ toolName: string; input: any; error: string }>;
   tags?: string[];
@@ -114,9 +131,13 @@ export interface CheckpointNode {
   agentWrites?: AgentWriteRecord[];
   /** Git changes observed at turn finalization that lack Agent-write evidence. */
   unattributedChanges?: FileChange[];
+  /** Per-tool workspace delta observed between a pre-command boundary and its result. */
+  toolMutations?: ToolMutationRecord[];
 }
 
 export interface DAGTree {
+  /** Persisted DAG schema version. Legacy files may omit this until init migrates them. */
+  formatVersion?: number;
   sessionId: string;
   currentBranch: string;
   currentCheckpointId: string | null;
@@ -160,6 +181,10 @@ export interface TimeMachineConfig {
   maxStorageBytes?: number;
   /** Store plugin-created Git objects outside the user's normal object directory. */
   shadowStore?: boolean;
+  /** Optional environment variable containing a key for encrypted shadow objects. */
+  shadowStoreEncryptionKeyEnv?: string;
+  /** Optional old key used once to atomically rotate encrypted shadow objects. */
+  shadowStoreEncryptionPreviousKeyEnv?: string;
   /** Allow quota-triggered compaction before ordinary checkpoints; disabled by default. */
   autoPrune?: boolean;
   /** Automatically compact checkpoints older than this age before ordinary checkpoints; 0 disables it. */
@@ -170,6 +195,10 @@ export interface TimeMachineConfig {
   maxQuarantineBytes?: number;
   /** Optional environment variable containing a key used to encrypt quarantine backups. */
   quarantineEncryptionKeyEnv?: string;
+  /** Optional environment variable containing a key used to encrypt persisted DAG/session metadata. */
+  stateEncryptionKeyEnv?: string;
+  /** Optional old key used once to atomically rotate encrypted DAG/session metadata. */
+  stateEncryptionPreviousKeyEnv?: string;
   /** Lifetime of a preview restore plan. Set to 0 to disable plan expiry. */
   restorePlanTtlMs?: number;
   /** Maximum size of one captured regular file; 0 disables the guard. */
@@ -180,6 +209,8 @@ export interface TimeMachineConfig {
   allowPartialSnapshots?: boolean;
   /** Record integration-supplied Agent writes for explicit hand-edit preservation. */
   enableAgentWriteLedger?: boolean;
+  /** Automatically preserve verified hand edits during restore when the ledger is enabled. */
+  preserveVerifiedHandEditsByDefault?: boolean;
   /** Create a workspace checkpoint immediately before high-risk external tools. */
   autoPreCommandSnapshot?: boolean;
   /** Tool names treated as high-risk when autoPreCommandSnapshot is enabled. */
@@ -202,6 +233,8 @@ export interface RestoreOptions {
   preserveVerifiedHandEdits?: boolean;
   /** Internal path list calculated from the active Agent-write ledger. */
   preservePaths?: string[];
+  /** Fail closed when the abandoned lineage contains uncompensated external effects. */
+  requireExternalEffectsResolved?: boolean;
 }
 
 export interface RestoreResult {
@@ -234,6 +267,14 @@ export interface RestorePreview {
   diffs: DiffResult[];
   /** Paths changed after the active checkpoint that make safe restore refuse overwrite. */
   conflictingPaths: string[];
+  /** Verified Agent-write paths whose later hand-edits are preserved by policy. */
+  preservedHandEditPaths?: string[];
+  /** External effects recorded on the active lineage after the target; file restore does not undo these. */
+  externalEffects?: ExternalEffectRecord[];
+  /** IDs of effects that still need explicit compensation before a strict restore. */
+  unresolvedExternalEffectIds: string[];
+  /** True when the preview contains effects that file restore cannot undo. */
+  requiresExternalEffectsReview: boolean;
   workspaceDrifted: boolean;
   requiresForce: boolean;
   /** Short-lived session-bound plan used to bind a reviewed preview to mutation. */
@@ -257,13 +298,40 @@ export interface StorageStatus {
   checkpoints: number;
   pruneCandidates: number;
   gitObjectsShared: boolean;
-  /** Shadow Git objects are currently plaintext at rest; quarantine may differ. */
+  /** True when plugin-owned shadow objects are stored in the encrypted archive. */
   gitObjectsEncrypted: boolean;
+  /** Persisted DAG/session metadata is encrypted at rest when configured. */
+  dagStateEncrypted: boolean;
   quarantineEncrypted: boolean;
+}
+
+/** Host-reported workspace isolation mode; shared-lock is the honest fallback. */
+export type WorkspaceIsolation = 'shared-lock' | 'isolated-worktree' | 'isolated-container';
+
+/** Canonical workspace route reported by a host integration. */
+export interface WorkspaceRoute {
+  workspaceId: string;
+  cwd: string;
+  isolation: WorkspaceIsolation;
+}
+
+/** Optional DSH host surface for multi-workspace and isolated fork support. */
+export interface TimeMachineWorkspaceHost {
+  resolveSessionWorkspace(sessionId: string): Promise<WorkspaceRoute>;
+  forkSession(request: {
+    sourceSessionId: string;
+    atSeq?: number;
+    workspaceId: string;
+    cwd: string;
+  }): Promise<{ sessionId: string; workspaceId: string; cwd: string }>;
 }
 
 export interface PruneResult {
   sessionId: string;
+  /** True when this result is an audit-only plan and no checkpoints were removed. */
+  dryRun?: boolean;
+  /** Checkpoints that would be removed by a dry-run. */
+  wouldRemoveCheckpointIds?: string[];
   removedCheckpointIds: string[];
   reclaimedBytes: number;
   gitRefsRemoved: number;

@@ -41,6 +41,26 @@ describe('FallbackSnapshotEngine', () => {
     await expect(fs.access(path.join(storage, 'limits'))).rejects.toThrow();
   });
 
+  it('fails closed before restoring through a symlink ancestor', async () => {
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-fallback-outside-'));
+    try {
+      await fs.mkdir(path.join(root, 'escape'));
+      await fs.writeFile(path.join(root, 'escape', 'state.txt'), 'safe\n', 'utf8');
+      await engine.createSnapshot({ sessionId: 'symlink-ancestor', checkpointId: 'base' });
+      await fs.rm(path.join(root, 'escape'), { recursive: true, force: true });
+      await fs.writeFile(path.join(outside, 'state.txt'), 'outside\n', 'utf8');
+      await fs.symlink(outside, path.join(root, 'escape'), 'junction');
+
+      await expect(engine.restoreSnapshot('symlink-ancestor', 'base')).rejects.toMatchObject({
+        code: 'UNSUPPORTED_WORKSPACE_STATE',
+        paths: ['escape'],
+      });
+      expect(await fs.readFile(path.join(outside, 'state.txt'), 'utf8')).toBe('outside\n');
+    } finally {
+      await fs.rm(outside, { recursive: true, force: true });
+    }
+  });
+
   it('inventories added, modified, and deleted files against a fallback manifest', async () => {
     await fs.writeFile(path.join(root, 'modified.txt'), 'before\n', 'utf8');
     await fs.writeFile(path.join(root, 'deleted.txt'), 'remove\n', 'utf8');

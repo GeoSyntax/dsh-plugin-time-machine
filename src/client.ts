@@ -36,6 +36,7 @@ export interface RewindRequest {
   force?: boolean;
   preserveVerifiedHandEdits?: boolean;
   deleteNewIgnoredPaths?: boolean;
+  requireExternalEffectsResolved?: boolean;
 }
 
 export interface ForkRequest extends RewindRequest {
@@ -53,6 +54,10 @@ export interface RestoreFilesRequest {
 }
 
 export type RestoreWorkspaceRequest = Omit<RewindRequest, 'checkpointId'> & { checkpointId: string };
+
+export interface UndoRequest extends Omit<RewindRequest, 'checkpointId'> {
+  count?: number;
+}
 
 export interface ExternalEffectRequest {
   sessionId: string;
@@ -74,11 +79,33 @@ export interface ExternalCompensationRequest {
   idempotencyKey?: string;
 }
 
+export interface PruneRequest {
+  sessionId: string;
+  keepLatest?: number;
+  olderThanMs?: number;
+  abandonedBranches?: boolean;
+  compactHistory?: boolean;
+  repackShadowObjects?: boolean;
+  dryRun?: boolean;
+}
+
 export interface PreviewBoundAction {
   readonly sessionId: string;
   readonly checkpointId: string;
   readonly restorePlanId: string;
   readonly preview: RestorePreview;
+}
+
+/** UI-neutral timeline row for native DSH or standalone companion clients. */
+export interface CompanionTimelineEntry {
+  checkpoint: CheckpointNode;
+  /** 0 is the current completed user turn; null means the node is not on the active lineage. */
+  relativeUndo: number | null;
+  isCurrent: boolean;
+  /** Internal safety boundaries remain inspectable but should not be offered as user undo targets. */
+  userVisible: boolean;
+  canUndo: boolean;
+  warnings: string[];
 }
 
 export class TimeMachineClient {
@@ -104,6 +131,11 @@ export class TimeMachineClient {
     return this.get(`/api/storage${sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ''}`) as Promise<Record<string, unknown>>;
   }
 
+  /** Explicitly migrate a legacy plaintext shadow store into the encrypted archive. */
+  async migrateShadowStore(): Promise<Record<string, unknown>> {
+    return this.post('/api/shadow-migrate', {}) as Promise<Record<string, unknown>>;
+  }
+
   async dag(sessionId: string): Promise<DAGTree> {
     return this.get(`/api/dag?sessionId=${encodeURIComponent(sessionId)}`) as Promise<DAGTree>;
   }
@@ -113,8 +145,28 @@ export class TimeMachineClient {
     return objectField(body, 'sessions') as SessionSummary[];
   }
 
-  async preview(sessionId: string, checkpointId: string): Promise<PreviewBoundAction> {
-    const body = await this.get(`/api/preview?sessionId=${encodeURIComponent(sessionId)}&checkpoint=${encodeURIComponent(checkpointId)}`);
+  async workspaceRoute(sessionId: string): Promise<unknown> {
+    if (!sessionId.trim()) throw new Error('workspaceRoute requires sessionId.');
+    return this.get(`/api/workspace-route?sessionId=${encodeURIComponent(sessionId)}`);
+  }
+
+  /** Resolve the checkpoint anchored to a finalized assistant message. */
+  async checkpointForMessage(sessionId: string, messageId: string): Promise<CheckpointNode> {
+    if (!sessionId.trim() || !messageId.trim()) throw new Error('checkpointForMessage requires sessionId and messageId.');
+    const body = await this.get(`/api/checkpoint-for-message?sessionId=${encodeURIComponent(sessionId)}&messageId=${encodeURIComponent(messageId)}`);
+    return objectField(body, 'checkpoint') as CheckpointNode;
+  }
+
+  /** Build a bounded, newest-first timeline without coupling consumers to React or DSH slots. */
+  async timeline(sessionId: string, limit = 50): Promise<CompanionTimelineEntry[]> {
+    if (!sessionId.trim()) throw new Error('timeline requires a non-empty sessionId.');
+    if (!Number.isInteger(limit) || limit < 1 || limit > 500) throw new Error('timeline limit must be an integer between 1 and 500.');
+    return buildCompanionTimeline(await this.dag(sessionId), limit);
+  }
+
+  async preview(sessionId: string, checkpointId: string, options: { preserveVerifiedHandEdits?: boolean } = {}): Promise<PreviewBoundAction> {
+    const preserve = options.preserveVerifiedHandEdits === undefined ? '' : `&preserveHandEdits=${String(options.preserveVerifiedHandEdits)}`;
+    const body = await this.get(`/api/preview?sessionId=${encodeURIComponent(sessionId)}&checkpoint=${encodeURIComponent(checkpointId)}${preserve}`);
     const preview = objectField(body, 'preview') as unknown as RestorePreview;
     if (preview.sessionId !== sessionId || preview.checkpointId !== checkpointId || typeof preview.restorePlanId !== 'string' || !preview.restorePlanId) {
       throw new Error('Time Machine returned an invalid restore preview binding.');
@@ -125,6 +177,14 @@ export class TimeMachineClient {
   async rewind(action: PreviewBoundAction, options: Omit<RewindRequest, 'sessionId' | 'checkpointId' | 'restorePlanId'> = {}): Promise<unknown> {
     this.assertBinding(action);
     return this.post('/api/rewind', { ...options, sessionId: action.sessionId, checkpointId: action.checkpointId, restorePlanId: action.restorePlanId });
+  }
+
+  /** Direct relative-turn undo for CLI-like companions; preview-first UIs may use timeline()+preview()+rewind(). */
+  async undo(request: UndoRequest): Promise<unknown> {
+    if (!request.sessionId) throw new Error('undo requires sessionId.');
+    const count = request.count ?? 1;
+    if (!Number.isInteger(count) || count < 1 || count > 500) throw new Error('undo count must be an integer between 1 and 500.');
+    return this.post('/api/undo', { ...request, count });
   }
 
   async fork(action: PreviewBoundAction, branchName: string, options: Omit<ForkRequest, 'sessionId' | 'checkpointId' | 'restorePlanId' | 'branchName'> = {}): Promise<unknown> {
@@ -167,6 +227,28 @@ export class TimeMachineClient {
     return this.post('/api/external-effects/compensate', request);
   }
 
+  async externalEffects(sessionId: string, checkpointId?: string, unresolvedOnly = false): Promise<unknown> {
+    const params = new URLSearchParams({ sessionId, unresolved: String(unresolvedOnly) });
+    if (checkpointId) params.set('checkpoint', checkpointId);
+    return this.get(`/api/external-effects?${params}`);
+  }
+
+  async reflection(sessionId: string, checkpointId: string): Promise<unknown> {
+    if (!sessionId.trim() || !checkpointId.trim()) throw new Error('reflection requires sessionId and checkpointId.');
+    return this.get(`/api/reflection?sessionId=${encodeURIComponent(sessionId)}&checkpoint=${encodeURIComponent(checkpointId)}`);
+  }
+
+  async prune(request: PruneRequest): Promise<unknown> {
+    if (!request.sessionId) throw new Error('prune requires sessionId.');
+    if (request.keepLatest !== undefined && (!Number.isInteger(request.keepLatest) || request.keepLatest < 0)) {
+      throw new Error('prune keepLatest must be a non-negative integer.');
+    }
+    if (request.olderThanMs !== undefined && (!Number.isSafeInteger(request.olderThanMs) || request.olderThanMs <= 0)) {
+      throw new Error('prune olderThanMs must be a positive integer.');
+    }
+    return this.post('/api/prune', request);
+  }
+
   async diff(sessionId: string, baseCheckpointId: string, targetCheckpointId: string): Promise<unknown> {
     return this.get(`/api/diff?sessionId=${encodeURIComponent(sessionId)}&base=${encodeURIComponent(baseCheckpointId)}&target=${encodeURIComponent(targetCheckpointId)}`);
   }
@@ -177,6 +259,11 @@ export class TimeMachineClient {
 
   async unattributedChanges(sessionId: string, checkpointId: string): Promise<unknown> {
     return this.get(`/api/unattributed-changes?sessionId=${encodeURIComponent(sessionId)}&checkpoint=${encodeURIComponent(checkpointId)}`);
+  }
+
+  async toolMutations(sessionId: string, checkpointId: string): Promise<unknown> {
+    if (!sessionId.trim() || !checkpointId.trim()) throw new Error('toolMutations requires sessionId and checkpointId.');
+    return this.get(`/api/tool-mutations?sessionId=${encodeURIComponent(sessionId)}&checkpoint=${encodeURIComponent(checkpointId)}`);
   }
 
   private assertBinding(action: PreviewBoundAction): void {
@@ -207,3 +294,58 @@ function objectField(value: unknown, field: string): any {
 }
 
 export type { CheckpointNode, DAGTree, RestorePreview, SessionSummary };
+
+/** Pure timeline projection shared by browser clients and tests. */
+export function buildCompanionTimeline(dag: DAGTree, limit = 50): CompanionTimelineEntry[] {
+  if (!Number.isInteger(limit) || limit < 1 || limit > 500) throw new Error('timeline limit must be an integer between 1 and 500.');
+  const currentId = dag.currentCheckpointId;
+  const lineage = currentId ? lineageFor(dag, currentId) : [];
+  const relativeById = new Map<string, number>();
+  const seenTurns = new Set<number>();
+  let relativeUndo = 0;
+  for (const node of [...lineage].reverse()) {
+    if (!isUserVisible(node) || seenTurns.has(node.turnIndex)) continue;
+    seenTurns.add(node.turnIndex);
+    relativeById.set(node.id, relativeUndo);
+    relativeUndo += 1;
+  }
+  return Object.values(dag.nodes)
+    .sort((left, right) => right.timestamp - left.timestamp)
+    .slice(0, limit)
+    .map((checkpoint) => {
+      const userVisible = isUserVisible(checkpoint);
+      const warnings: string[] = [];
+      if (checkpoint.status === 'running') warnings.push('turn is still running');
+      if (checkpoint.omittedPaths?.length) warnings.push(`${checkpoint.omittedPaths.length} path(s) omitted`);
+      if (checkpoint.unattributedChanges?.length) warnings.push(`${checkpoint.unattributedChanges.length} unattributed change(s)`);
+      if (checkpoint.externalEffects?.some(effect => effect.status !== 'compensated')) warnings.push('external effects require review');
+      const relative = relativeById.get(checkpoint.id);
+      return {
+        checkpoint,
+        relativeUndo: relative ?? null,
+        isCurrent: checkpoint.id === currentId,
+        userVisible,
+        canUndo: userVisible && checkpoint.status !== 'running' && relative !== undefined && relative > 0,
+        warnings,
+      };
+    });
+}
+
+function isUserVisible(node: CheckpointNode): boolean {
+  return node.status !== 'running'
+    && !node.tags?.includes('pre-command')
+    && !node.tags?.includes('rescue')
+    && !node.tags?.includes('selective-restore');
+}
+
+function lineageFor(dag: DAGTree, checkpointId: string): CheckpointNode[] {
+  const result: CheckpointNode[] = [];
+  let cursor: string | null = checkpointId;
+  while (cursor) {
+    const node: CheckpointNode | undefined = dag.nodes[cursor];
+    if (!node) break;
+    result.unshift(node);
+    cursor = node.parentId;
+  }
+  return result;
+}

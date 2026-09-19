@@ -1,22 +1,48 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import { randomUUID } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'node:crypto';
 import pc from 'picocolors';
 import type { CheckpointNode, DAGTree } from '../types.js';
+
+/** Current on-disk DAG schema. Bump only with an explicit migration path. */
+export const DAG_FORMAT_VERSION = 1 as const;
+const DAG_ENVELOPE_VERSION = 1 as const;
+
+export class DAGStateKeyError extends Error {
+  readonly code = 'DAG_STATE_KEY_INVALID';
+
+  constructor(message = 'DAG state encryption key is missing or invalid.') {
+    super(message);
+    this.name = 'DAGStateKeyError';
+  }
+}
 
 export interface DAGManagerOptions {
   sessionId: string;
   storageDir: string;
   initialBranch?: string;
+  /** Optional operator-provided key for encrypting persisted session metadata. */
+  encryptionKey?: string;
+  /** Optional previous key accepted only to re-encrypt an authenticated legacy envelope. */
+  previousEncryptionKey?: string;
 }
 
 export class DAGStateManager {
   public tree: DAGTree;
   private readonly storageFile: string;
+  private readonly encryptionKey?: Buffer;
+  private readonly previousEncryptionKey?: Buffer;
 
   constructor(options: DAGManagerOptions) {
     const branch = options.initialBranch || 'main';
+    this.encryptionKey = options.encryptionKey?.trim()
+      ? createHash('sha256').update(options.encryptionKey).digest()
+      : undefined;
+    this.previousEncryptionKey = options.previousEncryptionKey?.trim()
+      ? createHash('sha256').update(options.previousEncryptionKey).digest()
+      : undefined;
     this.tree = {
+      formatVersion: DAG_FORMAT_VERSION,
       sessionId: options.sessionId,
       currentBranch: branch,
       currentCheckpointId: null,
@@ -41,9 +67,14 @@ export class DAGStateManager {
   async init(): Promise<void> {
     try {
       const content = await fs.readFile(this.storageFile, 'utf-8');
-      const loadedTree = JSON.parse(content) as DAGTree;
-      this.assertTree(loadedTree);
-      this.tree = loadedTree;
+      const decoded = this.decode(content);
+      const { tree, migrated } = this.migrateTree(decoded.tree);
+      this.assertTree(tree);
+      this.tree = tree;
+      // Legacy files are upgraded only after they have passed full validation.
+      // This keeps a corrupt/foreign file untouched for diagnosis and makes the
+      // migration atomic through the normal temporary-file persistence path.
+      if (migrated || decoded.usedPreviousKey || this.isPlaintext(content)) await this.persist();
     } catch (error: any) {
       if (error?.code !== 'ENOENT') throw error;
     }
@@ -56,7 +87,7 @@ export class DAGStateManager {
     await fs.mkdir(path.dirname(this.storageFile), { recursive: true });
     const temporary = `${this.storageFile}.${randomUUID()}.tmp`;
     try {
-      await fs.writeFile(temporary, `${JSON.stringify(this.tree, null, 2)}\n`, { encoding: 'utf-8', flag: 'wx' });
+      await fs.writeFile(temporary, this.encode(this.tree), { encoding: 'utf-8', flag: 'wx' });
       await fs.rename(temporary, this.storageFile);
     } finally {
       await fs.rm(temporary, { force: true }).catch(() => undefined);
@@ -105,7 +136,7 @@ export class DAGStateManager {
     return this.tree.nodes[checkpointId] || null;
   }
 
-  async updateNode(checkpointId: string, patch: Partial<Pick<CheckpointNode, 'status' | 'errorMessage' | 'failedTools' | 'summary' | 'settledGitTreeOid' | 'settledIgnoredPaths' | 'ignoredBackupKey' | 'externalEffects' | 'agentWrites' | 'unattributedChanges'>>): Promise<CheckpointNode> {
+  async updateNode(checkpointId: string, patch: Partial<Pick<CheckpointNode, 'status' | 'errorMessage' | 'failedTools' | 'summary' | 'settledGitTreeOid' | 'settledIgnoredPaths' | 'ignoredBackupKey' | 'externalEffects' | 'agentWrites' | 'unattributedChanges' | 'toolMutations'>>): Promise<CheckpointNode> {
     const node = this.getNode(checkpointId);
     if (!node) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
     const updated = { ...node, ...cloneJson(patch) };
@@ -326,6 +357,9 @@ export class DAGStateManager {
   }
 
   private assertTree(tree: DAGTree): void {
+    if (tree.formatVersion !== DAG_FORMAT_VERSION) {
+      throw new Error(`Unsupported DAG storage format ${String(tree.formatVersion)}; expected ${DAG_FORMAT_VERSION}.`);
+    }
     if (!tree || tree.sessionId !== this.tree.sessionId || typeof tree.nodes !== 'object' || typeof tree.branches !== 'object') {
       throw new Error(`Invalid or foreign DAG state in '${this.storageFile}'.`);
     }
@@ -340,6 +374,18 @@ export class DAGStateManager {
       if (!Array.isArray(node.sessionState.messages) || !Array.isArray(node.changedFiles)) {
         throw new Error(`DAG checkpoint '${id}' has invalid session or file state.`);
       }
+      if (node.assistantMessageId !== undefined && (typeof node.assistantMessageId !== 'string' || !node.assistantMessageId.trim())) {
+        throw new Error(`DAG checkpoint '${id}' has an invalid assistant message id.`);
+      }
+      if (node.userMessageId !== undefined && (typeof node.userMessageId !== 'string' || !node.userMessageId.trim())) {
+        throw new Error(`DAG checkpoint '${id}' has an invalid user message id.`);
+      }
+      if (node.assistantMessageIds !== undefined && (!Array.isArray(node.assistantMessageIds) || node.assistantMessageIds.some(messageId => typeof messageId !== 'string' || !messageId.trim()))) {
+        throw new Error(`DAG checkpoint '${id}' has invalid assistant message ids.`);
+      }
+      if (node.toolMutations !== undefined && (!Array.isArray(node.toolMutations) || node.toolMutations.some(item => !item || typeof item.toolName !== 'string' || !item.toolName.trim() || !['success', 'error'].includes(item.status) || !Array.isArray(item.changedFiles) || !Number.isFinite(item.recordedAt) || (item.error !== undefined && (typeof item.error !== 'string' || item.error.length > 300))))) {
+        throw new Error(`DAG checkpoint '${id}' has invalid tool mutation evidence.`);
+      }
       if (node.parentId !== null && !tree.nodes[node.parentId]) {
         throw new Error(`DAG checkpoint '${id}' references missing parent '${node.parentId}'.`);
       }
@@ -347,6 +393,62 @@ export class DAGStateManager {
         throw new Error(`DAG checkpoint '${id}' references missing branch '${node.branch}'.`);
       }
     }
+  }
+
+  private migrateTree(tree: DAGTree): { tree: DAGTree; migrated: boolean } {
+    if (!tree || typeof tree !== 'object') {
+      throw new Error(`Invalid or foreign DAG state in '${this.storageFile}'.`);
+    }
+    if (tree.formatVersion === undefined) {
+      return { tree: { ...tree, formatVersion: DAG_FORMAT_VERSION }, migrated: true };
+    }
+    if (tree.formatVersion !== DAG_FORMAT_VERSION) {
+      throw new Error(`Unsupported DAG storage format ${String(tree.formatVersion)}; expected ${DAG_FORMAT_VERSION}.`);
+    }
+    return { tree, migrated: false };
+  }
+
+  private encode(tree: DAGTree): string {
+    const plaintext = Buffer.from(JSON.stringify(tree, null, 2), 'utf8');
+    if (!this.encryptionKey) return `${plaintext.toString('utf8')}\n`;
+    const nonce = randomBytes(12);
+    const cipher = createCipheriv('aes-256-gcm', this.encryptionKey, nonce);
+    const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+    const envelope = {
+      kind: 'dsh-time-machine-dag',
+      version: DAG_ENVELOPE_VERSION,
+      nonce: nonce.toString('base64url'),
+      ciphertext: ciphertext.toString('base64url'),
+      tag: cipher.getAuthTag().toString('base64url'),
+    };
+    return `${JSON.stringify(envelope, null, 2)}\n`;
+  }
+
+  private decode(content: string): { tree: DAGTree; usedPreviousKey: boolean } {
+    let parsed: unknown;
+    try { parsed = JSON.parse(content); } catch { throw new Error(`Invalid DAG state JSON in '${this.storageFile}'.`); }
+    if (isDagEnvelope(parsed)) {
+      if (!this.encryptionKey) throw new DAGStateKeyError('Encrypted DAG state requires the configured key.');
+      if (parsed.version !== DAG_ENVELOPE_VERSION) throw new DAGStateKeyError('Encrypted DAG state format is unsupported.');
+      const keys = [{ key: this.encryptionKey, previous: false }, ...(this.previousEncryptionKey ? [{ key: this.previousEncryptionKey, previous: true }] : [])];
+      for (const candidate of keys) {
+        try {
+          const decipher = createDecipheriv('aes-256-gcm', candidate.key, Buffer.from(parsed.nonce, 'base64url'));
+          decipher.setAuthTag(Buffer.from(parsed.tag, 'base64url'));
+          const plaintext = Buffer.concat([
+            decipher.update(Buffer.from(parsed.ciphertext, 'base64url')),
+            decipher.final(),
+          ]);
+          return { tree: JSON.parse(plaintext.toString('utf8')) as DAGTree, usedPreviousKey: candidate.previous };
+        } catch { /* try the explicitly configured previous key, then fail closed */ }
+      }
+      throw new DAGStateKeyError('Encrypted DAG state cannot be authenticated with the configured key.');
+    }
+    return { tree: parsed as DAGTree, usedPreviousKey: false };
+  }
+
+  private isPlaintext(content: string): boolean {
+    try { return !isDagEnvelope(JSON.parse(content)); } catch { return false; }
   }
 
   private async commitMutation(mutate: () => void): Promise<void> {
@@ -363,4 +465,20 @@ export class DAGStateManager {
 
 function cloneJson<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function isDagEnvelope(value: unknown): value is {
+  kind: 'dsh-time-machine-dag';
+  version: number;
+  nonce: string;
+  ciphertext: string;
+  tag: string;
+} {
+  if (!value || typeof value !== 'object') return false;
+  const item = value as Record<string, unknown>;
+  return item.kind === 'dsh-time-machine-dag'
+    && typeof item.version === 'number'
+    && typeof item.nonce === 'string'
+    && typeof item.ciphertext === 'string'
+    && typeof item.tag === 'string';
 }

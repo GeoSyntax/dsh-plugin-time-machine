@@ -2,6 +2,11 @@
 
 项目尚未发布到 npm。首次公开 release 与后续版本使用同一检查流程。
 
+主服务和原生 Web companion 使用独立版本与 tag：主服务使用 `vX.Y.Z`，
+companion 使用 `client-vX.Y.Z`。companion 的 npm 名称是
+`dsh-plugin-time-machine-client`，运行时必须与匹配的 DSH Web client peer
+dependencies 一起安装。
+
 1. 从干净的 `main` 开始，确认 Node.js 与 pnpm 版本符合 `package.json`。
 2. 更新 `package.json` 版本、`CHANGELOG.md`、兼容范围和必要的存储迁移说明。
 3. 运行统一发布门禁：
@@ -14,6 +19,8 @@
    `test:release` 会依次执行完整行为测试（测试数量随版本变化）、构建、打包清单、生产依赖审计和 `git diff --check`。
 
 4. 确认 `pnpm build` 后 `dist/` 已同步，并审查 `pnpm pack --dry-run` 文件清单。
+   `pnpm test:consumer` 会把实际 core tarball 安装到临时空目录，并验证主入口与
+   `dsh-plugin-time-machine/client` 子路径可以被消费者导入。
 5. 在临时 DSH home/profile 中安装生成的 tarball，执行 `--dump-config`、创建 checkpoint、safe rewind、卸载 smoke test。
    仓库提供 `pnpm smoke:dsh` 作为 bundle/宿主加载的最小入口；它要求 PATH 中有 `dsh`，并使用临时 `DSH_HOME`，不会修改默认 profile。CI 会用声明的 DSH 版本执行这一步。
 6. 在具备真实模型/无头 fixture 的环境中，再执行完整 turn lifecycle、Session fork、safe rewind 和 compensation 测试；bundle smoke 通过不等于恢复语义已被宿主端到端证明。
@@ -22,5 +29,18 @@
    `pnpm test:release`、校验 tag 与 package version 一致，然后使用 npm
    provenance 发布。首次启用前，在仓库环境中配置 `NPM_TOKEN`，并确认 npm
    trusted publishing/2FA 策略；发布后从空 profile 重做一次 registry 安装验证。
+9. 发布 companion 时，在 `client-companion/package.json` 更新版本，运行：
+
+   ```bash
+   cd client-companion
+   pnpm install --frozen-lockfile
+   pnpm typecheck
+   pnpm test:smoke
+   pnpm test:package
+   pnpm pack --dry-run
+   ```
+
+   提交后创建 `client-vX.Y.Z` tag。Release workflow 会构建本地 core link、
+   重跑 companion 门禁、校验 tag 版本，并在非 dry-run 时以 npm provenance 发布。
 
 如果任何恢复测试失败，不发布；不要仅通过改文档隐藏不兼容行为。

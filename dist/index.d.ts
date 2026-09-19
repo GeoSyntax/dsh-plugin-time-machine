@@ -1,283 +1,28 @@
 import { Context } from '@deepseek-ai/cordis';
 import Schema from '@deepseek-ai/schemastery';
+import { D as DAGTree, C as CheckpointNode, T as TimeMachineConfig, S as SessionState, A as AgentWriteRecord, F as FileChange, a as ToolMutationRecord, E as ExternalEffectRecord, b as ExternalEffectAdapter, c as ExternalEffectCompensationResult, R as RestoreOptions, d as RestoreResult, e as SelectiveRestoreResult, f as ReflectionSummary, g as DiffResult, h as RestorePreview, i as StorageStatus, j as SessionSummary, W as WorkspaceIsolation, P as PruneResult, k as TimeMachineWorkspaceHost } from './client-CI6pvRll.js';
+export { l as CompanionTimelineEntry, m as ExternalCompensationRequest, n as ExternalEffectCompensationContext, o as ExternalEffectRequest, p as ForkRequest, q as PreviewBoundAction, r as PruneRequest, s as RestoreFilesRequest, t as RestoreWorkspaceRequest, u as RewindRequest, v as SessionMessage, w as TimeMachineClient, x as TimeMachineClientError, y as TimeMachineClientOptions, U as UndoRequest, z as WorkspaceRoute, B as buildCompanionTimeline } from './client-CI6pvRll.js';
 
-interface SessionMessage {
-    role: 'system' | 'user' | 'assistant' | 'tool';
-    content: unknown;
-    name?: string;
-    tool_call_id?: string;
-    tool_calls?: any[];
-    [key: string]: any;
+/** Current on-disk DAG schema. Bump only with an explicit migration path. */
+declare const DAG_FORMAT_VERSION: 1;
+declare class DAGStateKeyError extends Error {
+    readonly code = "DAG_STATE_KEY_INVALID";
+    constructor(message?: string);
 }
-interface SessionState {
-    sessionId: string;
-    messages: SessionMessage[];
-    variables?: Record<string, any>;
-    tokenUsage?: {
-        promptTokens: number;
-        completionTokens: number;
-        totalTokens: number;
-    };
-    contextWindowSize?: number;
-    /** Inclusive DSH event boundary used to fork a coherent conversation. */
-    boundarySeq?: number;
-}
-interface FileChange {
-    path: string;
-    status: 'added' | 'modified' | 'deleted';
-    stagedLinesAdded?: number;
-    stagedLinesDeleted?: number;
-}
-/**
- * A declaration from an integration that changed state outside the workspace.
- * Time Machine records it for audit/reflection; it never runs compensation
- * implicitly because the adapter owns the external system's semantics.
- */
-interface ExternalEffectRecord {
-    id: string;
-    adapter: string;
-    operation: string;
-    reversible: boolean;
-    compensation?: string;
-    failureSemantics: string;
-    status: 'unresolved' | 'compensated' | 'unknown';
-    recordedAt: number;
-    /** Last explicit compensation idempotency key, if an adapter was invoked. */
-    compensationIdempotencyKey?: string;
-    compensationAttemptedAt?: number;
-}
-interface ExternalEffectCompensationContext {
-    sessionId: string;
-    checkpointId: string;
-    effect: ExternalEffectRecord;
-    idempotencyKey: string;
-}
-interface ExternalEffectAdapter {
-    name: string;
-    compensate(context: ExternalEffectCompensationContext): Promise<{
-        status: 'compensated' | 'unknown';
-        note?: string;
-    }>;
-}
-interface ExternalEffectCompensationResult {
-    sessionId: string;
-    checkpointId: string;
-    effect: ExternalEffectRecord;
-    adapter: string;
-    /** Whether the named adapter is currently registered in this process. */
-    adapterAvailable: boolean;
-    dryRun: boolean;
-    idempotencyKey: string;
-    replayed: boolean;
-    note?: string;
-}
-/** A successful Agent-side write observed by an integration. */
-interface AgentWriteRecord {
-    path: string;
-    sha256: string;
-    recordedAt: number;
-    operation?: 'create' | 'modify' | 'delete';
-}
-interface CheckpointNode {
-    id: string;
-    parentId: string | null;
-    branch: string;
-    turnIndex: number;
-    timestamp: number;
-    prompt: string;
-    summary: string;
-    gitTreeOid: string;
-    gitCommitOid: string;
-    sessionState: SessionState;
-    changedFiles: FileChange[];
-    status: 'running' | 'success' | 'failed' | 'aborted';
-    errorMessage?: string;
-    failedTools?: Array<{
-        toolName: string;
-        input: any;
-        error: string;
-    }>;
-    tags?: string[];
-    /** Ignored paths are names only; their contents are never written to Git objects. */
-    ignoredPaths?: string[];
-    /** Workspace signature observed when the anchored turn finished. */
-    settledGitTreeOid?: string;
-    settledIgnoredPaths?: string[];
-    /** Local quarantine containing ignored files removed by an explicit restore. */
-    ignoredBackupKey?: string;
-    /** Files deliberately omitted by an opt-in partial snapshot. */
-    omittedPaths?: string[];
-    /** External mutations declared by integrations; never compensated implicitly. */
-    externalEffects?: ExternalEffectRecord[];
-    /** Explicit Agent-write evidence used by opt-in hand-edit preservation. */
-    agentWrites?: AgentWriteRecord[];
-    /** Git changes observed at turn finalization that lack Agent-write evidence. */
-    unattributedChanges?: FileChange[];
-}
-interface DAGTree {
-    sessionId: string;
-    currentBranch: string;
-    currentCheckpointId: string | null;
-    nodes: Record<string, CheckpointNode>;
-    branches: Record<string, {
-        name: string;
-        headId: string;
-        forkedFromId: string | null;
-        createdAt: number;
-        description?: string;
-    }>;
-}
-/** Read-only summary used by dashboards to discover persisted DSH sessions. */
-interface SessionSummary {
-    sessionId: string;
-    checkpointCount: number;
-    currentBranch: string;
-    currentCheckpointId: string | null;
-    updatedAt: number | null;
-}
-interface TimeMachineConfig {
-    autoSnapshot?: boolean;
-    enableReflectionAdvisor?: boolean;
-    refPrefix?: string;
-    storageDir?: string;
-    webPort?: number;
-    enableWebUI?: boolean;
-    /** Refuse to overwrite changes made after the latest checkpoint unless forced. */
-    restoreMode?: 'safe' | 'merge' | 'force';
-    /** Ignored paths that are never scanned or removed by restore. */
-    preservePaths?: string[];
-    /** Address for the standalone dashboard. Defaults to loopback only. */
-    webHost?: string;
-    /** Explicit browser Origins allowed to call the loopback API cross-origin. */
-    webAllowedOrigins?: string[];
-    /** Hard per-session checkpoint limit; 0 disables the guard. */
-    maxSnapshots?: number;
-    /** Hard plugin-storage byte limit; 0 disables the guard. */
-    maxStorageBytes?: number;
-    /** Store plugin-created Git objects outside the user's normal object directory. */
-    shadowStore?: boolean;
-    /** Allow quota-triggered compaction before ordinary checkpoints; disabled by default. */
-    autoPrune?: boolean;
-    /** Automatically compact checkpoints older than this age before ordinary checkpoints; 0 disables it. */
-    retentionMaxAgeMs?: number;
-    /** Maximum time to wait for another process to finish a workspace operation. */
-    workspaceLockTimeoutMs?: number;
-    /** Hard limit for ignored-file quarantine bytes; 0 disables the guard. */
-    maxQuarantineBytes?: number;
-    /** Optional environment variable containing a key used to encrypt quarantine backups. */
-    quarantineEncryptionKeyEnv?: string;
-    /** Lifetime of a preview restore plan. Set to 0 to disable plan expiry. */
-    restorePlanTtlMs?: number;
-    /** Maximum size of one captured regular file; 0 disables the guard. */
-    maxSnapshotFileBytes?: number;
-    /** Maximum aggregate regular-file bytes in one checkpoint; 0 disables the guard. */
-    maxSnapshotBytes?: number;
-    /** Opt in to omitting files that exceed snapshot limits; disabled by default. */
-    allowPartialSnapshots?: boolean;
-    /** Record integration-supplied Agent writes for explicit hand-edit preservation. */
-    enableAgentWriteLedger?: boolean;
-    /** Create a workspace checkpoint immediately before high-risk external tools. */
-    autoPreCommandSnapshot?: boolean;
-    /** Tool names treated as high-risk when autoPreCommandSnapshot is enabled. */
-    preCommandTools?: string[];
-    /** Maximum pre-command checkpoints per session turn; 0 means unlimited. */
-    preCommandMaxPerTurn?: number;
-}
-interface RestoreOptions {
-    mode?: 'safe' | 'merge' | 'force';
-    /** Delete ignored paths created after the target checkpoint. Off by default. */
-    deleteNewIgnoredPaths?: boolean;
-    /** Internal compensation restores do not create another rescue point. */
-    createRescuePoint?: boolean;
-    /** Internal key used to quarantine ignored paths before deletion. */
-    ignoredBackupKey?: string;
-    /** Session-bound token returned by previewRestore; consumed by the next restore. */
-    restorePlanId?: string;
-    /** Preserve paths whose current content differs from the recorded Agent hash. */
-    preserveVerifiedHandEdits?: boolean;
-    /** Internal path list calculated from the active Agent-write ledger. */
-    preservePaths?: string[];
-}
-interface RestoreResult {
-    targetNode: CheckpointNode;
-    restoredSessionState: SessionState;
-    rescueCheckpointId?: string;
-    deletedIgnoredPaths: string[];
-    restoreJournalId?: string;
-    /** Paths preserved because verified Agent-write hashes no longer matched. */
-    preservedHandEditPaths?: string[];
-}
-interface DiffResult {
-    file: string;
-    status: 'added' | 'modified' | 'deleted';
-    diffText: string;
-}
-/** Read-only impact report for a prospective rewind/fork. */
-interface RestorePreview {
-    sessionId: string;
-    checkpointId: string;
-    currentCheckpointId: string | null;
-    currentTreeOid: string;
-    targetTreeOid: string;
-    currentIgnoredPaths: string[];
-    targetIgnoredPaths: string[];
-    targetOmittedPaths?: string[];
-    ignoredPathsToDelete: string[];
-    diffs: DiffResult[];
-    /** Paths changed after the active checkpoint that make safe restore refuse overwrite. */
-    conflictingPaths: string[];
-    workspaceDrifted: boolean;
-    requiresForce: boolean;
-    /** Short-lived session-bound plan used to bind a reviewed preview to mutation. */
-    restorePlanId: string;
-    restorePlanExpiresAt: number | null;
-}
-interface SelectiveRestoreResult {
-    checkpointId: string;
-    restoredPaths: string[];
-    rescueCheckpointId?: string;
-    resultCheckpointId?: string;
-    restoreJournalId?: string;
-}
-interface StorageStatus {
-    storageDir: string;
-    bytes: number;
-    files: number;
-    sessions: number;
-    checkpoints: number;
-    pruneCandidates: number;
-    gitObjectsShared: boolean;
-    /** Shadow Git objects are currently plaintext at rest; quarantine may differ. */
-    gitObjectsEncrypted: boolean;
-    quarantineEncrypted: boolean;
-}
-interface PruneResult {
-    sessionId: string;
-    removedCheckpointIds: string[];
-    reclaimedBytes: number;
-    gitRefsRemoved: number;
-    quarantineReclaimedBytes?: number;
-    shadowObjectsReclaimedBytes?: number;
-    shadowRepackSkippedReason?: string;
-    note: string;
-}
-interface ReflectionSummary {
-    hasPastFailures: boolean;
-    failedNodeCount: number;
-    summaryNote: string;
-    suggestedPromptPrefix: string;
-    hasExternalEffects?: boolean;
-    externalEffectCount?: number;
-}
-
 interface DAGManagerOptions {
     sessionId: string;
     storageDir: string;
     initialBranch?: string;
+    /** Optional operator-provided key for encrypting persisted session metadata. */
+    encryptionKey?: string;
+    /** Optional previous key accepted only to re-encrypt an authenticated legacy envelope. */
+    previousEncryptionKey?: string;
 }
 declare class DAGStateManager {
     tree: DAGTree;
     private readonly storageFile;
+    private readonly encryptionKey?;
+    private readonly previousEncryptionKey?;
     constructor(options: DAGManagerOptions);
     /**
      * 初始化并尝试从本地恢复树结构
@@ -299,7 +44,7 @@ declare class DAGStateManager {
      * 获取指定 ID 的节点
      */
     getNode(checkpointId: string): CheckpointNode | null;
-    updateNode(checkpointId: string, patch: Partial<Pick<CheckpointNode, 'status' | 'errorMessage' | 'failedTools' | 'summary' | 'settledGitTreeOid' | 'settledIgnoredPaths' | 'ignoredBackupKey' | 'externalEffects' | 'agentWrites' | 'unattributedChanges'>>): Promise<CheckpointNode>;
+    updateNode(checkpointId: string, patch: Partial<Pick<CheckpointNode, 'status' | 'errorMessage' | 'failedTools' | 'summary' | 'settledGitTreeOid' | 'settledIgnoredPaths' | 'ignoredBackupKey' | 'externalEffects' | 'agentWrites' | 'unattributedChanges' | 'toolMutations'>>): Promise<CheckpointNode>;
     /** Remove only leaf checkpoints that are not current or a branch head. */
     removeLeafNodes(checkpointIds: string[]): Promise<CheckpointNode[]>;
     /** Remove historical nodes while reparenting surviving children to the nearest ancestor. */
@@ -333,6 +78,10 @@ declare class DAGStateManager {
      */
     renderAsciiTree(): string;
     private assertTree;
+    private migrateTree;
+    private encode;
+    private decode;
+    private isPlaintext;
     private commitMutation;
 }
 
@@ -348,6 +97,11 @@ declare class StorageQuotaError extends Error {
 declare class RestorePlanError extends Error {
     readonly code = "RESTORE_PLAN_INVALID";
     constructor(message: string);
+}
+declare class ExternalEffectsUnresolvedError extends Error {
+    readonly effectIds: string[];
+    readonly code = "EXTERNAL_EFFECTS_UNRESOLVED";
+    constructor(effectIds: string[]);
 }
 declare class TimeMachineService {
     readonly workDir: string;
@@ -369,6 +123,10 @@ declare class TimeMachineService {
      * 获取或初始化指定会话的 DAG 管理器
      */
     getDAGManager(sessionId: string): Promise<DAGStateManager>;
+    /** Resolve a user-facing undo distance on the active lineage, ignoring internal nodes. */
+    resolveRelativeTurnCheckpoint(sessionId: string, count: number): Promise<CheckpointNode | null>;
+    /** Return newest-first user-visible boundaries for CLI, REST, and companion projections. */
+    listRelativeTurnCheckpoints(sessionId: string, limit?: number): Promise<CheckpointNode[]>;
     /**
      * 核心：创建原子双轨快照（状态轨 + 工作区轨）
      */
@@ -386,6 +144,7 @@ declare class TimeMachineService {
             error: string;
         }>;
         tags?: string[];
+        userMessageId?: string;
     }): Promise<CheckpointNode>;
     private createTurnCheckpointUnlocked;
     finalizeTurnCheckpoint(params: {
@@ -398,7 +157,13 @@ declare class TimeMachineService {
             input: any;
             error: string;
         }>;
+        assistantMessageId?: string;
+        assistantMessageIds?: string[];
     }): Promise<CheckpointNode>;
+    /** Resolve any durable user/assistant message to its turn checkpoint for message actions. */
+    findCheckpointByMessage(sessionId: string, messageId: string): Promise<CheckpointNode | null>;
+    /** Backward-compatible assistant-specific alias. */
+    findCheckpointByAssistantMessage(sessionId: string, messageId: string): Promise<CheckpointNode | null>;
     /**
      * Record a successful Agent write. This is deliberately an integration API:
      * the core never guesses authorship from a tool name or file timestamp.
@@ -408,6 +173,9 @@ declare class TimeMachineService {
     }): Promise<CheckpointNode>;
     getAgentWriteLedger(sessionId: string, checkpointId: string): Promise<AgentWriteRecord[]>;
     getUnattributedChanges(sessionId: string, checkpointId: string): Promise<FileChange[]>;
+    inspectCheckpointDelta(sessionId: string, checkpointId: string): Promise<FileChange[]>;
+    recordToolMutation(sessionId: string, checkpointId: string, mutation: Omit<ToolMutationRecord, 'recordedAt'>): Promise<CheckpointNode>;
+    getToolMutationLedger(sessionId: string, checkpointId: string): Promise<ToolMutationRecord[]>;
     /**
      * Record an external mutation against a checkpoint. The core deliberately
      * does not execute compensation; an adapter can later use this declaration
@@ -423,6 +191,8 @@ declare class TimeMachineService {
      */
     registerExternalEffectAdapter(adapter: ExternalEffectAdapter): () => void;
     listExternalEffectAdapters(): string[];
+    /** Read external effects on a checkpoint lineage without executing compensation. */
+    listExternalEffects(sessionId: string, checkpointId?: string, unresolvedOnly?: boolean): Promise<ExternalEffectRecord[]>;
     /**
      * Perform one adapter compensation only when the caller explicitly opts in.
      * A deterministic idempotency key is used when none is supplied, and a
@@ -462,6 +232,8 @@ declare class TimeMachineService {
         rescueCheckpointId?: string;
         restoreJournalId?: string;
     }>;
+    /** Read the reflection advisory for branches abandoned after a checkpoint without mutating state. */
+    getReflection(sessionId: string, checkpointId: string): Promise<ReflectionSummary>;
     /**
      * 获取指定快照与当前（或另一快照）的代码差异
      */
@@ -470,10 +242,13 @@ declare class TimeMachineService {
      * Produce a read-only impact report before a rewind/fork. This deliberately
      * does not create a rescue point, mutate the DAG, or touch workspace files.
      */
-    previewRestore(sessionId: string, checkpointId: string): Promise<RestorePreview>;
+    previewRestore(sessionId: string, checkpointId: string, options?: {
+        preserveVerifiedHandEdits?: boolean;
+    }): Promise<RestorePreview>;
     private expireRestorePlans;
     /** Consume a preview token and fail closed if the reviewed workspace changed. */
     private consumeRestorePlan;
+    private applyReviewedRestorePolicy;
     private inspectWorkspaceSignature;
     private inspectControlPlane;
     /**
@@ -481,33 +256,52 @@ declare class TimeMachineService {
      */
     renderTree(sessionId: string): Promise<string>;
     getStorageStatus(sessionId?: string): Promise<StorageStatus>;
+    /** Explicitly migrate a plaintext shadow object directory into the encrypted archive. */
+    migrateShadowStore(): Promise<{
+        migrated: boolean;
+        entries: number;
+        bytes: number;
+    }>;
     /** Enumerate persisted sessions without creating a new empty DAG. */
     listSessions(): Promise<SessionSummary[]>;
     /** Report runtime capabilities so Web/CLI integrations can fail early. */
     getCapabilities(): Promise<{
         version: 1;
+        dagStorageFormatVersion: 1;
         git: boolean;
         fallback: boolean;
         mergeRestore: boolean;
         fallbackTextDiff: boolean;
         selectiveRestore: boolean;
         shadowStore: boolean;
-        shadowStoreEncryption: false;
+        shadowStoreEncryption: boolean;
+        shadowStoreMigrationRequired: boolean;
+        shadowStoreKeyRotation: boolean;
+        dagStateEncryption: boolean;
+        dagStateKeyRotation: boolean;
         quarantineEncryption: boolean;
         quarantineMigration: boolean;
         partialSnapshots: boolean;
         /** Safe dirty-path overlay is available for normal Git workspaces. */
         incrementalCapture: boolean;
         /** Current restore semantics; ledger mode is explicit and opt-in. */
-        handEditPolicy: 'reject-drift' | 'ledger-opt-in';
+        handEditPolicy: 'reject-drift' | 'ledger-opt-in' | 'ledger-default';
         agentWriteLedger: boolean;
         preCommandSnapshots: boolean;
         preCommandTools: string[];
         preCommandMaxPerTurn: number;
+        toolMutationLedger: boolean;
         unattributedMutationInventory: boolean;
         externalEffectLedger: true;
         externalEffectAdapters: string[];
-        workspaceIsolation: 'shared-lock';
+        /** Session routing is intentionally single-root until DSH exposes a host router contract. */
+        workspaceRouting: 'single-root';
+        workspaceRouteInspection: true;
+        /** Message kinds that can resolve to a persisted checkpoint. */
+        messageAnchors: Array<'assistant' | 'user'>;
+        workspaceIsolation: WorkspaceIsolation;
+        /** Rewind restores files and opens a new DSH session; it never rewrites the append-only log. */
+        rewindSessionMode: 'fork';
         workspace: {
             sparseCheckout: boolean;
             submodulePaths: string[];
@@ -522,6 +316,7 @@ declare class TimeMachineService {
             maxSnapshotBytes: number;
             allowPartialSnapshots: boolean;
             enableAgentWriteLedger: boolean;
+            preserveVerifiedHandEditsByDefault: boolean;
             autoPreCommandSnapshot: boolean;
             preCommandTools: string[];
             preCommandMaxPerTurn: number;
@@ -535,6 +330,7 @@ declare class TimeMachineService {
         abandonedBranches?: boolean;
         compactHistory?: boolean;
         repackShadowObjects?: boolean;
+        dryRun?: boolean;
     }): Promise<PruneResult>;
     private autoPruneForQuota;
     private autoPruneForAge;
@@ -543,6 +339,8 @@ declare class TimeMachineService {
     private pruneCandidates;
     private enforceStorageQuota;
     private restoreWithRescue;
+    private unresolvedExternalEffects;
+    private assertExternalEffectsResolved;
     private restoreNode;
     private findVerifiedHandEdits;
     private hashWorkspacePath;
@@ -559,6 +357,10 @@ interface GitPlumbingOptions {
     quarantineDir?: string;
     /** Optional object directory for plugin-created objects. */
     shadowObjectDir?: string;
+    /** Optional key for an encrypted durable shadow archive. */
+    shadowEncryptionKey?: string;
+    /** Optional previous key for one-time shadow archive rotation. */
+    shadowEncryptionPreviousKey?: string;
     /** Hard limit for ignored-file quarantine bytes; 0 disables the guard. */
     maxQuarantineBytes?: number;
     /** Optional operator-provided key for encrypting ignored-file quarantine backups. */
@@ -630,6 +432,12 @@ declare class WorkspaceRestoreConflictError extends Error {
     readonly code = "RESTORE_CONFLICT";
     constructor(paths: string[]);
 }
+/** Refuse restores that could overwrite an inode shared by another path. */
+declare class WorkspaceHardLinkError extends Error {
+    readonly paths: string[];
+    readonly code = "UNSUPPORTED_WORKSPACE_STATE";
+    constructor(paths: string[]);
+}
 declare class WorkspaceMergeConflictError extends Error {
     readonly paths: string[];
     readonly code = "RESTORE_MERGE_CONFLICT";
@@ -669,6 +477,7 @@ declare class GitPlumbingEngine {
     private repoRootCached;
     private gitDirCached;
     private readonly shadowObjectDir?;
+    private readonly encryptedShadowStore?;
     private readonly maxQuarantineBytes;
     private readonly maxSnapshotFileBytes;
     private readonly maxSnapshotBytes;
@@ -679,6 +488,16 @@ declare class GitPlumbingEngine {
     private workspaceTreeCache?;
     constructor(options: GitPlumbingOptions);
     get usesShadowStore(): boolean;
+    get usesEncryptedShadowStore(): boolean;
+    migrateShadowStore(): Promise<{
+        migrated: boolean;
+        entries: number;
+        bytes: number;
+    }>;
+    encryptedShadowStatus(): Promise<{
+        ready: boolean;
+        migrationRequired: boolean;
+    }>;
     isGitRepo(): Promise<boolean>;
     getRepoRoot(): Promise<string>;
     getGitDir(): Promise<string>;
@@ -718,6 +537,7 @@ declare class GitPlumbingEngine {
     private mergeWorkspaceTree;
     /** Restore only selected tracked workspace paths using a disposable index. */
     restoreSelectedPaths(commitOrTreeOid: string, paths: string[], options?: GitSelectiveRestoreOptions): Promise<string[]>;
+    private assertNoHardLinkTargets;
     /** Restore quarantined ignored content without ever writing it into Git objects. */
     restoreIgnoredBackup(key: string): Promise<void>;
     /** Validate encrypted quarantine content before a restore mutates the workspace. */
@@ -760,6 +580,7 @@ declare class GitPlumbingEngine {
     /** Rebuild only the opt-in shadow pack from the plugin's private refs. */
     repackShadowObjects(): Promise<ShadowRepackResult>;
     private ensureShadowStore;
+    private withShadowRuntime;
     private runGitInput;
 }
 
@@ -787,12 +608,17 @@ declare class FallbackSnapshotEngine {
         commitOid: string;
         changedFiles: FileChange[];
     }>;
-    inspectWorkspace(): Promise<string>;
+    inspectWorkspace(options?: {
+        omitPaths?: string[];
+    }): Promise<string>;
+    snapshotTreeOid(sessionId: string, checkpointId: string, omitPaths?: string[]): Promise<string>;
     /** Compare a persisted fallback manifest with the current workspace. */
     getChangedFiles(sessionId: string, checkpointId: string): Promise<FileChange[]>;
     /** Produce reviewable text diffs between two persisted fallback snapshots. */
     getDiffBetween(sessionId: string, baseCheckpointId: string, targetCheckpointId: string): Promise<DiffResult[]>;
-    restoreSnapshot(sessionId: string, checkpointId: string): Promise<void>;
+    restoreSnapshot(sessionId: string, checkpointId: string, options?: {
+        preservePaths?: string[];
+    }): Promise<void>;
     restoreSelectedPaths(sessionId: string, checkpointId: string, paths: string[], options?: {
         expectedCurrentTreeOid?: string;
         mode?: 'safe' | 'force';
@@ -813,96 +639,6 @@ declare class ReflectionAdvisor {
      * 分析已放弃或失败的分支节点，提炼结构化反思提示词
      */
     generateReflectionNote(abandonedNodes: CheckpointNode[]): ReflectionSummary;
-}
-
-/**
- * Small, dependency-free companion client for native DSH/Web integrations.
- * It deliberately knows the restore-plan fence, but does not render UI.
- */
-
-interface TimeMachineClientOptions {
-    baseUrl: string;
-    fetch?: typeof globalThis.fetch;
-}
-declare class TimeMachineClientError extends Error {
-    readonly status: number;
-    readonly code?: string;
-    readonly body: unknown;
-    constructor(message: string, status: number, body: unknown);
-}
-interface RewindRequest {
-    sessionId: string;
-    checkpointId: string;
-    restorePlanId?: string;
-    merge?: boolean;
-    force?: boolean;
-    preserveVerifiedHandEdits?: boolean;
-    deleteNewIgnoredPaths?: boolean;
-}
-interface ForkRequest extends RewindRequest {
-    branchName: string;
-    description?: string;
-}
-interface RestoreFilesRequest {
-    sessionId: string;
-    checkpointId: string;
-    paths: string[];
-    restorePlanId?: string;
-    merge?: boolean;
-    force?: boolean;
-}
-type RestoreWorkspaceRequest = Omit<RewindRequest, 'checkpointId'> & {
-    checkpointId: string;
-};
-interface ExternalEffectRequest {
-    sessionId: string;
-    checkpointId: string;
-    adapter: string;
-    operation: string;
-    reversible: boolean;
-    failureSemantics: string;
-    compensation?: string;
-    status?: 'unresolved' | 'compensated' | 'unknown';
-    id?: string;
-}
-interface ExternalCompensationRequest {
-    sessionId: string;
-    checkpointId: string;
-    effectId: string;
-    execute?: boolean;
-    idempotencyKey?: string;
-}
-interface PreviewBoundAction {
-    readonly sessionId: string;
-    readonly checkpointId: string;
-    readonly restorePlanId: string;
-    readonly preview: RestorePreview;
-}
-declare class TimeMachineClient {
-    private readonly baseUrl;
-    private readonly http;
-    constructor(options: TimeMachineClientOptions);
-    capabilities(): Promise<Record<string, unknown>>;
-    status(): Promise<Record<string, unknown>>;
-    storage(sessionId?: string): Promise<Record<string, unknown>>;
-    dag(sessionId: string): Promise<DAGTree>;
-    sessions(): Promise<SessionSummary[]>;
-    preview(sessionId: string, checkpointId: string): Promise<PreviewBoundAction>;
-    rewind(action: PreviewBoundAction, options?: Omit<RewindRequest, 'sessionId' | 'checkpointId' | 'restorePlanId'>): Promise<unknown>;
-    fork(action: PreviewBoundAction, branchName: string, options?: Omit<ForkRequest, 'sessionId' | 'checkpointId' | 'restorePlanId' | 'branchName'>): Promise<unknown>;
-    restoreFiles(request: RestoreFilesRequest): Promise<unknown>;
-    restoreFilesFromPreview(action: PreviewBoundAction, paths: string[], options?: Omit<RestoreFilesRequest, 'sessionId' | 'checkpointId' | 'paths' | 'restorePlanId'>): Promise<unknown>;
-    restoreWorkspace(request: RestoreWorkspaceRequest): Promise<unknown>;
-    restoreWorkspaceFromPreview(action: PreviewBoundAction, options?: Omit<RestoreWorkspaceRequest, 'sessionId' | 'checkpointId' | 'restorePlanId'>): Promise<unknown>;
-    recordExternalEffect(request: ExternalEffectRequest): Promise<unknown>;
-    compensateExternalEffect(request: ExternalCompensationRequest): Promise<unknown>;
-    diff(sessionId: string, baseCheckpointId: string, targetCheckpointId: string): Promise<unknown>;
-    agentWrites(sessionId: string, checkpointId: string): Promise<unknown>;
-    unattributedChanges(sessionId: string, checkpointId: string): Promise<unknown>;
-    private assertBinding;
-    private get;
-    private post;
-    private request;
 }
 
 declare const name = "dsh-plugin-time-machine";
@@ -939,6 +675,13 @@ interface SessionControllerLike {
     }): Promise<{
         readonly sessionId: string;
     }>;
+    /** Optional host extension for true in-place append-only session rewind. */
+    rewind?(request: {
+        readonly sessionId: string;
+        readonly atSeq?: number;
+    }): Promise<{
+        readonly sessionId: string;
+    }>;
     inspect?(sessionId: string): Promise<unknown>;
 }
 interface CommandRuntimeLike {
@@ -959,6 +702,7 @@ interface ToolEventExecutionLike {
 }
 interface ToolEventResultLike {
     readonly isError?: boolean;
+    readonly error?: unknown;
 }
 interface ToolExecutionLike {
     readonly callId?: string;
@@ -976,6 +720,7 @@ declare module '@deepseek-ai/cordis' {
         tools: unknown;
         commands: CommandRuntimeLike;
         sessionController: SessionControllerLike;
+        workspaceHost: TimeMachineWorkspaceHost;
     }
     interface Events {
         'agent/pre-step'(payload: {
@@ -1006,4 +751,4 @@ declare class TimeMachinePlugin {
     constructor(ctx: Context, config?: Config);
 }
 
-export { type AgentWriteRecord, type CheckpointNode, Config, type DAGManagerOptions, DAGStateManager, type DAGTree, type DiffResult, type ExternalCompensationRequest, type ExternalEffectAdapter, type ExternalEffectCompensationContext, type ExternalEffectCompensationResult, type ExternalEffectRecord, type ExternalEffectRequest, type FallbackOptions, FallbackSnapshotEngine, type FileChange, type ForkRequest, GitPlumbingEngine, type GitPlumbingOptions, type GitRestoreOptions, type GitSelectiveRestoreOptions, type GitSnapshot, type PreviewBoundAction, type PruneResult, QuarantineKeyError, type QuarantineMigrationResult, QuarantineQuotaError, ReflectionAdvisor, type ReflectionSummary, type RestoreFilesRequest, type RestoreOptions, RestorePlanError, type RestorePreview, type RestoreResult, type RestoreWorkspaceRequest, type RewindRequest, type SelectiveRestoreResult, type SessionMessage, type SessionState, type SessionSummary, type ShadowGcResult, type ShadowRepackResult, SnapshotSizeError, StorageQuotaError, type StorageStatus, TimeMachineClient, TimeMachineClientError, type TimeMachineClientOptions, type TimeMachineConfig, TimeMachinePlugin, TimeMachineService, type TimeMachineServiceOptions, UnsupportedWorkspaceStateError, type WorkspaceCapabilities, WorkspaceDriftError, WorkspaceMergeConflictError, WorkspaceRestoreConflictError, apply, collectFailedTools, TimeMachinePlugin as default, name };
+export { AgentWriteRecord, CheckpointNode, Config, type DAGManagerOptions, DAGStateKeyError, DAGStateManager, DAGTree, DAG_FORMAT_VERSION, DiffResult, ExternalEffectAdapter, ExternalEffectCompensationResult, ExternalEffectRecord, ExternalEffectsUnresolvedError, type FallbackOptions, FallbackSnapshotEngine, FileChange, GitPlumbingEngine, type GitPlumbingOptions, type GitRestoreOptions, type GitSelectiveRestoreOptions, type GitSnapshot, PruneResult, QuarantineKeyError, type QuarantineMigrationResult, QuarantineQuotaError, ReflectionAdvisor, ReflectionSummary, RestoreOptions, RestorePlanError, RestorePreview, RestoreResult, SelectiveRestoreResult, SessionState, SessionSummary, type ShadowGcResult, type ShadowRepackResult, SnapshotSizeError, StorageQuotaError, StorageStatus, TimeMachineConfig, TimeMachinePlugin, TimeMachineService, type TimeMachineServiceOptions, TimeMachineWorkspaceHost, ToolMutationRecord, UnsupportedWorkspaceStateError, type WorkspaceCapabilities, WorkspaceDriftError, WorkspaceHardLinkError, WorkspaceIsolation, WorkspaceMergeConflictError, WorkspaceRestoreConflictError, apply, collectFailedTools, TimeMachinePlugin as default, name };

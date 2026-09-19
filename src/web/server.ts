@@ -3,12 +3,19 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { URL } from 'node:url';
 import type { TimeMachineService } from '../service.js';
-import type { CheckpointNode } from '../types.js';
+import type { CheckpointNode, WorkspaceIsolation, WorkspaceRoute } from '../types.js';
+import { validateWorkspaceRoute } from '../core/workspace-route.js';
 
 export interface TimeMachineWebHooks {
   restartConversation?: (sourceSessionId: string, checkpoint: CheckpointNode) => Promise<{ sessionId: string }>;
+  /** Host session mode advertised to native clients; defaults to fork. */
+  rewindSessionMode?: () => 'fork' | 'in-place';
+  /** Optional host contract: only report an isolated mode when the host routes the child cwd. */
+  workspaceIsolation?: () => WorkspaceIsolation;
   /** Optional host-side session authority (for profiles exposing inspect()). */
   sessionExists?: (sessionId: string) => Promise<boolean>;
+  /** Optional host route resolver; when absent, the configured root is reported. */
+  workspaceRoute?: (sessionId: string) => Promise<WorkspaceRoute>;
 }
 
 export class TimeMachineWebServer {
@@ -60,7 +67,7 @@ export class TimeMachineWebServer {
           // 静态资源处理
           await this.handleStatic(res, pathname);
         } catch (err: any) {
-          const status = err?.code === 'BAD_REQUEST' ? 400 : err?.code === 'SESSION_NOT_FOUND' ? 404 : err?.code === 'RESTORE_PLAN_INVALID' || err?.code === 'RESTORE_MERGE_CONFLICT' || err?.code === 'QUARANTINE_KEY_INVALID' || err?.code === 'EXTERNAL_COMPENSATION_UNKNOWN' || err?.code === 'EXTERNAL_ADAPTER_UNAVAILABLE' || err?.code === 'EXTERNAL_EFFECT_DUPLICATE' ? 409 : err?.code === 'UNSUPPORTED_WORKSPACE_STATE' ? 422 : err?.code === 'SNAPSHOT_SIZE_LIMIT' ? 413 : 500;
+          const status = err?.code === 'BAD_REQUEST' ? 400 : err?.code === 'SESSION_NOT_FOUND' || err?.code === 'UNDO_TARGET_NOT_FOUND' || err?.code === 'CHECKPOINT_NOT_FOUND' ? 404 : err?.code === 'RESTORE_PLAN_INVALID' || err?.code === 'RESTORE_MERGE_CONFLICT' || err?.code === 'QUARANTINE_KEY_INVALID' || err?.code === 'EXTERNAL_COMPENSATION_UNKNOWN' || err?.code === 'EXTERNAL_ADAPTER_UNAVAILABLE' || err?.code === 'EXTERNAL_EFFECT_DUPLICATE' || err?.code === 'WORKSPACE_ROUTE_MISMATCH' || err?.code === 'EXTERNAL_EFFECTS_UNRESOLVED' ? 409 : err?.code === 'UNSUPPORTED_WORKSPACE_STATE' ? 422 : err?.code === 'SNAPSHOT_SIZE_LIMIT' ? 413 : 500;
           res.writeHead(status, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
             error: err.message || 'Internal Server Error',
@@ -120,6 +127,18 @@ export class TimeMachineWebServer {
       return;
     }
 
+    if (pathname === '/api/checkpoint-for-message' && req.method === 'GET') {
+      const sessionId = this.requireSessionId(query.get('sessionId'));
+      const messageId = query.get('messageId') || '';
+      if (!messageId.trim()) throw Object.assign(new Error('Missing messageId query parameter'), { code: 'BAD_REQUEST' });
+      await this.requirePersistedSession(sessionId);
+      const checkpoint = await this.service.findCheckpointByMessage(sessionId, messageId);
+      if (!checkpoint) throw Object.assign(new Error('No checkpoint is associated with this message.'), { code: 'CHECKPOINT_NOT_FOUND' });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ sessionId, messageId, checkpoint }));
+      return;
+    }
+
     if (pathname === '/api/storage' && req.method === 'GET') {
       const rawSessionId = query.get('sessionId');
       const sessionId = rawSessionId ? this.requireSessionId(rawSessionId) : undefined;
@@ -131,8 +150,36 @@ export class TimeMachineWebServer {
     }
 
     if (pathname === '/api/capabilities' && req.method === 'GET') {
+      const capabilities = await this.service.getCapabilities();
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ capabilities: await this.service.getCapabilities() }));
+      res.end(JSON.stringify({ capabilities: {
+        ...capabilities,
+        rewindSessionMode: this.hooks.rewindSessionMode?.() ?? capabilities.rewindSessionMode,
+        workspaceIsolation: this.hooks.workspaceIsolation?.() ?? capabilities.workspaceIsolation,
+      } }));
+      return;
+    }
+
+    if (pathname === '/api/reflection' && req.method === 'GET') {
+      const sessionId = this.requireSessionId(query.get('sessionId'));
+      const checkpointId = query.get('checkpoint') || '';
+      if (!checkpointId) throw Object.assign(new Error('Missing checkpoint query parameter'), { code: 'BAD_REQUEST' });
+      await this.requirePersistedSession(sessionId);
+      const reflection = await this.service.getReflection(sessionId, checkpointId);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ sessionId, checkpointId, reflection }));
+      return;
+    }
+
+    if (pathname === '/api/workspace-route' && req.method === 'GET') {
+      const sessionId = this.requireSessionId(query.get('sessionId'));
+      await this.requirePersistedSession(sessionId);
+      const route = this.hooks.workspaceRoute
+        ? await this.hooks.workspaceRoute(sessionId)
+        : { workspaceId: 'configured-root', cwd: this.service.workDir, isolation: 'shared-lock' as const };
+      await validateWorkspaceRoute(route);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ sessionId, route, adapter: Boolean(this.hooks.workspaceRoute) }));
       return;
     }
 
@@ -158,6 +205,31 @@ export class TimeMachineWebServer {
       return;
     }
 
+    if (pathname === '/api/tool-mutations' && req.method === 'GET') {
+      const sessionId = this.requireSessionId(query.get('sessionId'));
+      const checkpointId = query.get('checkpoint') || '';
+      if (!checkpointId) throw Object.assign(new Error('Missing checkpoint query parameter'), { code: 'BAD_REQUEST' });
+      await this.requirePersistedSession(sessionId);
+      const mutations = await this.service.getToolMutationLedger(sessionId, checkpointId);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ sessionId, checkpointId, enabled: this.service.config.autoPreCommandSnapshot === true, mutations }));
+      return;
+    }
+
+    if (pathname === '/api/external-effects' && req.method === 'GET') {
+      const sessionId = this.requireSessionId(query.get('sessionId'));
+      const checkpointId = query.get('checkpoint') || undefined;
+      const unresolved = query.get('unresolved');
+      if (unresolved !== null && unresolved !== 'true' && unresolved !== 'false') {
+        throw Object.assign(new Error('unresolved must be true or false'), { code: 'BAD_REQUEST' });
+      }
+      await this.requirePersistedSession(sessionId);
+      const effects = await this.service.listExternalEffects(sessionId, checkpointId, unresolved === 'true');
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ sessionId, checkpointId: checkpointId ?? null, unresolvedOnly: unresolved === 'true', effects }));
+      return;
+    }
+
     if (pathname === '/api/diff' && req.method === 'GET') {
       const sessionId = this.requireSessionId(query.get('sessionId'));
       const baseId = query.get('base') || '';
@@ -174,7 +246,11 @@ export class TimeMachineWebServer {
       const checkpointId = query.get('checkpoint') || '';
       if (!checkpointId) throw Object.assign(new Error('Missing checkpoint query parameter'), { code: 'BAD_REQUEST' });
       await this.requirePersistedSession(sessionId);
-      const preview = await this.service.previewRestore(sessionId, checkpointId);
+      const preserveHandEdits = query.get('preserveHandEdits');
+      if (preserveHandEdits !== null && preserveHandEdits !== 'true' && preserveHandEdits !== 'false') {
+        throw Object.assign(new Error('preserveHandEdits must be true or false'), { code: 'BAD_REQUEST' });
+      }
+      const preview = await this.service.previewRestore(sessionId, checkpointId, preserveHandEdits === null ? {} : { preserveVerifiedHandEdits: preserveHandEdits === 'true' });
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ preview }));
       return;
@@ -191,7 +267,8 @@ export class TimeMachineWebServer {
       await this.requirePersistedSession(sourceSessionId);
       const result = await this.service.rewindToCheckpoint(sourceSessionId, checkpointId, {
         mode: body.force === true ? 'force' : body.merge === true ? 'merge' : undefined,
-        preserveVerifiedHandEdits: body.preserveVerifiedHandEdits === true,
+        ...(typeof body.preserveVerifiedHandEdits === 'boolean' ? { preserveVerifiedHandEdits: body.preserveVerifiedHandEdits } : {}),
+        ...(body.requireExternalEffectsResolved === true ? { requireExternalEffectsResolved: true } : {}),
         deleteNewIgnoredPaths: body.deleteNewIgnoredPaths === true,
         restorePlanId: typeof body.restorePlanId === 'string' ? body.restorePlanId : undefined,
       });
@@ -209,6 +286,37 @@ export class TimeMachineWebServer {
       return;
     }
 
+    if (pathname === '/api/undo' && req.method === 'POST') {
+      const body = await this.readJsonBody(req);
+      const sourceSessionId = this.requireSessionId(body.sessionId);
+      const count = Number(body.count ?? 1);
+      if (!Number.isInteger(count) || count < 1 || count > 500) {
+        throw Object.assign(new Error('count must be a positive integer no greater than 500'), { code: 'BAD_REQUEST' });
+      }
+      if (!this.hooks.restartConversation) throw new Error('Conversation restart capability is unavailable; refusing workspace-only undo.');
+      await this.requirePersistedSession(sourceSessionId);
+      const target = await this.service.resolveRelativeTurnCheckpoint(sourceSessionId, count);
+      if (!target) throw Object.assign(new Error(`No completed turn exists ${count} step(s) before the active checkpoint.`), { code: 'UNDO_TARGET_NOT_FOUND' });
+      const result = await this.service.rewindToCheckpoint(sourceSessionId, target.id, {
+        mode: body.force === true ? 'force' : body.merge === true ? 'merge' : undefined,
+        ...(typeof body.preserveVerifiedHandEdits === 'boolean' ? { preserveVerifiedHandEdits: body.preserveVerifiedHandEdits } : {}),
+        ...(body.requireExternalEffectsResolved === true ? { requireExternalEffectsResolved: true } : {}),
+        deleteNewIgnoredPaths: body.deleteNewIgnoredPaths === true,
+      });
+      let conversation: { sessionId: string };
+      try {
+        conversation = await this.hooks.restartConversation(sourceSessionId, result.targetNode);
+      } catch (error) {
+        await this.compensate(sourceSessionId, result.rescueCheckpointId);
+        await this.service.completeRestoreJournal(result.restoreJournalId);
+        throw error;
+      }
+      await this.service.completeRestoreJournal(result.restoreJournalId);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, count, targetCheckpointId: target.id, result, conversation }));
+      return;
+    }
+
     if (pathname === '/api/restore-workspace' && req.method === 'POST') {
       const body = await this.readJsonBody(req);
       const sessionId = this.requireSessionId(body.sessionId);
@@ -218,7 +326,8 @@ export class TimeMachineWebServer {
       await this.requirePersistedSession(sessionId);
       const result = await this.service.restoreWorkspaceToCheckpoint(sessionId, body.checkpointId, {
         mode: body.force === true ? 'force' : body.merge === true ? 'merge' : undefined,
-        preserveVerifiedHandEdits: body.preserveVerifiedHandEdits === true,
+        ...(typeof body.preserveVerifiedHandEdits === 'boolean' ? { preserveVerifiedHandEdits: body.preserveVerifiedHandEdits } : {}),
+        ...(body.requireExternalEffectsResolved === true ? { requireExternalEffectsResolved: true } : {}),
         deleteNewIgnoredPaths: body.deleteNewIgnoredPaths === true,
         restorePlanId: typeof body.restorePlanId === 'string' ? body.restorePlanId : undefined,
       });
@@ -248,6 +357,13 @@ export class TimeMachineWebServer {
         throw Object.assign(new Error('backupKey is required and must not contain whitespace'), { code: 'BAD_REQUEST' });
       }
       const result = await this.service.migrateIgnoredBackup(body.backupKey);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, result }));
+      return;
+    }
+
+    if (pathname === '/api/shadow-migrate' && req.method === 'POST') {
+      const result = await this.service.migrateShadowStore();
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, result }));
       return;
@@ -319,6 +435,7 @@ export class TimeMachineWebServer {
         abandonedBranches: body.abandonedBranches === true,
         compactHistory: body.compactHistory === true,
         repackShadowObjects: body.repackShadowObjects === true,
+        dryRun: body.dryRun === true,
       });
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, result }));

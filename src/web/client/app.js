@@ -12,6 +12,7 @@ const sessionSelector = document.getElementById('session-selector');
 const inspectorContent = document.getElementById('inspector-content');
 const inspectorStatusBadge = document.getElementById('inspector-status-badge');
 const btnRefresh = document.getElementById('btn-refresh');
+const btnUndoLatest = document.getElementById('btn-undo-latest');
 const forkModal = document.getElementById('fork-modal');
 const modalForkFrom = document.getElementById('modal-fork-from');
 const forkBranchInput = document.getElementById('fork-branch-input');
@@ -67,6 +68,7 @@ function renderSessionSelector(sessions) {
     sessionSelector.append(option);
   }
   sessionSelector.disabled = sessions.length === 0;
+  btnUndoLatest.disabled = sessions.length === 0;
   if (currentSessionId && sessions.some(item => item.sessionId === currentSessionId)) {
     sessionSelector.value = currentSessionId;
   }
@@ -91,6 +93,27 @@ sessionSelector.addEventListener('change', async () => {
   selectedNodeId = null;
   syncSessionUrl();
   await loadDag();
+});
+
+btnUndoLatest.addEventListener('click', async () => {
+  if (!currentSessionId) return;
+  const confirmed = confirm('Undo the latest completed turn and continue in a new DSH session? A rescue point will be created first.');
+  if (!confirmed) return;
+  btnUndoLatest.disabled = true;
+  try {
+    const result = await requestJson(`${API_BASE}/api/undo`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: currentSessionId, count: 1 }),
+    });
+    adoptConversation(result);
+    await loadSessions();
+    alert(`✔ Undid the latest turn. Continue in DSH session: ${result.conversation.sessionId}`);
+  } catch (error) {
+    alert(`Undo failed: ${error.message}`);
+  } finally {
+    btnUndoLatest.disabled = !currentSessionId;
+  }
 });
 
 function adoptConversation(result) {
@@ -136,12 +159,14 @@ function createTimelineCard(node) {
   const omitted = Array.isArray(node.omittedPaths) ? node.omittedPaths : [];
   const agentWrites = Array.isArray(node.agentWrites) ? node.agentWrites : [];
   const unattributed = Array.isArray(node.unattributedChanges) ? node.unattributedChanges : [];
+  const toolMutations = Array.isArray(node.toolMutations) ? node.toolMutations : [];
   const meta = element('div', 'card-meta');
   meta.append(
     element('span', '', `🕒 ${new Date(node.timestamp).toLocaleTimeString()}`),
     element('span', '', `📁 ${files.length} file(s) changed`),
     ...(agentWrites.length ? [element('span', 'badge badge-success', `✎ ${agentWrites.length} Agent write(s)`)] : []),
     ...(unattributed.length ? [element('span', 'badge badge-warning', `? ${unattributed.length} unattributed`)] : []),
+    ...(toolMutations.length ? [element('span', 'badge badge-info', `⚙ ${toolMutations.length} tool mutation(s)`)] : []),
     ...(omitted.length ? [element('span', 'badge badge-warning', `⚠ ${omitted.length} omitted`)] : []),
   );
   card.append(top, element('div', 'card-prompt', String(node.prompt || '')), meta);
@@ -172,6 +197,7 @@ function selectNode(nodeId) {
   if (node.summary) inspectorContent.append(infoGroup('Execution Summary', String(node.summary)));
   inspectorContent.append(agentWritesGroup(node));
   inspectorContent.append(unattributedChangesGroup(node));
+  inspectorContent.append(toolMutationsGroup(node));
   inspectorContent.append(fileChangesGroup(node));
 }
 
@@ -212,6 +238,20 @@ function unattributedChangesGroup(node) {
   }
   body.append(list);
   return group(`Unattributed Turn Changes (${changes.length})`, body);
+}
+
+function toolMutationsGroup(node) {
+  const records = Array.isArray(node.toolMutations) ? node.toolMutations : [];
+  if (records.length === 0) return group('Tool Mutation Ledger (0)', element('p', '', 'No pre-command tool mutation evidence recorded.'));
+  const list = element('ul', 'file-list');
+  for (const record of records) {
+    const item = element('li', 'file-item');
+    const files = Array.isArray(record.changedFiles) ? record.changedFiles : [];
+    item.append(element('span', '', `⚙ ${String(record.toolName)}`), element('span', `badge ${record.status === 'error' ? 'badge-warning' : 'badge-success'}`, String(record.status).toUpperCase()), element('code', '', files.map(file => `${file.status} ${file.path}`).join(', ') || 'no workspace delta'));
+    if (record.error) item.append(element('span', 'badge badge-warning', String(record.error)));
+    list.append(item);
+  }
+  return group(`Tool Mutation Ledger (${records.length})`, list);
 }
 
 function metadataGroup(node) {
@@ -340,6 +380,12 @@ async function triggerRewind(nodeId, turnIndex) {
   const omitted = (preview.targetOmittedPaths || []).length
     ? `\n\n⚠ This is a partial checkpoint. Omitted paths will be preserved live:\n${preview.targetOmittedPaths.join('\n')}`
     : '';
+  const preserved = (preview.preservedHandEditPaths || []).length
+    ? `\n\n✓ Verified hand-edits will be preserved:\n${preview.preservedHandEditPaths.join('\n')}`
+    : '';
+  const externalEffects = (preview.externalEffects || []).length
+    ? `\n\n⚠ External effects are not undone by file restore:\n${preview.externalEffects.map(effect => `${effect.status} ${effect.adapter}:${effect.operation}`).join('\n')}`
+    : '';
   const warning = preview.requiresForce
     ? `\n\n⚠ Workspace drift detected; safe restore will refuse to overwrite it.\nConflicts:\n${conflicts || '(unavailable)'}${conflictMore}`
     : '';
@@ -349,7 +395,7 @@ async function triggerRewind(nodeId, turnIndex) {
     if (!merge) return;
   }
   const confirmed = confirm(
-    `Rewind to Turn #${turnIndex}${merge ? ' with three-way merge' : ''}?\n\nPlanned file changes:\n${files || '(none)'}${more}${warning}${omitted}\n\nA rescue point is created first.`,
+    `Rewind to Turn #${turnIndex}${merge ? ' with three-way merge' : ''}?\n\nPlanned file changes:\n${files || '(none)'}${more}${warning}${omitted}${preserved}${externalEffects}\n\nA rescue point is created first.`,
   );
   if (!confirmed) return;
   try {

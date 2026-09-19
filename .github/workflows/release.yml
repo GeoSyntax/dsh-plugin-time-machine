@@ -3,11 +3,12 @@ name: Release
 on:
   push:
     tags:
-      - 'v*.*.*'
+      - "v*.*.*"
+      - "client-v*.*.*"
   workflow_dispatch:
     inputs:
       dry_run:
-        description: 'Run the release checks without publishing'
+        description: "Run the release checks without publishing"
         required: false
         default: true
         type: boolean
@@ -17,7 +18,7 @@ permissions:
   id-token: write
 
 jobs:
-  publish:
+  publish-core:
     name: Verify and publish package
     runs-on: ubuntu-latest
     steps:
@@ -35,15 +36,53 @@ jobs:
           registry-url: https://registry.npmjs.org
       - run: pnpm install --frozen-lockfile
       - run: pnpm test:release
+      - name: Verify empty-directory consumer install
+        run: pnpm test:consumer
       - name: Verify tag matches package version
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
         run: test "${GITHUB_REF_NAME#v}" = "$(node -p "require('./package.json').version")"
       - name: Publish with npm provenance
-        if: startsWith(github.ref, 'refs/tags/') && (inputs.dry_run != true)
+        if: startsWith(github.ref, 'refs/tags/v') && (inputs.dry_run != true)
         run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Pack without publishing
-        if: github.event_name == 'workflow_dispatch' && inputs.dry_run == true
+        if: (github.event_name == 'workflow_dispatch' && inputs.dry_run == true) || startsWith(github.ref, 'refs/tags/client-v')
         run: npm pack --dry-run
+
+  publish-client-companion:
+    name: Verify and publish client companion
+    if: startsWith(github.ref, 'refs/tags/client-v') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.29.1
+          run_install: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22.19.0
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - name: Build the core package used by the local companion link
+        run: pnpm install --frozen-lockfile && pnpm build
+      - name: Install companion dependencies
+        working-directory: client-companion
+        run: pnpm install --frozen-lockfile
+      - name: Verify companion package
+        working-directory: client-companion
+        run: pnpm typecheck && pnpm test:smoke && pnpm test:package && pnpm pack --dry-run
+      - name: Verify client tag matches companion version
+        if: startsWith(github.ref, 'refs/tags/client-v')
+        shell: bash
+        run: test "${GITHUB_REF_NAME#client-v}" = "$(node -p "require('./client-companion/package.json').version")"
+      - name: Publish companion with npm provenance
+        if: startsWith(github.ref, 'refs/tags/client-v') && (inputs.dry_run != true)
+        working-directory: client-companion
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

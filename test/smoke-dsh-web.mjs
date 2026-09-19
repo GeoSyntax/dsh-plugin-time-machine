@@ -146,7 +146,7 @@ try {
     requestId: `tm-prompt-${Date.now()}`,
     sessionId,
     mode: 'queue',
-    content: [{ type: 'text', text: 'Create web-smoke.txt with exactly the text WEB-SMOKE-OK, then confirm briefly.' }],
+    content: [{ type: 'text', text: 'Use the native file-write tool (not shell or a code block) to create web-smoke.txt with exactly the text WEB-SMOKE-OK, then confirm briefly.' }],
   });
 
   const started = Date.now();
@@ -171,6 +171,15 @@ try {
   if (!checkpoint || !['success', 'failed', 'aborted'].includes(checkpoint.status)) {
     throw new Error(`Real-host turn did not finalize. Logs:\n${logs}`);
   }
+  if (typeof checkpoint.assistantMessageId !== 'string' || !checkpoint.assistantMessageId) {
+    throw new Error('Real-host checkpoint did not capture the finalized assistant message id.');
+  }
+  const messageCheckpoint = await fetch(`http://127.0.0.1:${pluginPort}/api/checkpoint-for-message?sessionId=${encodeURIComponent(sessionId)}&messageId=${encodeURIComponent(checkpoint.assistantMessageId)}`);
+  const messageCheckpointBody = await messageCheckpoint.json();
+  if (!messageCheckpoint.ok || messageCheckpointBody.checkpoint?.id !== checkpoint.id) {
+    throw new Error(`Message action checkpoint mapping failed: ${messageCheckpoint.status} ${JSON.stringify(messageCheckpointBody)}`);
+  }
+
   const file = path.join(workspace, 'web-smoke.txt');
   let fileContent;
   try {

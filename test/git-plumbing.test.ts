@@ -85,6 +85,23 @@ describe('GitPlumbingEngine', () => {
     expect(inspected.treeOid).toBe(snapshot.treeOid);
   });
 
+  it('fails closed before restoring a hard-linked target file', async () => {
+    const tracked = path.join(tmpDir, 'tracked.txt');
+    const alias = path.join(tmpDir, 'alias.txt');
+    await fs.writeFile(tracked, 'base\n', 'utf8');
+    const base = await engine.createSnapshot({ sessionId: 'hardlink', checkpointId: 'base' });
+    await fs.writeFile(tracked, 'target\n', 'utf8');
+    const target = await engine.createSnapshot({ sessionId: 'hardlink', checkpointId: 'target', parentCommitOid: base.commitOid });
+    await fs.link(tracked, alias);
+    await expect(engine.restoreSnapshot(base.commitOid, { mode: 'force' })).rejects.toMatchObject({
+      code: 'UNSUPPORTED_WORKSPACE_STATE',
+      paths: ['tracked.txt'],
+    });
+    expect(await fs.readFile(tracked, 'utf8')).toBe('target\n');
+    expect(await fs.readFile(alias, 'utf8')).toBe('target\n');
+    expect(target.commitOid).not.toBe(base.commitOid);
+  });
+
   it('rejects malformed omitted paths before touching the temporary index', async () => {
     await expect(engine.inspectWorkspace({ omitPaths: ['../outside.txt'] }))
       .rejects.toThrow(/Unsafe workspace path/);
@@ -356,5 +373,99 @@ describe('GitPlumbingEngine', () => {
     const repackedAfterDelete = await engine.repackShadowObjects();
     expect(repackedAfterDelete.repacked).toBe(false);
     expect(repackedAfterDelete.reachableRefs).toBe(0);
+  });
+
+  it('encrypts shadow objects at rest and restores them through a disposable runtime', async () => {
+    const shadowObjectDir = path.join(tmpDir, '.dsh-tm', 'git-shadow', 'objects');
+    const archiveDir = path.join(tmpDir, '.dsh-tm', 'git-shadow-encrypted');
+    engine = new GitPlumbingEngine({ workDir: tmpDir, shadowObjectDir, shadowEncryptionKey: 'shadow-secret' });
+    const file = path.join(tmpDir, 'encrypted-shadow.txt');
+    await fs.writeFile(file, 'secret-one\n', 'utf8');
+    const first = await engine.createSnapshot({ sessionId: 'encrypted-shadow', checkpointId: 'one' });
+    expect(engine.usesEncryptedShadowStore).toBe(true);
+    const manifest = JSON.parse(await fs.readFile(path.join(archiveDir, 'manifest.v1.json'), 'utf8')) as { version: number; entries: unknown[] };
+    expect(manifest.version).toBe(1);
+    expect(manifest.entries.length).toBeGreaterThan(0);
+    await expect(fs.access(shadowObjectDir)).rejects.toThrow();
+    const encryptedBytes = await fs.readFile(path.join(archiveDir, 'payload', (await fs.readdir(path.join(archiveDir, 'payload')))[0]));
+    expect(encryptedBytes.toString('utf8')).not.toContain('secret-one');
+    const manifestBeforeWrongKey = await fs.readFile(path.join(archiveDir, 'manifest.v1.json'), 'utf8');
+
+    const restarted = new GitPlumbingEngine({ workDir: tmpDir, shadowObjectDir, shadowEncryptionKey: 'shadow-secret' });
+    expect((await restarted.runGit(['cat-file', '-t', first.commitOid])).stdout.trim()).toBe('commit');
+    await expect(fs.access(shadowObjectDir)).rejects.toThrow();
+    const payloadCount = (await fs.readdir(path.join(archiveDir, 'payload'))).length;
+    await restarted.runGit(['cat-file', '-t', first.commitOid]);
+    expect((await fs.readdir(path.join(archiveDir, 'payload'))).length).toBe(payloadCount);
+    const wrongKey = new GitPlumbingEngine({ workDir: tmpDir, shadowObjectDir, shadowEncryptionKey: 'wrong-secret' });
+    await expect(wrongKey.runGit(['cat-file', '-t', first.commitOid])).rejects.toMatchObject({ code: 'SHADOW_KEY_INVALID' });
+    const manifestAfterWrongKey = JSON.parse(await fs.readFile(path.join(archiveDir, 'manifest.v1.json'), 'utf8')) as { entries: Array<{ path: string; sha256: string; bytes: number }> };
+    const beforeEntries = (JSON.parse(manifestBeforeWrongKey) as { entries: Array<{ path: string; sha256: string; bytes: number }> }).entries
+      .map(entry => `${entry.path}:${entry.sha256}:${entry.bytes}`).sort();
+    const afterEntries = manifestAfterWrongKey.entries.map(entry => `${entry.path}:${entry.sha256}:${entry.bytes}`).sort();
+    expect(afterEntries).toEqual(beforeEntries);
+  });
+
+  it('explicitly migrates a legacy plaintext shadow store before enabling encryption', async () => {
+    const shadowObjectDir = path.join(tmpDir, '.dsh-tm', 'git-shadow', 'objects');
+    const legacy = new GitPlumbingEngine({ workDir: tmpDir, shadowObjectDir });
+    await fs.writeFile(path.join(tmpDir, 'legacy-shadow.txt'), 'legacy-secret\n', 'utf8');
+    const snapshot = await legacy.createSnapshot({ sessionId: 'legacy-shadow', checkpointId: 'one' });
+    const encrypted = new GitPlumbingEngine({ workDir: tmpDir, shadowObjectDir, shadowEncryptionKey: 'migration-secret' });
+    await expect(encrypted.encryptedShadowStatus()).resolves.toEqual({ ready: false, migrationRequired: true });
+    const result = await encrypted.migrateShadowStore();
+    expect(result.migrated).toBe(true);
+    expect(result.entries).toBeGreaterThan(0);
+    expect(await fs.readdir(path.join(tmpDir, '.dsh-tm', 'git-shadow-encrypted'))).toContain('manifest.v1.json');
+    expect(await fs.access(shadowObjectDir).then(() => true, () => false)).toBe(false);
+    await expect(encrypted.encryptedShadowStatus()).resolves.toEqual({ ready: true, migrationRequired: false });
+    expect((await encrypted.runGit(['cat-file', '-t', snapshot.commitOid])).stdout.trim()).toBe('commit');
+  });
+
+  it('rotates the encrypted shadow key only after authenticated read', async () => {
+    const shadowObjectDir = path.join(tmpDir, '.dsh-tm', 'git-shadow', 'objects');
+    const oldEngine = new GitPlumbingEngine({ workDir: tmpDir, shadowObjectDir, shadowEncryptionKey: 'old-shadow-key' });
+    await fs.writeFile(path.join(tmpDir, 'rotation.txt'), 'rotation\n', 'utf8');
+    const snapshot = await oldEngine.createSnapshot({ sessionId: 'shadow-rotation', checkpointId: 'one' });
+    const rotated = new GitPlumbingEngine({
+      workDir: tmpDir,
+      shadowObjectDir,
+      shadowEncryptionKey: 'new-shadow-key',
+      shadowEncryptionPreviousKey: 'old-shadow-key',
+    });
+    expect((await rotated.runGit(['cat-file', '-t', snapshot.commitOid])).stdout.trim()).toBe('commit');
+    await expect(new GitPlumbingEngine({ workDir: tmpDir, shadowObjectDir, shadowEncryptionKey: 'old-shadow-key' }).runGit(['cat-file', '-t', snapshot.commitOid]))
+      .rejects.toMatchObject({ code: 'SHADOW_KEY_INVALID' });
+  });
+
+  it('replays an interrupted encrypted shadow append without changing the committed manifest', async () => {
+    const shadowObjectDir = path.join(tmpDir, '.dsh-tm', 'git-shadow', 'objects');
+    const archiveDir = path.join(tmpDir, '.dsh-tm', 'git-shadow-encrypted');
+    const encrypted = new GitPlumbingEngine({ workDir: tmpDir, shadowObjectDir, shadowEncryptionKey: 'journal-secret' });
+    await fs.writeFile(path.join(tmpDir, 'journal.txt'), 'journal\n', 'utf8');
+    const snapshot = await encrypted.createSnapshot({ sessionId: 'journal-shadow', checkpointId: 'one' });
+    const before = await fs.readFile(path.join(archiveDir, 'manifest.v1.json'), 'utf8');
+    const staging = path.join(archiveDir, '.staging-crash', 'payload');
+    await fs.mkdir(staging, { recursive: true });
+    await fs.writeFile(path.join(staging, 'orphan.bin'), 'orphan-ciphertext', 'utf8');
+    await fs.writeFile(path.join(archiveDir, 'journal.json'), JSON.stringify({ version: 1, staging: '.staging-crash', phase: 'staging' }), 'utf8');
+    const restarted = new GitPlumbingEngine({ workDir: tmpDir, shadowObjectDir, shadowEncryptionKey: 'journal-secret' });
+    expect((await restarted.runGit(['cat-file', '-t', snapshot.commitOid])).stdout.trim()).toBe('commit');
+    expect(await fs.access(path.join(archiveDir, 'journal.json')).then(() => true, () => false)).toBe(false);
+    expect(await fs.access(path.join(archiveDir, '.staging-crash')).then(() => true, () => false)).toBe(false);
+    expect((JSON.parse(await fs.readFile(path.join(archiveDir, 'manifest.v1.json'), 'utf8')) as { entries: unknown[] }).entries.length).toBeGreaterThan(0);
+    expect(before).not.toBe('');
+  });
+
+  it('fails closed when an encrypted shadow payload is truncated', async () => {
+    const shadowObjectDir = path.join(tmpDir, '.dsh-tm', 'git-shadow', 'objects');
+    const archiveDir = path.join(tmpDir, '.dsh-tm', 'git-shadow-encrypted');
+    const encrypted = new GitPlumbingEngine({ workDir: tmpDir, shadowObjectDir, shadowEncryptionKey: 'corrupt-secret' });
+    await fs.writeFile(path.join(tmpDir, 'corrupt.txt'), 'corrupt\n', 'utf8');
+    const snapshot = await encrypted.createSnapshot({ sessionId: 'corrupt-shadow', checkpointId: 'one' });
+    const payload = (await fs.readdir(path.join(archiveDir, 'payload')))[0];
+    await fs.writeFile(path.join(archiveDir, 'payload', payload), Buffer.from('short'));
+    await expect(new GitPlumbingEngine({ workDir: tmpDir, shadowObjectDir, shadowEncryptionKey: 'corrupt-secret' }).runGit(['cat-file', '-t', snapshot.commitOid]))
+      .rejects.toMatchObject({ code: 'SHADOW_ARCHIVE_CORRUPT' });
   });
 });

@@ -245,8 +245,11 @@ describe('TimeMachineWebServer', () => {
     expect(rewind.status).toBe(200);
     expect((await rewind.json()).conversation.sessionId).toBe(`forked-${first.id}`);
     expect(await fs.readFile(file, 'utf8')).toBe('v1\n');
-
+    
     await fs.writeFile(file, 'v3\n', 'utf8');
+    const forkPreview = await fetch(`http://localhost:${testPort}/api/preview?sessionId=web-session&checkpoint=${encodeURIComponent(first.id)}`);
+    expect(forkPreview.status).toBe(200);
+    const forkPreviewBody = await forkPreview.json();
     const fork = await fetch(`http://localhost:${testPort}/api/fork`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -256,6 +259,7 @@ describe('TimeMachineWebServer', () => {
         branchName: 'web-hotfix',
         description: 'web API branch',
         force: true,
+        restorePlanId: forkPreviewBody.preview.restorePlanId,
       }),
     });
     expect(fork.status).toBe(200);

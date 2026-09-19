@@ -70,7 +70,7 @@ dsh plugin --profile web list --depth 0
 /tm-fork <checkpoint> <branch>
 /tm-list [limit]             # show recent active-lineage checkpoints
 /tm-undo [count]             # undo the latest turn(s) by relative position
-/tm-rewind <checkpoint> [--preserve-hand-edits] [--plan=<id>]
+/tm-rewind <checkpoint> [--preserve-hand-edits|--no-preserve-hand-edits] [--plan=<id>]
 ```
 
 插件会在每个 turn 开始前创建 checkpoint。`/tm-tree` 显示当前 DAG；`/tm-list` 以 `0=current`、`1=undo 1` 的相对编号列出活动 lineage；`/tm-preview` 在不修改文件的情况下列出回滚影响；`/tm-restore-files` 只恢复指定路径并保持当前会话不变；`/tm-fork` 从旧状态创建平行会话；`/tm-rewind` 恢复工作区并通过 DSH `sessionController` 创建对齐的新会话；`/tm-undo [count]` 是面向用户的快捷别名，按当前活动分支向前回退 count 个已完成 turn（默认 1），会忽略同一 turn 的 pre-command 和 rescue 内部节点，底层仍使用同一套 safe restore、rescue 和 fork 语义。Web 仪表盘的 rewind 也会先执行同样的预览。
@@ -90,7 +90,7 @@ dsh plugin --profile web list --depth 0
 - **Shadow pack 维护:** `shadowStore: true` 时，显式传入 `--repack-shadow`（或 Web API `repackShadowObjects: true`）会仅根据 `refs/dsh-tm/*` 重建 shadow pack，并删除旧的不可达 pack；不会运行用户仓库的全局 GC。
 - **崩溃恢复:** rewind/fork/选择性恢复会写入 durable restore journal；插件下次启动时如果发现未完成操作，会先恢复 rescue checkpoint，再清理 journal。
 - **可验证的人工修改保留（显式 opt-in）:** 开启 `enableAgentWriteLedger` 后，插件会从 DSH 原生 `fs/observed` + `tools/result` 事件自动登记 `write`、`edit`、`str_replace_editor` 的成功写入；删除事件也会登记为 `delete`，使用确定性的 absent tombstone 哈希。其他集成也可调用 `recordAgentWrite()` 登记路径和 SHA-256。`/tm-rewind --preserve-hand-edits` 只保留登记哈希已经变化的路径。未登记路径不会被猜测为人工修改，哈希缺失或账本损坏仍然 fail-closed。
-- **可选的 Hermes 风格默认保留:** 设置 `preserveVerifiedHandEditsByDefault: true` 会自动启用 Agent-write ledger，并在未显式传入 `--preserve-hand-edits` 时保留账本已验证、后来发生人工修改的路径；显式 `preserveVerifiedHandEdits: false` 仍可恢复严格覆盖语义。默认值为 `false`，因此现有安全策略不变。
+- **可选的 Hermes 风格默认保留:** 设置 `preserveVerifiedHandEditsByDefault: true` 会自动启用 Agent-write ledger，并在未显式传入 `--preserve-hand-edits` 时保留账本已验证、后来发生人工修改的路径；CLI 可用 `--no-preserve-hand-edits`，Web/API 可传 `preserveVerifiedHandEdits: false` 恢复严格覆盖语义。默认值为 `false`，因此现有安全策略不变。
 - **账本可审计:** 时间线检查点详情、CLI `/tm-agent-writes <checkpoint>` 与只读 `GET /api/agent-writes?sessionId=...&checkpoint=...` 暴露已验证的路径、操作、SHA-256 和时间戳，便于在回滚前解释哪些内容由 Agent 写入。
 - **未归因变更显式告警:** turn 结束时 Git 或 fallback manifest 会对比 checkpoint 起点与 settled workspace；没有对应 Agent-write 证据的路径会记录为 `unattributedChanges`，并在时间线中标记。插件不会把这类 bash/PTC/人工修改猜成 Agent 写入。
 - **未归因变更可查询:** CLI `/tm-unattributed <checkpoint>` 与 `GET /api/unattributed-changes?sessionId=...&checkpoint=...` 提供机器可读的只读清单。

@@ -204,7 +204,7 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
     scope.commands.register({
       name: 'tm-rewind',
       description: 'Restore workspace and fork conversation at a checkpoint',
-      input: { hint: '<checkpoint> [--merge|--force] [--preserve-hand-edits] [--delete-new-ignored] [--plan=<id>]' },
+      input: { hint: '<checkpoint> [--merge|--force] [--preserve-hand-edits|--no-preserve-hand-edits] [--delete-new-ignored] [--plan=<id>]' },
       handler: async ({ agent, rawInput }: CommandInvocationLike): Promise<CommandResult> => {
         const args = rawInput.trim().split(/\s+/).filter(Boolean);
         const checkpointId = args.find(arg => !arg.startsWith('--'));
@@ -215,7 +215,9 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
         const sessionId = agent.session.id;
         const result = await service.rewindToCheckpoint(sessionId, checkpointId, {
           mode: args.includes('--force') ? 'force' : args.includes('--merge') ? 'merge' : undefined,
-          ...(args.includes('--preserve-hand-edits') ? { preserveVerifiedHandEdits: true } : {}),
+          ...(args.includes('--preserve-hand-edits')
+            ? { preserveVerifiedHandEdits: true }
+            : args.includes('--no-preserve-hand-edits') ? { preserveVerifiedHandEdits: false } : {}),
           deleteNewIgnoredPaths: args.includes('--delete-new-ignored'),
           restorePlanId: optionValue(args, '--plan'),
         });
@@ -237,12 +239,12 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
     scope.commands.register({
       name: 'tm-undo',
       description: 'Undo recent turns by restoring and forking from the active checkpoint lineage',
-      input: { hint: '[count] [--merge|--force] [--preserve-hand-edits] [--delete-new-ignored]' },
+      input: { hint: '[count] [--merge|--force] [--preserve-hand-edits|--no-preserve-hand-edits] [--delete-new-ignored]' },
       handler: async ({ agent, rawInput }: CommandInvocationLike): Promise<CommandResult> => {
         const args = rawInput.trim().split(/\s+/).filter(Boolean);
         const positionals = args.filter(arg => !arg.startsWith('--'));
         const count = positionals.length ? Number(positionals[0]) : 1;
-        if (!Number.isInteger(count) || count < 1) return { kind: 'error', text: 'Usage: /tm-undo [positive-count] [--merge|--force] [--preserve-hand-edits] [--delete-new-ignored]' };
+        if (!Number.isInteger(count) || count < 1) return { kind: 'error', text: 'Usage: /tm-undo [positive-count] [--merge|--force] [--preserve-hand-edits|--no-preserve-hand-edits] [--delete-new-ignored]' };
         const controller = scope.get('sessionController') as SessionControllerLike | undefined;
         if (!controller) return { kind: 'error', text: 'This DSH profile has no sessionController; conversation undo is unavailable.' };
 
@@ -251,7 +253,9 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
         if (!checkpointId) return { kind: 'error', text: `Cannot undo ${count} turn(s): the active session has fewer than ${count + 1} completed turns.` };
         const result = await service.rewindToCheckpoint(sessionId, checkpointId, {
           mode: args.includes('--force') ? 'force' : args.includes('--merge') ? 'merge' : undefined,
-          ...(args.includes('--preserve-hand-edits') ? { preserveVerifiedHandEdits: true } : {}),
+          ...(args.includes('--preserve-hand-edits')
+            ? { preserveVerifiedHandEdits: true }
+            : args.includes('--no-preserve-hand-edits') ? { preserveVerifiedHandEdits: false } : {}),
           deleteNewIgnoredPaths: args.includes('--delete-new-ignored'),
         });
         try {

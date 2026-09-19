@@ -15,6 +15,7 @@ supported only when it is covered by the current implementation and tests.
 | Quarantine at-rest encryption | Opt-in AES-256-GCM via environment-backed key; missing/wrong key fails closed | Product-specific | Varies | Varies |
 | External side-effect ledger | Adapter declarations persist reversibility, compensation and failure semantics; named adapters support dry-run, explicit execution and idempotency fences; missing adapters are surfaced as `adapterAvailable: false`; fork reflection still warns | Product-specific | Varies | Usually absent |
 | Selective file restore | `tm-restore-files`, Web API | Yes | Yes | Varies |
+| Full workspace restore without conversation fork | `tm-restore`, `POST /api/restore-workspace` | Product-specific | Product-specific | Often the default undo behavior |
 | Conversation/session alignment | DSH `sessionController` fork | Product-specific | Product-specific | Usually undo/redo or same window |
 | Multi-session discovery | `GET /api/sessions`, URL-bound Dashboard selector, and companion `sessions()` API; unknown IDs fail closed | Product-specific | Host/UI-dependent | Usually same-window only |
 | Cross-origin companion boundary | Disabled by default; exact `webAllowedOrigins` entries enable local client packages with explicit CORS headers | Host-managed | Host/UI-dependent | Usually unavailable |
@@ -48,10 +49,10 @@ supported only when it is covered by the current implementation and tests.
 ## Important boundaries
 
 `/tm-rewind` is a dual-track operation: it restores the workspace and asks DSH
-to create an aligned conversation. `/tm-restore-files` is deliberately
-workspace-only; it restores selected paths, keeps the current conversation
-messages, and records rescue/result checkpoints instead of pretending the
-conversation was rewound.
+to create an aligned conversation. `/tm-restore` is full-workspace-only: it
+restores every captured path, keeps the current conversation messages, and
+records rescue/result state without pretending the conversation was rewound.
+`/tm-restore-files` is the narrower selective variant for a chosen path set.
 
 The comparison is deliberately not a claim that Time Machine is ahead of every
 peer. Time Machine now has expiring, single-use, session-bound restore plans

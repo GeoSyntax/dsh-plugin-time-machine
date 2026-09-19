@@ -123,6 +123,15 @@ as `gitObjectsEncrypted: false`, so integrations cannot mistake an independent
 shadow directory for an encrypted backup. Ignored-file quarantine can be
 encrypted with `quarantineEncryptionKeyEnv`.
 
+This worktree limitation is also a current DSH host-contract limitation, not
+just a plugin policy choice. DSH's `workspaceRegistry` and session APIs can
+attach a session to an existing workspace directory, but the public
+`SessionForkRequest` currently accepts only `sessionId` and optional `atSeq`.
+The built-in fork path therefore reuses the source workspace; it cannot ask
+the host to create a new worktree or container for the child. Time Machine
+keeps the limitation visible through capability discovery and uses its
+cross-process lock until DSH exposes an explicit isolated-workspace fork API.
+
 Further reading:
 
 - [Hermes checkpoint and rollback](https://hermes-agent.nousresearch.com/docs/user-guide/checkpoints-and-rollback)

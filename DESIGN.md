@@ -107,6 +107,7 @@ The shadow store is opt-in. Loose unreachable objects are reclaimed after plugin
 - One plugin instance currently owns one configured workspace. Sessions with a different `cwd` are skipped rather than routed incorrectly.
 - Packed shadow objects are not repacked automatically; users must opt in to `--repack-shadow`, and shared-object mode still does not run repository-wide GC.
 - The lock prevents concurrent mutation but does not provide separate worktrees for multiple Agents.
+- DSH's current `workspaceRegistry` can attach sessions to existing workspace directories, but its public `SessionForkRequest` only carries `sessionId` and `atSeq`; the fork command therefore inherits the source workspace rather than creating a new worktree. Time Machine reports shared-lock isolation until the host exposes a stronger workspace/fork contract.
 - External-effect declarations are an audit/reflection contract, not a transaction log: adapters still own authentication, idempotency, compensation execution, and verification.
 
 ## Change history

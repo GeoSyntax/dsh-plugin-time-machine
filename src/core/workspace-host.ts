@@ -1,3 +1,4 @@
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { TimeMachineWorkspaceHost } from '../types.js';
 import { validateWorkspaceRoute } from './workspace-route.js';
@@ -14,8 +15,8 @@ export async function forkThroughWorkspaceHost(
   configuredRoot: string,
 ): Promise<{ sessionId: string }> {
   const route = await validateWorkspaceRoute(await host.resolveSessionWorkspace(sourceSessionId));
-  const configured = path.resolve(configuredRoot);
-  const routed = path.resolve(route.cwd);
+  const configured = path.resolve(await fs.realpath(configuredRoot).catch(() => configuredRoot));
+  const routed = path.resolve(await fs.realpath(route.cwd).catch(() => route.cwd));
   const sameRoot = process.platform === 'win32'
     ? configured.toLowerCase() === routed.toLowerCase()
     : configured === routed;

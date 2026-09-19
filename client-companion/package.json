@@ -45,6 +45,7 @@
   "devDependencies": {
     "@types/react": "^18.3.0",
     "dsh-plugin-time-machine": "file:..",
+    "react": "^18.2.0",
     "tsdown": "^0.15.0",
     "typescript": "^5.7.0"
   },

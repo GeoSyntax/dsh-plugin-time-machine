@@ -377,6 +377,9 @@ export class DAGStateManager {
       if (node.assistantMessageId !== undefined && (typeof node.assistantMessageId !== 'string' || !node.assistantMessageId.trim())) {
         throw new Error(`DAG checkpoint '${id}' has an invalid assistant message id.`);
       }
+      if (node.userMessageId !== undefined && (typeof node.userMessageId !== 'string' || !node.userMessageId.trim())) {
+        throw new Error(`DAG checkpoint '${id}' has an invalid user message id.`);
+      }
       if (node.assistantMessageIds !== undefined && (!Array.isArray(node.assistantMessageIds) || node.assistantMessageIds.some(messageId => typeof messageId !== 'string' || !messageId.trim()))) {
         throw new Error(`DAG checkpoint '${id}' has invalid assistant message ids.`);
       }

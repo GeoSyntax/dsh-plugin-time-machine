@@ -251,7 +251,7 @@ node <dsh-source>/apps/cli/lib/bin.js --profile tm-live --dump-config
 |---|---|---|
 | `/api/status` | 返回 online、workspace、version | 服务停止后连接失败 |
 | `/api/sessions` | 列出持久化 session 摘要并按最近更新时间排序 | 损坏/半写 DAG 被忽略，不创建 `default` |
-| `/api/checkpoint-for-message` | finalized assistant message 映射到 checkpoint | 未知 message 返回 `CHECKPOINT_NOT_FOUND`，不猜测目标 |
+| `/api/checkpoint-for-message` | finalized assistant / turn-opening user message 映射到 checkpoint | 未知 message 返回 `CHECKPOINT_NOT_FOUND`，不猜测目标 |
 | `/api/dag` | 返回指定 session DAG | 不存在 session、默认 session |
 | `/api/diff` | 两 checkpoint diff | 空 id、无效 id |
 | `/api/rewind` | safe、force、delete ignored | 非法 JSON、缺 checkpoint、无 sessionController |
@@ -301,7 +301,7 @@ artifacts/<run-id>/
 - 2026-09-19 同机复测 1,000/10,000 文件（每组 5 turns）分别得到 Git 平均 1,427.76ms（P50/P95 1,395.57/1,505.04ms）和 2,833.09ms（2,809.01/2,894.54ms）；传统复制平均 2,661.89ms 和 12,180.30ms。该复测用于持续回归，不替代前一组基线或真实仓库 SLA。
 - 100 文件、100-turn 长会话基线已实测：Git 平均相对传统复制 2.76×，P50/P95 为 679/769ms，存储比例 0.038×；长期存储收益明显，但小仓库单轮 Git 进程开销仍存在。
 - `client-companion/` 已在实际安装的 DSH `0.1.6-alpha.2` 和隔离临时目录中的 `0.1.6-alpha.1` client 包上完成严格 typecheck、`tsdown` 构建和双 slot 注册 smoke；跨版本 `0.1.6-alpha.1/.2` slot CI 与独立 npm 发布流程已配置，仍需首次 GitHub runner/npm 发布证据。
-- finalized assistant message 映射已覆盖：checkpoint 在 turn 结束时记录该 turn 的全部 assistant message ids（包含工具循环中的中间消息），`/api/checkpoint-for-message` 对未知消息 fail-closed，companion 只对可解析的消息显示 rewind action。
+- finalized assistant 与 turn-opening user message 映射已覆盖：checkpoint 在 turn 结束时记录该 turn 的全部 assistant message ids（包含工具循环中的中间消息），并在 turn 开始时记录 user message id；`/api/checkpoint-for-message` 对未知消息 fail-closed，companion 目前只对可解析的 assistant 消息显示 rewind action。
 - Git 与 fallback 恢复完成后均执行工作区摘要校验；持久化 DAG 加载会校验节点、父节点、分支和会话归属。
 - 真实 DSH 源码宿主加载插件通过。
 - 真实本地模型请求、文件创建、turn 结束后的 finalized checkpoint 落盘通过。

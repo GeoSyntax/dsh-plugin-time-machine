@@ -100,6 +100,8 @@ export interface CheckpointNode {
   assistantMessageId?: string;
   /** All finalized assistant messages produced by this turn, including tool-loop intermediates. */
   assistantMessageIds?: string[];
+  /** User message that opened this turn, when the host exposes message ids. */
+  userMessageId?: string;
   errorMessage?: string;
   failedTools?: Array<{ toolName: string; input: any; error: string }>;
   tags?: string[];

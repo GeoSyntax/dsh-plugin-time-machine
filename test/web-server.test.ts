@@ -150,12 +150,15 @@ describe('TimeMachineWebServer', () => {
   it('resolves assistant message actions to finalized checkpoints', async () => {
     const sessionId = 'message-action-session';
     const checkpoint = await service.createTurnCheckpoint({
-      sessionId, turnIndex: 1, prompt: 'message action', sessionState: { sessionId, messages: [] },
+      sessionId, turnIndex: 1, prompt: 'message action', userMessageId: 'user-1', sessionState: { sessionId, messages: [] },
     });
     await service.finalizeTurnCheckpoint({ sessionId, checkpointId: checkpoint.id, status: 'success', assistantMessageId: 'assistant-2', assistantMessageIds: ['assistant-1', 'assistant-2'] });
     const response = await fetch(`http://localhost:${testPort}/api/checkpoint-for-message?sessionId=${sessionId}&messageId=assistant-1`);
     expect(response.status).toBe(200);
     expect((await response.json()).checkpoint.id).toBe(checkpoint.id);
+    const userResponse = await fetch(`http://localhost:${testPort}/api/checkpoint-for-message?sessionId=${sessionId}&messageId=user-1`);
+    expect(userResponse.status).toBe(200);
+    expect((await userResponse.json()).checkpoint.id).toBe(checkpoint.id);
     const missing = await fetch(`http://localhost:${testPort}/api/checkpoint-for-message?sessionId=${sessionId}&messageId=missing`);
     expect(missing.status).toBe(404);
     expect((await missing.json()).code).toBe('CHECKPOINT_NOT_FOUND');

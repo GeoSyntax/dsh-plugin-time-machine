@@ -234,6 +234,7 @@ export class TimeMachineService {
     errorMessage?: string;
     failedTools?: Array<{ toolName: string; input: any; error: string }>;
     tags?: string[];
+    userMessageId?: string;
   }): Promise<CheckpointNode> {
     return this.runWorkspaceOperation(() => this.createTurnCheckpointUnlocked(params));
   }
@@ -248,6 +249,7 @@ export class TimeMachineService {
     errorMessage?: string;
     failedTools?: Array<{ toolName: string; input: any; error: string }>;
     tags?: string[];
+    userMessageId?: string;
   }): Promise<CheckpointNode> {
     const dag = await this.getDAGManager(params.sessionId);
     const internalSafetyCheckpoint = params.tags?.includes('rescue') || params.tags?.includes('selective-restore');
@@ -303,6 +305,7 @@ export class TimeMachineService {
       sessionState: cloneJson(params.sessionState),
       changedFiles,
       status: params.status || 'success',
+      ...(params.userMessageId ? { userMessageId: params.userMessageId } : {}),
       errorMessage: params.errorMessage,
       failedTools: params.failedTools,
       tags: params.tags,
@@ -350,14 +353,19 @@ export class TimeMachineService {
     });
   }
 
-  /** Resolve a finalized assistant message to its turn checkpoint for message actions. */
-  async findCheckpointByAssistantMessage(sessionId: string, messageId: string): Promise<CheckpointNode | null> {
+  /** Resolve any durable user/assistant message to its turn checkpoint for message actions. */
+  async findCheckpointByMessage(sessionId: string, messageId: string): Promise<CheckpointNode | null> {
     if (!messageId.trim()) return null;
     const dag = await this.getDAGManager(sessionId);
     const matches = Object.values(dag.tree.nodes)
-      .filter(node => node.assistantMessageId === messageId || node.assistantMessageIds?.includes(messageId))
+      .filter(node => node.userMessageId === messageId || node.assistantMessageId === messageId || node.assistantMessageIds?.includes(messageId))
       .sort((left, right) => right.timestamp - left.timestamp);
     return matches[0] ? cloneJson(matches[0]) : null;
+  }
+
+  /** Backward-compatible assistant-specific alias. */
+  async findCheckpointByAssistantMessage(sessionId: string, messageId: string): Promise<CheckpointNode | null> {
+    return this.findCheckpointByMessage(sessionId, messageId);
   }
 
   /**

@@ -2182,6 +2182,9 @@ var DAGStateManager = class {
       if (node.assistantMessageId !== void 0 && (typeof node.assistantMessageId !== "string" || !node.assistantMessageId.trim())) {
         throw new Error(`DAG checkpoint '${id}' has an invalid assistant message id.`);
       }
+      if (node.userMessageId !== void 0 && (typeof node.userMessageId !== "string" || !node.userMessageId.trim())) {
+        throw new Error(`DAG checkpoint '${id}' has an invalid user message id.`);
+      }
       if (node.assistantMessageIds !== void 0 && (!Array.isArray(node.assistantMessageIds) || node.assistantMessageIds.some((messageId) => typeof messageId !== "string" || !messageId.trim()))) {
         throw new Error(`DAG checkpoint '${id}' has invalid assistant message ids.`);
       }
@@ -2654,6 +2657,7 @@ var TimeMachineService = class {
       sessionState: cloneJson2(params.sessionState),
       changedFiles,
       status: params.status || "success",
+      ...params.userMessageId ? { userMessageId: params.userMessageId } : {},
       errorMessage: params.errorMessage,
       failedTools: params.failedTools,
       tags: params.tags,
@@ -2684,12 +2688,16 @@ var TimeMachineService = class {
       });
     });
   }
-  /** Resolve a finalized assistant message to its turn checkpoint for message actions. */
-  async findCheckpointByAssistantMessage(sessionId, messageId) {
+  /** Resolve any durable user/assistant message to its turn checkpoint for message actions. */
+  async findCheckpointByMessage(sessionId, messageId) {
     if (!messageId.trim()) return null;
     const dag = await this.getDAGManager(sessionId);
-    const matches = Object.values(dag.tree.nodes).filter((node) => node.assistantMessageId === messageId || node.assistantMessageIds?.includes(messageId)).sort((left, right) => right.timestamp - left.timestamp);
+    const matches = Object.values(dag.tree.nodes).filter((node) => node.userMessageId === messageId || node.assistantMessageId === messageId || node.assistantMessageIds?.includes(messageId)).sort((left, right) => right.timestamp - left.timestamp);
     return matches[0] ? cloneJson2(matches[0]) : null;
+  }
+  /** Backward-compatible assistant-specific alias. */
+  async findCheckpointByAssistantMessage(sessionId, messageId) {
+    return this.findCheckpointByMessage(sessionId, messageId);
   }
   /**
    * Record a successful Agent write. This is deliberately an integration API:
@@ -3741,8 +3749,8 @@ var TimeMachineWebServer = class {
       const messageId = query.get("messageId") || "";
       if (!messageId.trim()) throw Object.assign(new Error("Missing messageId query parameter"), { code: "BAD_REQUEST" });
       await this.requirePersistedSession(sessionId);
-      const checkpoint = await this.service.findCheckpointByAssistantMessage(sessionId, messageId);
-      if (!checkpoint) throw Object.assign(new Error("No checkpoint is associated with this assistant message."), { code: "CHECKPOINT_NOT_FOUND" });
+      const checkpoint = await this.service.findCheckpointByMessage(sessionId, messageId);
+      if (!checkpoint) throw Object.assign(new Error("No checkpoint is associated with this message."), { code: "CHECKPOINT_NOT_FOUND" });
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ sessionId, messageId, checkpoint }));
       return;
@@ -5067,6 +5075,7 @@ function apply(ctx, config = {}) {
             messages: getMessages(session),
             ...start.seq > 0 ? { boundarySeq: start.seq - 1 } : {}
           },
+          userMessageId: latestUserMessageId(getMessages(session)),
           status: "running"
         });
         checkpoints.set(checkpointKey(session.id, turn), checkpoint.id);
@@ -5150,6 +5159,13 @@ function assistantMessageIdsForTurn(messages, baseline) {
     ids.push(candidate.id);
   }
   return [...new Set(ids)];
+}
+function latestUserMessageId(messages) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role === "user" && typeof message.id === "string" && message.id.trim()) return message.id;
+  }
+  return void 0;
 }
 function allAssistantMessageIds(messages) {
   return assistantMessageIdsForTurn(messages, /* @__PURE__ */ new Set());

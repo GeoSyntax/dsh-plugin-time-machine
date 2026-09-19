@@ -10,6 +10,9 @@ assistant 的 `messageId`，并且按 session 注入；它不是一个可以从�
 
 - 已支持：`GET /api/capabilities`、`/api/checkpoint-for-message`、`/api/preview`、
   `/api/rewind`、`/api/external-effects/compensate`。
+- `/api/checkpoint-for-message` 同时接受 finalized assistant message 和开启
+  turn 的 user message；当前 DSH 公共 slot 仍只提供 assistant action，因此
+  user-message 入口留给宿主或第三方 UI 使用。
 - 已支持：CLI `/tm-preview`、`/tm-rewind`、`/tm-fork`。
 - 可选 companion 同时贡献 `conversation.session.header.actions` 和
   `conversation.chat.assistant-actions`：后者只在服务端能把 finalized assistant

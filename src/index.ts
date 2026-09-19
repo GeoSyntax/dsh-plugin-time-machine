@@ -349,12 +349,13 @@ export function apply(ctx: Context, config: Config = {}): void {
           turnIndex: turn,
           prompt: `DSH turn ${turn} (pre-execution boundary)`,
           summary: `Workspace before DSH turn ${turn}`,
-          sessionState: {
-            sessionId: session.id,
-            messages: getMessages(session),
-            ...(start.seq > 0 ? { boundarySeq: start.seq - 1 } : {}),
-          },
-          status: 'running',
+            sessionState: {
+              sessionId: session.id,
+              messages: getMessages(session),
+              ...(start.seq > 0 ? { boundarySeq: start.seq - 1 } : {}),
+            },
+            userMessageId: latestUserMessageId(getMessages(session)),
+            status: 'running',
         });
         checkpoints.set(checkpointKey(session.id, turn), checkpoint.id);
         checkpointAssistantBaselines.set(
@@ -465,6 +466,14 @@ function assistantMessageIdsForTurn(messages: readonly SessionMessage[], baselin
     ids.push(candidate.id);
   }
   return [...new Set(ids)];
+}
+
+function latestUserMessageId(messages: readonly SessionMessage[]): string | undefined {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index] as SessionMessage & { id?: unknown };
+    if (message.role === 'user' && typeof message.id === 'string' && message.id.trim()) return message.id;
+  }
+  return undefined;
 }
 
 function allAssistantMessageIds(messages: readonly SessionMessage[]): string[] {

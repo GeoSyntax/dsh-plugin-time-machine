@@ -1,7 +1,7 @@
 import { Context } from '@deepseek-ai/cordis';
 import Schema from '@deepseek-ai/schemastery';
-import { D as DAGTree, C as CheckpointNode, T as TimeMachineConfig, S as SessionState, A as AgentWriteRecord, F as FileChange, E as ExternalEffectRecord, a as ExternalEffectAdapter, b as ExternalEffectCompensationResult, R as RestoreOptions, c as RestoreResult, d as SelectiveRestoreResult, e as ReflectionSummary, f as DiffResult, g as RestorePreview, h as StorageStatus, i as SessionSummary, W as WorkspaceIsolation, P as PruneResult } from './client-D6yORDhs.cjs';
-export { j as CompanionTimelineEntry, k as ExternalCompensationRequest, l as ExternalEffectCompensationContext, m as ExternalEffectRequest, n as ForkRequest, o as PreviewBoundAction, p as PruneRequest, q as RestoreFilesRequest, r as RestoreWorkspaceRequest, s as RewindRequest, t as SessionMessage, u as TimeMachineClient, v as TimeMachineClientError, w as TimeMachineClientOptions, U as UndoRequest, x as buildCompanionTimeline } from './client-D6yORDhs.cjs';
+import { D as DAGTree, C as CheckpointNode, T as TimeMachineConfig, S as SessionState, A as AgentWriteRecord, F as FileChange, E as ExternalEffectRecord, a as ExternalEffectAdapter, b as ExternalEffectCompensationResult, R as RestoreOptions, c as RestoreResult, d as SelectiveRestoreResult, e as ReflectionSummary, f as DiffResult, g as RestorePreview, h as StorageStatus, i as SessionSummary, W as WorkspaceIsolation, P as PruneResult } from './client-P21icVUu.cjs';
+export { j as CompanionTimelineEntry, k as ExternalCompensationRequest, l as ExternalEffectCompensationContext, m as ExternalEffectRequest, n as ForkRequest, o as PreviewBoundAction, p as PruneRequest, q as RestoreFilesRequest, r as RestoreWorkspaceRequest, s as RewindRequest, t as SessionMessage, u as TimeMachineClient, v as TimeMachineClientError, w as TimeMachineClientOptions, U as UndoRequest, x as buildCompanionTimeline } from './client-P21icVUu.cjs';
 
 /** Current on-disk DAG schema. Bump only with an explicit migration path. */
 declare const DAG_FORMAT_VERSION: 1;
@@ -139,6 +139,7 @@ declare class TimeMachineService {
             error: string;
         }>;
         tags?: string[];
+        userMessageId?: string;
     }): Promise<CheckpointNode>;
     private createTurnCheckpointUnlocked;
     finalizeTurnCheckpoint(params: {
@@ -154,7 +155,9 @@ declare class TimeMachineService {
         assistantMessageId?: string;
         assistantMessageIds?: string[];
     }): Promise<CheckpointNode>;
-    /** Resolve a finalized assistant message to its turn checkpoint for message actions. */
+    /** Resolve any durable user/assistant message to its turn checkpoint for message actions. */
+    findCheckpointByMessage(sessionId: string, messageId: string): Promise<CheckpointNode | null>;
+    /** Backward-compatible assistant-specific alias. */
     findCheckpointByAssistantMessage(sessionId: string, messageId: string): Promise<CheckpointNode | null>;
     /**
      * Record a successful Agent write. This is deliberately an integration API:

@@ -81,7 +81,7 @@ describe('DSH Cordis plugin entry', () => {
         header: { cwd: workDir },
         events: [{ type: 'turn/start', seq: 1, data: { turn: 1 } }],
         snapshotEvents() { return this.events; },
-        deriveMessages() { return []; },
+        deriveMessages() { return [{ id: 'user-turn-1', role: 'user', content: 'make the change' }]; },
       } as any;
       const agent = { session };
       const file = path.join(workDir, 'native.txt');
@@ -112,6 +112,7 @@ describe('DSH Cordis plugin entry', () => {
         expect.objectContaining({ path: 'removed.txt', operation: 'delete', sha256: expect.any(String) }),
       ]));
       expect(node?.status).toBe('success');
+      expect(node?.userMessageId).toBe('user-turn-1');
     } finally {
       await (ctx?.fiber?.dispose?.() ?? Promise.resolve());
       process.chdir(previousCwd);

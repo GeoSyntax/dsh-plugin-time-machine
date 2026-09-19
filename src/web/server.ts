@@ -129,8 +129,8 @@ export class TimeMachineWebServer {
       const messageId = query.get('messageId') || '';
       if (!messageId.trim()) throw Object.assign(new Error('Missing messageId query parameter'), { code: 'BAD_REQUEST' });
       await this.requirePersistedSession(sessionId);
-      const checkpoint = await this.service.findCheckpointByAssistantMessage(sessionId, messageId);
-      if (!checkpoint) throw Object.assign(new Error('No checkpoint is associated with this assistant message.'), { code: 'CHECKPOINT_NOT_FOUND' });
+      const checkpoint = await this.service.findCheckpointByMessage(sessionId, messageId);
+      if (!checkpoint) throw Object.assign(new Error('No checkpoint is associated with this message.'), { code: 'CHECKPOINT_NOT_FOUND' });
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ sessionId, messageId, checkpoint }));
       return;

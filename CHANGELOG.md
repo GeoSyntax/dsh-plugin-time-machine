@@ -68,6 +68,10 @@ See [README.md](./README.md), [docs/COMPARISON.md](./docs/COMPARISON.md), and
 [docs/ROADMAP.md](./docs/ROADMAP.md) for configuration and upgrade guidance.
 ## Unreleased
 
+- Add an optional `client-companion/` source package for DSH Web clients. It
+  contributes a session-header action with timeline warnings, preview-first
+  confirmation, and navigation to the forked session while keeping React and
+  DSH UI dependencies out of the core service package.
 - Add `/tm-undo [count]`, a relative-turn CLI shortcut that resolves the active
   DAG lineage and reuses the same safe restore, rescue, and session-fork path as
   `/tm-rewind`.

@@ -1,0 +1,30 @@
+{
+  "name": "dsh-plugin-time-machine-client",
+  "version": "0.1.0",
+  "description": "Optional DeepSeek Harness Web client companion for Time Machine checkpoints",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": { ".": { "types": "./lib/types/index.d.ts", "default": "./lib/index.js" } },
+  "files": ["lib"],
+  "license": "MIT",
+  "peerDependencies": {
+    "@deepseek-ai/cordis": ">=4.0.0",
+    "@deepseek-ai/dsh-client-ui-session": ">=0.1.6-alpha.1",
+    "@deepseek-ai/dsh-client-ui-conversation": ">=0.1.6-alpha.1",
+    "@deepseek-ai/dsh-client-ui-slots": ">=0.1.6-alpha.1",
+    "@deepseek-ai/dsh-client-ui-renderer": ">=0.1.6-alpha.1",
+    "@deepseek-ai/dsh-client-ui-workspace": ">=0.1.6-alpha.1",
+    "@deepseek-ai/dsh-session": ">=0.1.6-alpha.1",
+    "react": ">=18.2.0",
+    "dsh-plugin-time-machine": ">=0.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.0",
+    "dsh-plugin-time-machine": "^0.2.0",
+    "tsdown": "^0.15.0",
+    "typescript": "^5.7.0"
+  },
+  "dsh": { "client": { "inject": ["@deepseek-ai/dsh-client-ui-session", "@deepseek-ai/dsh-client-ui-conversation", "@deepseek-ai/dsh-client-ui-slots", "@deepseek-ai/dsh-client-ui-workspace"], "platform": "web" } },
+  "scripts": { "build": "tsdown", "typecheck": "tsc --noEmit" }
+}

@@ -236,8 +236,10 @@ Git status 报告的变更路径。小仓库仍有 Git 进程启动开销，但�
 问题定义、设计取舍、同类能力对照、社区路线图和完整验收矩阵见 [docs/PROBLEM.md](docs/PROBLEM.md)、[docs/COMPARISON.md](docs/COMPARISON.md)、[docs/ROADMAP.md](docs/ROADMAP.md)、[DESIGN.md](DESIGN.md) 和 [docs/TEST_PLAN.md](docs/TEST_PLAN.md)。
 
 DSH 原生消息操作的扩展边界和 companion package 验收条件见
-[docs/DSH_NATIVE_UI.md](docs/DSH_NATIVE_UI.md)。当前版本不会把未实现的 React
-client slot 集成伪装成已支持能力。
+[docs/DSH_NATIVE_UI.md](docs/DSH_NATIVE_UI.md)。主服务包不会把 React client
+slot 集成伪装成默认能力；仓库同时提供可选的 `client-companion/` React/slot
+包源码。它需要与目标 DSH Web 版本匹配的 client peer dependencies，尚未随
+主服务包自动安装。
 
 如果要开发自己的原生 UI companion，可直接复用无依赖的
 `TimeMachineClient`（`import { TimeMachineClient } from 'dsh-plugin-time-machine/client'`）。

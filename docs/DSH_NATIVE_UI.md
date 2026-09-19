@@ -11,7 +11,8 @@ assistant 的 `messageId`，并且按 session 注入；它不是一个可以从�
 - 已支持：`GET /api/capabilities`、`/api/preview`、
   `/api/rewind`、`/api/external-effects/compensate`。
 - 已支持：CLI `/tm-preview`、`/tm-rewind`、`/tm-fork`。
-- 未承诺：在 DSH transcript 的 assistant action strip 中自动出现按钮。
+- 当前不注入 transcript assistant action strip；可选 companion 先贡献
+  `conversation.session.header.actions`，避免依赖 assistant message owner 的版本耦合。
 - 兼容回退：用户可以从 DSH 打开独立 Dashboard，或执行 CLI 命令。
 - 已提供：无 React/浏览器依赖的 `TimeMachineClient` companion contract（npm 子路径
   `dsh-plugin-time-machine/client`）；它封装
@@ -27,11 +28,15 @@ assistant 的 `messageId`，并且按 session 注入；它不是一个可以从�
   在多个真实 DSH session 之间发现和切换；Dashboard 也不再隐式创建 `default` DAG。
 - 已提供：`webAllowedOrigins` 精确 Origin allowlist 和 CORS 响应头；默认仍拒绝跨源请求，
   只有部署者明确列出可信的本地 DSH client origin 后，companion 才能跨端口调用 REST API。
+- 已加入：`client-companion/` 独立 React/slot 包源码，使用 `TimeMachineClient`
+  timeline、确认后的相对 undo 和 `uiWorkspace.openSession()` 导航；它只声明 DSH
+  client peer dependencies，不会被主服务包加载。当前已用本地 DSH alpha 类型完成
+  typecheck，npm 发布和跨版本 slot CI 仍是下一步门禁。
 
-## 推荐的 client companion 设计
+## Client companion 设计与当前实现
 
-原生 client companion 应作为单独的 DSH Web client package 发布，并通过
-`ctx.slots.inject('conversation.chat.assistant-actions', ...)` 注册，而不是把
+原生 client companion 作为单独的 DSH Web client package 发布，并通过
+`ctx.slots.inject('conversation.session.header.actions', ...)` 注册，而不是把
 React/DSH client 依赖塞进当前服务包。每个 action 必须：
 
 1. 读取当前 session 的 checkpoint 列表和能力发现结果。
@@ -43,9 +48,9 @@ React/DSH client 依赖塞进当前服务包。每个 action 必须：
 5. 成功后显示新的 DSH session id；失败时保留 HTTP 状态和 rescue checkpoint
    信息，不自行猜测恢复成功。
 
-## 为什么暂不内置
+## 为什么不内置到主服务包
 
-当前插件 manifest 只承诺 `web` profile 的服务能力，仓库没有 React、DSH
+当前插件 manifest 只承诺 `web` profile 的服务能力，主服务包没有 React、DSH
 client SlotRegistry 或 UI locale 的运行时依赖。直接把按钮代码放入服务包会让
 非 Web profile 在加载时失败，也会把“共享工作区加锁”误报成客户端级隔离。
 

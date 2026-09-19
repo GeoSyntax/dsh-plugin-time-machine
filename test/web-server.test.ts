@@ -254,6 +254,22 @@ describe('TimeMachineWebServer', () => {
     expect(called).toBe(false);
   });
 
+  it('lists external effects through a read-only Web API', async () => {
+    const sessionId = 'web-list-effects';
+    const checkpoint = await service.createTurnCheckpoint({
+      sessionId, turnIndex: 1, prompt: 'list remote effect', sessionState: { sessionId, messages: [] },
+    });
+    await service.recordExternalEffect(sessionId, checkpoint.id, {
+      adapter: 'cloud', operation: 'create-resource', reversible: true,
+      failureSemantics: 'manual verification', status: 'unresolved',
+    });
+    const response = await fetch(`http://localhost:${testPort}/api/external-effects?sessionId=${sessionId}&checkpoint=${checkpoint.id}&unresolved=true`);
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.unresolvedOnly).toBe(true);
+    expect(body.effects).toEqual([expect.objectContaining({ adapter: 'cloud', operation: 'create-resource', status: 'unresolved' })]);
+  });
+
   it('rejects malformed external effect declarations before touching the DAG', async () => {
     const sessionId = 'web-invalid-effect';
     const checkpoint = await service.createTurnCheckpoint({

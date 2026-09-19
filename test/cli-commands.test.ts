@@ -45,7 +45,7 @@ describe('registered DSH time-machine commands', () => {
   });
 
   it('registers tm-tree, tm-list, tm-doctor, tm-fork, tm-rewind, tm-undo, and tm-restore handlers', () => {
-    expect(Object.keys(handlers)).toEqual(expect.arrayContaining(['tm-tree', 'tm-list', 'tm-doctor', 'tm-fork', 'tm-rewind', 'tm-undo', 'tm-restore', 'tm-agent-writes', 'tm-unattributed', 'tm-quarantine-migrate', 'tm-external-record', 'tm-external-compensate']));
+    expect(Object.keys(handlers)).toEqual(expect.arrayContaining(['tm-tree', 'tm-list', 'tm-doctor', 'tm-fork', 'tm-rewind', 'tm-undo', 'tm-restore', 'tm-agent-writes', 'tm-unattributed', 'tm-quarantine-migrate', 'tm-external-record', 'tm-external-compensate', 'tm-external-list']));
   });
 
   it('diagnoses dual-track readiness and actionable warnings', async () => {
@@ -156,6 +156,19 @@ describe('registered DSH time-machine commands', () => {
     expect((await service.getDAGManager(sessionId)).getNode(checkpoint.id)?.externalEffects).toEqual([
       expect.objectContaining({ adapter: 'redis', operation: 'create-namespace', reversible: true, status: 'unresolved' }),
     ]);
+  });
+
+  it('lists unresolved external effects without executing compensation', async () => {
+    const sessionId = 'cli-external-list';
+    const checkpoint = await service.createTurnCheckpoint({ sessionId, turnIndex: 1, prompt: 'base', sessionState: { sessionId, messages: [] } });
+    await service.recordExternalEffect(sessionId, checkpoint.id, {
+      adapter: 'redis', operation: 'create-namespace', reversible: true,
+      failureSemantics: 'retryable', status: 'unresolved',
+    });
+    const result = await handlers['tm-external-list']({ agent: { session: { id: sessionId } }, rawInput: checkpoint.id });
+    expect(result.kind).toBe('success');
+    expect(result.text).toContain('unresolved');
+    expect(result.text).toContain('redis:create-namespace');
   });
 
   it('runs tm-tree and tm-fork through the real service and session controller contract', async () => {

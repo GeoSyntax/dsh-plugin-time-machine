@@ -206,6 +206,12 @@ export class TimeMachineClient {
     return this.post('/api/external-effects/compensate', request);
   }
 
+  async externalEffects(sessionId: string, checkpointId?: string, unresolvedOnly = false): Promise<unknown> {
+    const params = new URLSearchParams({ sessionId, unresolved: String(unresolvedOnly) });
+    if (checkpointId) params.set('checkpoint', checkpointId);
+    return this.get(`/api/external-effects?${params}`);
+  }
+
   async diff(sessionId: string, baseCheckpointId: string, targetCheckpointId: string): Promise<unknown> {
     return this.get(`/api/diff?sessionId=${encodeURIComponent(sessionId)}&base=${encodeURIComponent(baseCheckpointId)}&target=${encodeURIComponent(targetCheckpointId)}`);
   }

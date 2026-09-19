@@ -459,6 +459,17 @@ export class TimeMachineService {
     return [...this.externalEffectAdapters.keys()].sort();
   }
 
+  /** Read external effects on a checkpoint lineage without executing compensation. */
+  async listExternalEffects(sessionId: string, checkpointId?: string, unresolvedOnly = false): Promise<ExternalEffectRecord[]> {
+    const dag = await this.getDAGManager(sessionId);
+    const node = checkpointId === undefined ? dag.getCurrentNode() : dag.getNode(checkpointId);
+    if (!node) throw new Error(checkpointId === undefined
+      ? `Session '${sessionId}' has no current checkpoint.`
+      : `Checkpoint '${checkpointId}' does not exist in DAG.`);
+    const effects = dag.getLineage(node.id).flatMap(item => item.externalEffects ?? []);
+    return cloneJson(unresolvedOnly ? effects.filter(effect => effect.status !== 'compensated') : effects);
+  }
+
   /**
    * Perform one adapter compensation only when the caller explicitly opts in.
    * A deterministic idempotency key is used when none is supplied, and a

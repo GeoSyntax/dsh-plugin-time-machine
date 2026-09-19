@@ -188,6 +188,22 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
     });
 
     scope.commands.register({
+      name: 'tm-external-list',
+      description: 'List recorded external effects without executing compensation',
+      input: { hint: '[checkpoint] [--all]' },
+      handler: async ({ agent, rawInput }: CommandInvocationLike): Promise<CommandResult> => {
+        const args = rawInput.trim().split(/\s+/).filter(Boolean);
+        const checkpointId = args.find(arg => !arg.startsWith('--'));
+        const effects = await service.listExternalEffects(agent.session.id, checkpointId, !args.includes('--all'));
+        if (effects.length === 0) return { kind: 'success', text: 'No unresolved external effects recorded on this lineage.' };
+        return {
+          kind: 'success',
+          text: `${args.includes('--all') ? 'Recorded' : 'Unresolved'} external effects${checkpointId ? ` through ${checkpointId}` : ''}:\n${effects.map(effect => `${effect.status} ${effect.id} ${effect.adapter}:${effect.operation}${effect.compensation ? ` — ${effect.compensation}` : ''}`).join('\n')}`,
+        };
+      },
+    });
+
+    scope.commands.register({
       name: 'tm-external-record',
       description: 'Record an external side effect without executing compensation',
       input: { hint: '<checkpoint> <adapter> <operation> [--reversible] [--failure=<text>] [--compensation=<text>]' },

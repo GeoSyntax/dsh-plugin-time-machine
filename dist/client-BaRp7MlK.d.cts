@@ -380,6 +380,7 @@ declare class TimeMachineClient {
     restoreWorkspaceFromPreview(action: PreviewBoundAction, options?: Omit<RestoreWorkspaceRequest, 'sessionId' | 'checkpointId' | 'restorePlanId'>): Promise<unknown>;
     recordExternalEffect(request: ExternalEffectRequest): Promise<unknown>;
     compensateExternalEffect(request: ExternalCompensationRequest): Promise<unknown>;
+    externalEffects(sessionId: string, checkpointId?: string, unresolvedOnly?: boolean): Promise<unknown>;
     diff(sessionId: string, baseCheckpointId: string, targetCheckpointId: string): Promise<unknown>;
     agentWrites(sessionId: string, checkpointId: string): Promise<unknown>;
     unattributedChanges(sessionId: string, checkpointId: string): Promise<unknown>;

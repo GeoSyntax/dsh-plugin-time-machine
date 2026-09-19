@@ -23,6 +23,7 @@ describe('TimeMachineClient companion contract', () => {
     await client.restoreWorkspaceFromPreview(action, { force: true });
     await client.recordExternalEffect({ sessionId: 's', checkpointId: 'c', adapter: 'redis', operation: 'create', reversible: true, failureSemantics: 'retryable' });
     await client.compensateExternalEffect({ sessionId: 's', checkpointId: 'c', effectId: 'effect-1', execute: true, idempotencyKey: 'idem-1' });
+    await client.externalEffects('s', 'c', true);
     expect(JSON.parse(String(calls[1].init?.body))).toMatchObject({ sessionId: 's', checkpointId: 'c', restorePlanId: 'plan-1', merge: true });
     expect(calls[0].url).toContain('preserveHandEdits=true');
     expect(JSON.parse(String(calls[2].init?.body))).toMatchObject({ sessionId: 's', count: 1 });
@@ -31,6 +32,7 @@ describe('TimeMachineClient companion contract', () => {
     expect(JSON.parse(String(calls[5].init?.body))).toMatchObject({ sessionId: 's', checkpointId: 'c', restorePlanId: 'plan-1', force: true });
     expect(JSON.parse(String(calls[6].init?.body))).toMatchObject({ sessionId: 's', checkpointId: 'c', adapter: 'redis', operation: 'create', reversible: true });
     expect(JSON.parse(String(calls[7].init?.body))).toMatchObject({ sessionId: 's', checkpointId: 'c', effectId: 'effect-1', execute: true, idempotencyKey: 'idem-1' });
+    expect(calls[8].url).toContain('/api/external-effects?sessionId=s&unresolved=true&checkpoint=c');
   });
 
   it('discovers persisted sessions for a native companion selector', async () => {

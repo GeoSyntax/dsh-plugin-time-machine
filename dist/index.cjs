@@ -2376,6 +2376,14 @@ var TimeMachineService = class {
   listExternalEffectAdapters() {
     return [...this.externalEffectAdapters.keys()].sort();
   }
+  /** Read external effects on a checkpoint lineage without executing compensation. */
+  async listExternalEffects(sessionId, checkpointId, unresolvedOnly = false) {
+    const dag = await this.getDAGManager(sessionId);
+    const node = checkpointId === void 0 ? dag.getCurrentNode() : dag.getNode(checkpointId);
+    if (!node) throw new Error(checkpointId === void 0 ? `Session '${sessionId}' has no current checkpoint.` : `Checkpoint '${checkpointId}' does not exist in DAG.`);
+    const effects = dag.getLineage(node.id).flatMap((item) => item.externalEffects ?? []);
+    return cloneJson2(unresolvedOnly ? effects.filter((effect) => effect.status !== "compensated") : effects);
+  }
   /**
    * Perform one adapter compensation only when the caller explicitly opts in.
    * A deterministic idempotency key is used when none is supplied, and a
@@ -3303,6 +3311,19 @@ var TimeMachineWebServer = class {
       res.end(JSON.stringify({ sessionId, checkpointId, changes }));
       return;
     }
+    if (pathname === "/api/external-effects" && req.method === "GET") {
+      const sessionId = this.requireSessionId(query.get("sessionId"));
+      const checkpointId = query.get("checkpoint") || void 0;
+      const unresolved = query.get("unresolved");
+      if (unresolved !== null && unresolved !== "true" && unresolved !== "false") {
+        throw Object.assign(new Error("unresolved must be true or false"), { code: "BAD_REQUEST" });
+      }
+      await this.requirePersistedSession(sessionId);
+      const effects = await this.service.listExternalEffects(sessionId, checkpointId, unresolved === "true");
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ sessionId, checkpointId: checkpointId ?? null, unresolvedOnly: unresolved === "true", effects }));
+      return;
+    }
     if (pathname === "/api/diff" && req.method === "GET") {
       const sessionId = this.requireSessionId(query.get("sessionId"));
       const baseId = query.get("base") || "";
@@ -3847,6 +3868,22 @@ ${changes.map((item) => `${item.status} ${item.path}`).join("\n")}` };
       }
     });
     scope.commands.register({
+      name: "tm-external-list",
+      description: "List recorded external effects without executing compensation",
+      input: { hint: "[checkpoint] [--all]" },
+      handler: async ({ agent, rawInput }) => {
+        const args = rawInput.trim().split(/\s+/).filter(Boolean);
+        const checkpointId = args.find((arg) => !arg.startsWith("--"));
+        const effects = await service.listExternalEffects(agent.session.id, checkpointId, !args.includes("--all"));
+        if (effects.length === 0) return { kind: "success", text: "No unresolved external effects recorded on this lineage." };
+        return {
+          kind: "success",
+          text: `${args.includes("--all") ? "Recorded" : "Unresolved"} external effects${checkpointId ? ` through ${checkpointId}` : ""}:
+${effects.map((effect) => `${effect.status} ${effect.id} ${effect.adapter}:${effect.operation}${effect.compensation ? ` \u2014 ${effect.compensation}` : ""}`).join("\n")}`
+        };
+      }
+    });
+    scope.commands.register({
       name: "tm-external-record",
       description: "Record an external side effect without executing compensation",
       input: { hint: "<checkpoint> <adapter> <operation> [--reversible] [--failure=<text>] [--compensation=<text>]" },
@@ -4161,6 +4198,11 @@ var TimeMachineClient = class {
       throw new Error("compensateExternalEffect requires sessionId, checkpointId, and effectId.");
     }
     return this.post("/api/external-effects/compensate", request);
+  }
+  async externalEffects(sessionId, checkpointId, unresolvedOnly = false) {
+    const params = new URLSearchParams({ sessionId, unresolved: String(unresolvedOnly) });
+    if (checkpointId) params.set("checkpoint", checkpointId);
+    return this.get(`/api/external-effects?${params}`);
   }
   async diff(sessionId, baseCheckpointId, targetCheckpointId) {
     return this.get(`/api/diff?sessionId=${encodeURIComponent(sessionId)}&base=${encodeURIComponent(baseCheckpointId)}&target=${encodeURIComponent(targetCheckpointId)}`);

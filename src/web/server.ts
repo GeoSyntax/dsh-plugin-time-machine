@@ -173,6 +173,20 @@ export class TimeMachineWebServer {
       return;
     }
 
+    if (pathname === '/api/external-effects' && req.method === 'GET') {
+      const sessionId = this.requireSessionId(query.get('sessionId'));
+      const checkpointId = query.get('checkpoint') || undefined;
+      const unresolved = query.get('unresolved');
+      if (unresolved !== null && unresolved !== 'true' && unresolved !== 'false') {
+        throw Object.assign(new Error('unresolved must be true or false'), { code: 'BAD_REQUEST' });
+      }
+      await this.requirePersistedSession(sessionId);
+      const effects = await this.service.listExternalEffects(sessionId, checkpointId, unresolved === 'true');
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ sessionId, checkpointId: checkpointId ?? null, unresolvedOnly: unresolved === 'true', effects }));
+      return;
+    }
+
     if (pathname === '/api/diff' && req.method === 'GET') {
       const sessionId = this.requireSessionId(query.get('sessionId'));
       const baseId = query.get('base') || '';

@@ -9,7 +9,7 @@ supported only when it is covered by the current implementation and tests.
 | Full workspace snapshot | Git plumbing + non-Git fallback; explicitly refuses sparse/submodule/in-progress Git states | Yes | Yes; explicit unsupported-state policy | Partial / lightweight |
 | Remove ordinary orphan files | Yes | Yes | Yes | Depends on tracked set |
 | Ignored-file safety | Preserve by default; quarantine on explicit delete | Configurable | Conflict-aware | Usually left untouched |
-| Preview before restore | `tm-preview`, Web API, Web confirmation, conflict paths, single-use session-bound plan | Yes | Yes; expiring plan and stale-plan fences | Limited |
+| Preview before restore | `tm-preview`, Web API, Web confirmation, conflict paths, single-use session-bound plan; fallback also returns text diff | Yes | Yes; expiring plan and stale-plan fences | Limited |
 | Non-conflicting drift merge | Explicit `/tm-rewind --merge` for Git workspaces; path-level conflicts fail closed | Product-specific | Three-way / selective conflict handling | Varies |
 | Runtime capability discovery | Versioned `GET /api/capabilities` exposes Git/fallback, merge, incremental capture, explicit `handEditPolicy`, shadow-store and shadow-encryption status, quarantine encryption/migration, external-effect ledger, unsupported-state, shared-lock isolation, and active policy limits | Product-specific | Host/UI-dependent | Varies |
 | Quarantine at-rest encryption | Opt-in AES-256-GCM via environment-backed key; missing/wrong key fails closed | Product-specific | Varies | Varies |

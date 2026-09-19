@@ -35,6 +35,8 @@
 - Dashboard session discovery and switching through `GET /api/sessions`, with
   URL-bound selection and no implicit `default` DAG creation.
 - Pre-command deduplication fallback for DSH adapters that omit `callId`.
+- Fallback checkpoint-to-checkpoint unified diffs, including an explicit binary
+  marker, now power `getDiff`, Web preview, and the dashboard.
 
 ### Safety boundaries
 

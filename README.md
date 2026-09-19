@@ -76,7 +76,7 @@ dsh plugin --profile web list --depth 0
 - **保护 ignored 内容:** ignored 文件默认不删除；显式 `--delete-new-ignored` 时先进入 quarantine，再允许清理并支持从 rescue checkpoint 恢复。
 - **回顾失败原因:** failed turn、stderr 和失败工具会生成 fork 前的 reflection advisory，减少重复踩坑。
 - **运行在非 Git 目录:** fallback 后端使用 manifest 和内容哈希快照，支持普通文件、目录和 symlink。
-- **先看再回滚:** Git 工作区提供文本 diff；preview 还会列出导致 safe restore 拒绝覆盖的 `conflictingPaths`；非 Git fallback 至少列出将被目标快照覆盖的路径，并明确提示暂不提供文本 diff。
+- **先看再回滚:** Git 和非 Git fallback 都提供 checkpoint 间文本 diff（binary 文件显示 binary marker）；preview 还会列出导致 safe restore 拒绝覆盖的 `conflictingPaths`。
 - **显式三方合并恢复:** `/tm-rewind <checkpoint> --merge`（Web API 传 `merge: true`）以当前 checkpoint 为 base，保留与目标快照不冲突的本地修改；同一路径双方都改动时返回 `RESTORE_MERGE_CONFLICT`，默认 safe 模式行为不变。该模式要求 Git 工作区。
 - **选择性恢复:** `/tm-restore-files` 只写入指定文件/目录，并创建 rescue 和结果 checkpoint；它不会伪造会话回滚。
 - **存储治理:** `/tm-storage` 查看插件目录占用；`/tm-prune` 默认只删除不属于 current/branch head 且没有子节点的旧叶子节点，并清理已无 DAG 引用的 ignored quarantine；明确传入 `--abandoned-branches` 才会删除非当前探索分支；明确传入 `--compact-history` 才会压缩旧线性节点并重新挂接子节点。Git object 是共享的，删除私有 ref 不会自动执行危险的全仓库 GC。
@@ -156,7 +156,7 @@ dsh plugin --profile web list --depth 0
 ```
 
 Web dashboard 只绑定 loopback，并拒绝非本机 Host 和跨 origin 请求。`/tm-rewind` 与 `/tm-fork` 需要宿主提供 `sessionController`，否则插件会拒绝只恢复文件的危险降级行为。
-集成方可读取带有 `version: 1` 的 `GET /api/capabilities`，提前判断当前工作区是否支持 Git 三方 merge、selective restore、shadow store、shadow 加密、quarantine 加密/迁移、外部副作用账本、增量捕获、Agent-write ledger、pre-command snapshots 和已注册的 compensation adapters，以及 sparse checkout/submodule/进行中操作限制；`handEditPolicy: reject-drift` 表示默认不会猜测文件作者，`ledger-opt-in` 表示已开启显式 Agent-write 账本但仍需传入 `--preserve-hand-edits`；返回的 `policies` 还公开 restore 模式、快照/存储/quarantine 配额、自动保留年龄、锁等待上限和前置高风险工具集合，便于 UI 在操作前解释边界；`workspaceIsolation: shared-lock` 明确表示当前是共享工作区加锁，不是独立 worktree/container。
+集成方可读取带有 `version: 1` 的 `GET /api/capabilities`，提前判断当前工作区是否支持 Git 三方 merge、fallback 文本 diff、selective restore、shadow store、shadow 加密、quarantine 加密/迁移、外部副作用账本、增量捕获、Agent-write ledger、pre-command snapshots 和已注册的 compensation adapters，以及 sparse checkout/submodule/进行中操作限制；`handEditPolicy: reject-drift` 表示默认不会猜测文件作者，`ledger-opt-in` 表示已开启显式 Agent-write 账本但仍需传入 `--preserve-hand-edits`；返回的 `policies` 还公开 restore 模式、快照/存储/quarantine 配额、自动保留年龄、锁等待上限和前置高风险工具集合，便于 UI 在操作前解释边界；`workspaceIsolation: shared-lock` 明确表示当前是共享工作区加锁，不是独立 worktree/container。
 
 ## Verification
 

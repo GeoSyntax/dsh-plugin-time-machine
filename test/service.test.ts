@@ -779,6 +779,15 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
       expect(selective.restoredPaths).toEqual(['state.txt']);
       expect(await fs.readFile(file, 'utf8')).toBe('v1\n');
       expect(await fs.readFile(untouched, 'utf8')).toBe('keep\n');
+
+      await fs.writeFile(file, 'v2\n', 'utf8');
+      const changed = await fallback.createTurnCheckpoint({
+        sessionId: 'fallback-session', turnIndex: 2, prompt: 'diff', sessionState: { sessionId: 'fallback-session', messages: [] },
+      });
+      const diffs = await fallback.getDiff('fallback-session', checkpoint.id, changed.id);
+      expect(diffs).toEqual(expect.arrayContaining([
+        expect.objectContaining({ file: 'state.txt', status: 'modified', diffText: expect.stringContaining('-v1') }),
+      ]));
     } finally {
       await fs.rm(fallbackRoot, { recursive: true, force: true });
     }

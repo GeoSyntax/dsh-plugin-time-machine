@@ -1254,6 +1254,25 @@ var FallbackSnapshotEngine = class {
     }
     return changes;
   }
+  /** Produce reviewable text diffs between two persisted fallback snapshots. */
+  async getDiffBetween(sessionId, baseCheckpointId, targetCheckpointId) {
+    const base = await this.readSnapshot(sessionId, baseCheckpointId);
+    const target = await this.readSnapshot(sessionId, targetCheckpointId);
+    const baseByPath = new Map(base.manifest.entries.filter((entry) => entry.type !== "directory").map((entry) => [entry.path, entry]));
+    const targetByPath = new Map(target.manifest.entries.filter((entry) => entry.type !== "directory").map((entry) => [entry.path, entry]));
+    const paths = [.../* @__PURE__ */ new Set([...baseByPath.keys(), ...targetByPath.keys()])].sort();
+    const results = [];
+    for (const file of paths) {
+      const before = baseByPath.get(file);
+      const after = targetByPath.get(file);
+      const beforeContent = before ? await this.entryContent(before, base.filesDir) : void 0;
+      const afterContent = after ? await this.entryContent(after, target.filesDir) : void 0;
+      if (before && after && beforeContent !== void 0 && afterContent !== void 0 && beforeContent.equals(afterContent)) continue;
+      const status = !before ? "added" : !after ? "deleted" : "modified";
+      results.push({ file, status, diffText: renderFallbackDiff(file, beforeContent, afterContent) });
+    }
+    return results;
+  }
   async restoreSnapshot(sessionId, checkpointId) {
     const snapshotDir = this.getCheckpointDir(sessionId, checkpointId);
     const raw = await import_promises2.default.readFile(import_node_path2.default.join(snapshotDir, "manifest.json"), "utf8").catch((error) => {
@@ -1354,6 +1373,17 @@ var FallbackSnapshotEngine = class {
     const actual = await import_promises2.default.readFile(import_node_path2.default.join(this.workDir, ...live.path.split("/"))).catch(() => void 0);
     return Boolean(expected && actual && expected.equals(actual));
   }
+  async readSnapshot(sessionId, checkpointId) {
+    const snapshotDir = this.getCheckpointDir(sessionId, checkpointId);
+    const manifest = parseManifest(await import_promises2.default.readFile(import_node_path2.default.join(snapshotDir, "manifest.json"), "utf8"));
+    return { manifest, filesDir: import_node_path2.default.join(snapshotDir, "files") };
+  }
+  async entryContent(entry, filesDir) {
+    if (entry.type === "file") return import_promises2.default.readFile(import_node_path2.default.join(filesDir, ...entry.path.split("/")));
+    if (entry.type === "symlink") return Buffer.from(`symlink -> ${entry.linkTarget ?? ""}
+`, "utf8");
+    return Buffer.alloc(0);
+  }
   async assertSnapshotSize(entries) {
     if (this.maxSnapshotFileBytes <= 0 && this.maxSnapshotBytes <= 0) return;
     let totalBytes = 0;
@@ -1442,6 +1472,47 @@ function deepestFirst(left, right) {
 }
 function shallowestFirst(left, right) {
   return left.path.split("/").length - right.path.split("/").length || left.path.localeCompare(right.path);
+}
+function renderFallbackDiff(file, before, after) {
+  if (before?.includes(0) || after?.includes(0)) return `Binary files a/${file} and b/${file} differ`;
+  const oldLines = splitDiffLines(before);
+  const newLines = splitDiffLines(after);
+  const maxLines = 2e3;
+  if (oldLines.length > maxLines || newLines.length > maxLines) {
+    return [`--- a/${file}`, `+++ b/${file}`, "@@", ...oldLines.map((line) => `-${line}`), ...newLines.map((line) => `+${line}`)].join("\n");
+  }
+  const commonPrefix = sharedPrefix(oldLines, newLines);
+  const commonSuffix = sharedSuffix(oldLines, newLines, commonPrefix);
+  const removed = oldLines.slice(commonPrefix, oldLines.length - commonSuffix);
+  const added = newLines.slice(commonPrefix, newLines.length - commonSuffix);
+  const contextBefore = oldLines.slice(Math.max(0, commonPrefix - 3), commonPrefix);
+  const contextAfter = oldLines.slice(oldLines.length - commonSuffix, Math.min(oldLines.length, oldLines.length - commonSuffix + 3));
+  return [
+    `--- a/${file}`,
+    `+++ b/${file}`,
+    `@@ -${Math.max(1, commonPrefix - contextBefore.length + 1)},${contextBefore.length + removed.length} +${Math.max(1, commonPrefix - contextBefore.length + 1)},${contextBefore.length + added.length} @@`,
+    ...contextBefore.map((line) => ` ${line}`),
+    ...removed.map((line) => `-${line}`),
+    ...added.map((line) => `+${line}`),
+    ...contextAfter.map((line) => ` ${line}`)
+  ].join("\n");
+}
+function splitDiffLines(content) {
+  if (!content) return [];
+  const text = content.toString("utf8");
+  const lines = text.split("\n");
+  if (lines.at(-1) === "") lines.pop();
+  return lines;
+}
+function sharedPrefix(left, right) {
+  let index = 0;
+  while (index < left.length && index < right.length && left[index] === right[index]) index += 1;
+  return index;
+}
+function sharedSuffix(left, right, prefix) {
+  let count = 0;
+  while (left.length - count > prefix && right.length - count > prefix && left[left.length - count - 1] === right[right.length - count - 1]) count += 1;
+  return count;
 }
 async function directorySize(root) {
   let total = 0;
@@ -2481,7 +2552,7 @@ var TimeMachineService = class {
     if (isGit) {
       return await this.gitEngine.getDiffBetween(baseNode.gitCommitOid, targetNode.gitCommitOid);
     }
-    return [];
+    return await this.fallbackEngine.getDiffBetween(sessionId, baseId, targetId);
   }
   /**
    * Produce a read-only impact report before a rewind/fork. This deliberately
@@ -2498,17 +2569,17 @@ var TimeMachineService = class {
       const currentState = isGit ? await this.gitEngine.inspectWorkspace({ omitPaths: current?.omittedPaths ?? [] }) : { treeOid: await this.fallbackEngine.inspectWorkspace(), ignoredPaths: [] };
       const controlPlane = isGit ? await this.gitEngine.inspectControlPlane() : { headOid: null, branch: "", operation: null };
       const targetIgnoredPaths = target.ignoredPaths ?? [];
-      const diffs = isGit ? await this.gitEngine.getDiffBetween(currentState.treeOid, target.gitCommitOid) : target.changedFiles.map((change) => ({
+      const diffs = isGit ? await this.gitEngine.getDiffBetween(currentState.treeOid, target.gitCommitOid) : current ? await this.fallbackEngine.getDiffBetween(sessionId, current.id, target.id) : target.changedFiles.map((change) => ({
         file: change.path,
         status: change.status,
-        diffText: "Fallback snapshot: content diff is unavailable; file is included in the target snapshot."
+        diffText: "Fallback snapshot: no previous checkpoint is available for a text diff."
       }));
       const expectedTree = current?.settledGitTreeOid ?? current?.gitTreeOid;
       const expectedIgnored = current?.settledIgnoredPaths ?? current?.ignoredPaths ?? [];
       const driftDiffs = isGit && current && expectedTree && currentState.treeOid !== expectedTree ? await this.gitEngine.getDiffBetween(expectedTree, currentState.treeOid) : [];
       const conflictingPaths = [.../* @__PURE__ */ new Set([
         ...driftDiffs.map((diff) => diff.file),
-        ...!isGit && current && expectedTree && currentState.treeOid !== expectedTree ? ["(fallback workspace; content diff unavailable)"] : [],
+        ...!isGit && current && expectedTree && currentState.treeOid !== expectedTree && diffs.length === 0 ? ["(fallback workspace; no file diff available)"] : [],
         ...symmetricDifference2(expectedIgnored, currentState.ignoredPaths).map((item) => `(ignored) ${item}`)
       ])].sort();
       const workspaceDrifted = Boolean(current && (currentState.treeOid !== expectedTree || !sameStrings(currentState.ignoredPaths, expectedIgnored)));
@@ -2640,6 +2711,7 @@ var TimeMachineService = class {
       git,
       fallback: !git,
       mergeRestore: usable,
+      fallbackTextDiff: !git,
       selectiveRestore: usable || !git,
       shadowStore: git && this.config.shadowStore,
       shadowStoreEncryption: false,

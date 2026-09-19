@@ -54,4 +54,29 @@ describe('FallbackSnapshotEngine', () => {
       { path: 'modified.txt', status: 'modified' },
     ]);
   });
+
+  it('renders text and binary diffs between fallback checkpoints', async () => {
+    await fs.writeFile(path.join(root, 'app.txt'), 'one\ntwo\n', 'utf8');
+    await fs.writeFile(path.join(root, 'removed.txt'), 'gone\n', 'utf8');
+    await engine.createSnapshot({ sessionId: 'diffs', checkpointId: 'base' });
+    await fs.writeFile(path.join(root, 'app.txt'), 'one\nthree\n', 'utf8');
+    await fs.rm(path.join(root, 'removed.txt'));
+    await fs.writeFile(path.join(root, 'added.txt'), 'new\n', 'utf8');
+    const target = await engine.createSnapshot({ sessionId: 'diffs', checkpointId: 'target' });
+    expect(target.commitOid).toMatch(/^fallback_/);
+    const result = await engine.getDiffBetween('diffs', 'base', 'target');
+    expect(result).toEqual(expect.arrayContaining([
+      expect.objectContaining({ file: 'added.txt', status: 'added', diffText: expect.stringContaining('+new') }),
+      expect.objectContaining({ file: 'app.txt', status: 'modified', diffText: expect.stringContaining('-two') }),
+      expect.objectContaining({ file: 'removed.txt', status: 'deleted', diffText: expect.stringContaining('-gone') }),
+    ]));
+
+    await fs.writeFile(path.join(root, 'blob.bin'), Buffer.from([0, 1, 2]), 'binary');
+    await engine.createSnapshot({ sessionId: 'diffs', checkpointId: 'binary-base' });
+    await fs.writeFile(path.join(root, 'blob.bin'), Buffer.from([0, 1, 3]), 'binary');
+    await engine.createSnapshot({ sessionId: 'diffs', checkpointId: 'binary-target' });
+    await expect(engine.getDiffBetween('diffs', 'binary-base', 'binary-target')).resolves.toEqual([
+      expect.objectContaining({ file: 'blob.bin', status: 'modified', diffText: 'Binary files a/blob.bin and b/blob.bin differ' }),
+    ]);
+  });
 });

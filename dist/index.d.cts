@@ -485,6 +485,7 @@ declare class TimeMachineService {
         git: boolean;
         fallback: boolean;
         mergeRestore: boolean;
+        fallbackTextDiff: boolean;
         selectiveRestore: boolean;
         shadowStore: boolean;
         shadowStoreEncryption: false;
@@ -785,6 +786,8 @@ declare class FallbackSnapshotEngine {
     inspectWorkspace(): Promise<string>;
     /** Compare a persisted fallback manifest with the current workspace. */
     getChangedFiles(sessionId: string, checkpointId: string): Promise<FileChange[]>;
+    /** Produce reviewable text diffs between two persisted fallback snapshots. */
+    getDiffBetween(sessionId: string, baseCheckpointId: string, targetCheckpointId: string): Promise<DiffResult[]>;
     restoreSnapshot(sessionId: string, checkpointId: string): Promise<void>;
     restoreSelectedPaths(sessionId: string, checkpointId: string, paths: string[], options?: {
         expectedCurrentTreeOid?: string;
@@ -793,6 +796,8 @@ declare class FallbackSnapshotEngine {
     removeSnapshot(sessionId: string, checkpointId: string): Promise<number>;
     private captureTree;
     private entriesEqual;
+    private readSnapshot;
+    private entryContent;
     private assertSnapshotSize;
     private scanTree;
     private isPreserved;

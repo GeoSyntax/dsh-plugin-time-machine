@@ -71,6 +71,10 @@ The host slot and the companion-package boundary are documented in
 [DSH_NATIVE_UI.md](./DSH_NATIVE_UI.md); the service package intentionally does not
 claim this client surface until the separate Web package exists.
 
+Fallback checkpoint diffs are implemented independently of this UI item: service
+and preview APIs return unified text diffs for ordinary files and an explicit
+binary marker for binary content. Native slot rendering remains separate.
+
 ### Pre-command safety boundary — implemented (opt-in)
 
 `autoPreCommandSnapshot` now hooks each Agent's `tools/pre-execute` waterfall

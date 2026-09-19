@@ -670,7 +670,7 @@ export class TimeMachineService {
     if (isGit) {
       return await this.gitEngine.getDiffBetween(baseNode.gitCommitOid, targetNode.gitCommitOid);
     }
-    return [];
+    return await this.fallbackEngine.getDiffBetween(sessionId, baseId, targetId);
   }
 
   /**
@@ -694,11 +694,13 @@ export class TimeMachineService {
       const targetIgnoredPaths = target.ignoredPaths ?? [];
       const diffs = isGit
         ? await this.gitEngine.getDiffBetween(currentState.treeOid, target.gitCommitOid)
-        : target.changedFiles.map(change => ({
-          file: change.path,
-          status: change.status,
-          diffText: 'Fallback snapshot: content diff is unavailable; file is included in the target snapshot.',
-        }));
+        : current
+          ? await this.fallbackEngine.getDiffBetween(sessionId, current.id, target.id)
+          : target.changedFiles.map(change => ({
+            file: change.path,
+            status: change.status,
+            diffText: 'Fallback snapshot: no previous checkpoint is available for a text diff.',
+          }));
       const expectedTree = current?.settledGitTreeOid ?? current?.gitTreeOid;
       const expectedIgnored = current?.settledIgnoredPaths ?? current?.ignoredPaths ?? [];
       const driftDiffs = isGit && current && expectedTree && currentState.treeOid !== expectedTree
@@ -706,7 +708,7 @@ export class TimeMachineService {
         : [];
       const conflictingPaths = [...new Set([
         ...driftDiffs.map(diff => diff.file),
-        ...(!isGit && current && expectedTree && currentState.treeOid !== expectedTree ? ['(fallback workspace; content diff unavailable)'] : []),
+        ...(!isGit && current && expectedTree && currentState.treeOid !== expectedTree && diffs.length === 0 ? ['(fallback workspace; no file diff available)'] : []),
         ...symmetricDifference(expectedIgnored, currentState.ignoredPaths).map(item => `(ignored) ${item}`),
       ])].sort();
       const workspaceDrifted = Boolean(current && (
@@ -852,6 +854,7 @@ export class TimeMachineService {
     git: boolean;
     fallback: boolean;
     mergeRestore: boolean;
+    fallbackTextDiff: boolean;
     selectiveRestore: boolean;
     shadowStore: boolean;
     shadowStoreEncryption: false;
@@ -897,6 +900,7 @@ export class TimeMachineService {
       git,
       fallback: !git,
       mergeRestore: usable,
+      fallbackTextDiff: !git,
       selectiveRestore: usable || !git,
       shadowStore: git && this.config.shadowStore,
       shadowStoreEncryption: false,

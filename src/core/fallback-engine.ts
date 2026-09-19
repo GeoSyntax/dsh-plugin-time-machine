@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import type { FileChange } from '../types.js';
+import type { DiffResult, FileChange } from '../types.js';
 import { SnapshotSizeError } from './git-plumbing.js';
 
 export interface FallbackOptions {
@@ -108,6 +108,26 @@ export class FallbackSnapshotEngine {
       }
     }
     return changes;
+  }
+
+  /** Produce reviewable text diffs between two persisted fallback snapshots. */
+  async getDiffBetween(sessionId: string, baseCheckpointId: string, targetCheckpointId: string): Promise<DiffResult[]> {
+    const base = await this.readSnapshot(sessionId, baseCheckpointId);
+    const target = await this.readSnapshot(sessionId, targetCheckpointId);
+    const baseByPath = new Map(base.manifest.entries.filter(entry => entry.type !== 'directory').map(entry => [entry.path, entry]));
+    const targetByPath = new Map(target.manifest.entries.filter(entry => entry.type !== 'directory').map(entry => [entry.path, entry]));
+    const paths = [...new Set([...baseByPath.keys(), ...targetByPath.keys()])].sort();
+    const results: DiffResult[] = [];
+    for (const file of paths) {
+      const before = baseByPath.get(file);
+      const after = targetByPath.get(file);
+      const beforeContent = before ? await this.entryContent(before, base.filesDir) : undefined;
+      const afterContent = after ? await this.entryContent(after, target.filesDir) : undefined;
+      if (before && after && beforeContent !== undefined && afterContent !== undefined && beforeContent.equals(afterContent)) continue;
+      const status: FileChange['status'] = !before ? 'added' : !after ? 'deleted' : 'modified';
+      results.push({ file, status, diffText: renderFallbackDiff(file, beforeContent, afterContent) });
+    }
+    return results;
   }
 
   async restoreSnapshot(sessionId: string, checkpointId: string): Promise<void> {
@@ -223,6 +243,18 @@ export class FallbackSnapshotEngine {
     return Boolean(expected && actual && expected.equals(actual));
   }
 
+  private async readSnapshot(sessionId: string, checkpointId: string): Promise<{ manifest: SnapshotManifest; filesDir: string }> {
+    const snapshotDir = this.getCheckpointDir(sessionId, checkpointId);
+    const manifest = parseManifest(await fs.readFile(path.join(snapshotDir, 'manifest.json'), 'utf8'));
+    return { manifest, filesDir: path.join(snapshotDir, 'files') };
+  }
+
+  private async entryContent(entry: SnapshotEntry, filesDir: string): Promise<Buffer> {
+    if (entry.type === 'file') return fs.readFile(path.join(filesDir, ...entry.path.split('/')));
+    if (entry.type === 'symlink') return Buffer.from(`symlink -> ${entry.linkTarget ?? ''}\n`, 'utf8');
+    return Buffer.alloc(0);
+  }
+
   private async assertSnapshotSize(entries: SnapshotEntry[]): Promise<void> {
     if (this.maxSnapshotFileBytes <= 0 && this.maxSnapshotBytes <= 0) return;
     let totalBytes = 0;
@@ -320,6 +352,51 @@ function deepestFirst(left: SnapshotEntry, right: SnapshotEntry): number {
 
 function shallowestFirst(left: SnapshotEntry, right: SnapshotEntry): number {
   return left.path.split('/').length - right.path.split('/').length || left.path.localeCompare(right.path);
+}
+
+function renderFallbackDiff(file: string, before: Buffer | undefined, after: Buffer | undefined): string {
+  if (before?.includes(0) || after?.includes(0)) return `Binary files a/${file} and b/${file} differ`;
+  const oldLines = splitDiffLines(before);
+  const newLines = splitDiffLines(after);
+  const maxLines = 2000;
+  if (oldLines.length > maxLines || newLines.length > maxLines) {
+    return [`--- a/${file}`, `+++ b/${file}`, '@@', ...oldLines.map(line => `-${line}`), ...newLines.map(line => `+${line}`)].join('\n');
+  }
+  const commonPrefix = sharedPrefix(oldLines, newLines);
+  const commonSuffix = sharedSuffix(oldLines, newLines, commonPrefix);
+  const removed = oldLines.slice(commonPrefix, oldLines.length - commonSuffix);
+  const added = newLines.slice(commonPrefix, newLines.length - commonSuffix);
+  const contextBefore = oldLines.slice(Math.max(0, commonPrefix - 3), commonPrefix);
+  const contextAfter = oldLines.slice(oldLines.length - commonSuffix, Math.min(oldLines.length, oldLines.length - commonSuffix + 3));
+  return [
+    `--- a/${file}`,
+    `+++ b/${file}`,
+    `@@ -${Math.max(1, commonPrefix - contextBefore.length + 1)},${contextBefore.length + removed.length} +${Math.max(1, commonPrefix - contextBefore.length + 1)},${contextBefore.length + added.length} @@`,
+    ...contextBefore.map(line => ` ${line}`),
+    ...removed.map(line => `-${line}`),
+    ...added.map(line => `+${line}`),
+    ...contextAfter.map(line => ` ${line}`),
+  ].join('\n');
+}
+
+function splitDiffLines(content: Buffer | undefined): string[] {
+  if (!content) return [];
+  const text = content.toString('utf8');
+  const lines = text.split('\n');
+  if (lines.at(-1) === '') lines.pop();
+  return lines;
+}
+
+function sharedPrefix(left: string[], right: string[]): number {
+  let index = 0;
+  while (index < left.length && index < right.length && left[index] === right[index]) index += 1;
+  return index;
+}
+
+function sharedSuffix(left: string[], right: string[], prefix: number): number {
+  let count = 0;
+  while (left.length - count > prefix && right.length - count > prefix && left[left.length - count - 1] === right[right.length - count - 1]) count += 1;
+  return count;
 }
 
 async function directorySize(root: string): Promise<number> {

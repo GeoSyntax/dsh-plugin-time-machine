@@ -437,4 +437,16 @@ describe('GitPlumbingEngine', () => {
     expect((JSON.parse(await fs.readFile(path.join(archiveDir, 'manifest.v1.json'), 'utf8')) as { entries: unknown[] }).entries.length).toBeGreaterThan(0);
     expect(before).not.toBe('');
   });
+
+  it('fails closed when an encrypted shadow payload is truncated', async () => {
+    const shadowObjectDir = path.join(tmpDir, '.dsh-tm', 'git-shadow', 'objects');
+    const archiveDir = path.join(tmpDir, '.dsh-tm', 'git-shadow-encrypted');
+    const encrypted = new GitPlumbingEngine({ workDir: tmpDir, shadowObjectDir, shadowEncryptionKey: 'corrupt-secret' });
+    await fs.writeFile(path.join(tmpDir, 'corrupt.txt'), 'corrupt\n', 'utf8');
+    const snapshot = await encrypted.createSnapshot({ sessionId: 'corrupt-shadow', checkpointId: 'one' });
+    const payload = (await fs.readdir(path.join(archiveDir, 'payload')))[0];
+    await fs.writeFile(path.join(archiveDir, 'payload', payload), Buffer.from('short'));
+    await expect(new GitPlumbingEngine({ workDir: tmpDir, shadowObjectDir, shadowEncryptionKey: 'corrupt-secret' }).runGit(['cat-file', '-t', snapshot.commitOid]))
+      .rejects.toMatchObject({ code: 'SHADOW_ARCHIVE_CORRUPT' });
+  });
 });

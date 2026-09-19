@@ -305,6 +305,7 @@ __export(git_plumbing_exports, {
   SnapshotSizeError: () => SnapshotSizeError,
   UnsupportedWorkspaceStateError: () => UnsupportedWorkspaceStateError,
   WorkspaceDriftError: () => WorkspaceDriftError,
+  WorkspaceHardLinkError: () => WorkspaceHardLinkError,
   WorkspaceMergeConflictError: () => WorkspaceMergeConflictError,
   WorkspaceRestoreConflictError: () => WorkspaceRestoreConflictError
 });
@@ -342,7 +343,7 @@ function symmetricDifference(left, right) {
 function longestFirst(left, right) {
   return right.split("/").length - left.split("/").length || right.localeCompare(left);
 }
-var execFileAsync, WorkspaceDriftError, UnsupportedWorkspaceStateError, WorkspaceRestoreConflictError, WorkspaceMergeConflictError, QuarantineQuotaError, QuarantineKeyError, SnapshotSizeError, GitPlumbingEngine;
+var execFileAsync, WorkspaceDriftError, UnsupportedWorkspaceStateError, WorkspaceRestoreConflictError, WorkspaceHardLinkError, WorkspaceMergeConflictError, QuarantineQuotaError, QuarantineKeyError, SnapshotSizeError, GitPlumbingEngine;
 var init_git_plumbing = __esm({
   "src/core/git-plumbing.ts"() {
     "use strict";
@@ -380,6 +381,15 @@ var init_git_plumbing = __esm({
       }
       paths;
       code = "RESTORE_CONFLICT";
+    };
+    WorkspaceHardLinkError = class extends Error {
+      constructor(paths) {
+        super(`Workspace contains hard-linked restore targets: ${paths.slice(0, 8).join(", ")}. Replace the links or restore selectively elsewhere, then retry.`);
+        this.paths = paths;
+        this.name = "WorkspaceHardLinkError";
+      }
+      paths;
+      code = "UNSUPPORTED_WORKSPACE_STATE";
     };
     WorkspaceMergeConflictError = class extends Error {
       constructor(paths) {
@@ -631,6 +641,7 @@ Reason: ${errorMsg}`);
         const targetIgnored = new Set(options.targetIgnoredPaths ?? []);
         const ignoredToDelete = current.ignoredPaths.filter((item) => !targetIgnored.has(item));
         const targetFiles = new Set(await this.listTreeFileNames(restoreTree));
+        await this.assertNoHardLinkTargets([...targetFiles]);
         const targetEntries = this.shadowObjectDir ? await this.listTreeEntries(restoreTree) : [];
         const collisions = current.ignoredPaths.filter((item) => targetFiles.has(item));
         if (collisions.length && !options.deleteNewIgnoredPaths) {
@@ -743,6 +754,7 @@ Reason: ${errorMsg}`);
         const currentFiles = await this.listTreeFileNames(current.treeOid);
         const selectedTargetFiles = targetFiles.filter((file) => normalized.some((path12) => file === path12 || file.startsWith(`${path12}/`)));
         const selectedCurrentFiles = currentFiles.filter((file) => normalized.some((path12) => file === path12 || file.startsWith(`${path12}/`)));
+        await this.assertNoHardLinkTargets(selectedCurrentFiles);
         if (selectedTargetFiles.length === 0 && selectedCurrentFiles.length === 0) {
           throw new Error(`None of the selected paths exist in the current or target snapshot: ${normalized.join(", ")}`);
         }
@@ -770,6 +782,14 @@ Reason: ${errorMsg}`);
           await fs2.rm(indexFile, { force: true }).catch(() => void 0);
           await fs2.rm(path3.dirname(exportDir), { recursive: true, force: true }).catch(() => void 0);
         }
+      }
+      async assertNoHardLinkTargets(paths) {
+        const hardLinks = [];
+        for (const relative of paths) {
+          const stat = await fs2.lstat(await this.safeWorkspacePath(relative)).catch(() => void 0);
+          if (stat?.isFile() && stat.nlink > 1) hardLinks.push(relative);
+        }
+        if (hardLinks.length) throw new WorkspaceHardLinkError(hardLinks.sort());
       }
       /** Restore quarantined ignored content without ever writing it into Git objects. */
       async restoreIgnoredBackup(key) {
@@ -5366,6 +5386,7 @@ export {
   TimeMachineService,
   UnsupportedWorkspaceStateError,
   WorkspaceDriftError,
+  WorkspaceHardLinkError,
   WorkspaceMergeConflictError,
   WorkspaceRestoreConflictError,
   apply,

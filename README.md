@@ -86,6 +86,7 @@ dsh plugin --profile web list --depth 0
 - **保护 ignored 内容:** ignored 文件默认不删除；显式 `--delete-new-ignored` 时先进入 quarantine，再允许清理并支持从 rescue checkpoint 恢复。
 - **回顾失败原因:** failed turn、stderr 和失败工具会生成 fork 前的 reflection advisory，减少重复踩坑。
 - **运行在非 Git 目录:** fallback 后端使用 manifest 和内容哈希快照，支持普通文件、目录和 symlink。
+- **Hard-link fail-closed:** Git restore 会在写入前检测 `nlink > 1` 的目标文件并拒绝操作，避免覆盖共享 inode；先解除 hard link 或显式选择其他路径后再恢复。fallback 使用先删除链接再写入的安全语义。
 - **先看再回滚:** Git 和非 Git fallback 都提供 checkpoint 间文本 diff（binary 文件显示 binary marker）；preview 还会列出导致 safe restore 拒绝覆盖的 `conflictingPaths`。
 - **显式三方合并恢复:** `/tm-rewind <checkpoint> --merge`（Web API 传 `merge: true`）以当前 checkpoint 为 base，保留与目标快照不冲突的本地修改；同一路径双方都改动时返回 `RESTORE_MERGE_CONFLICT`，默认 safe 模式行为不变。该模式要求 Git 工作区。
 - **选择性恢复:** `/tm-restore-files` 只写入指定文件/目录，并创建 rescue 和结果 checkpoint；它不会伪造会话回滚。

@@ -85,6 +85,23 @@ describe('GitPlumbingEngine', () => {
     expect(inspected.treeOid).toBe(snapshot.treeOid);
   });
 
+  it('fails closed before restoring a hard-linked target file', async () => {
+    const tracked = path.join(tmpDir, 'tracked.txt');
+    const alias = path.join(tmpDir, 'alias.txt');
+    await fs.writeFile(tracked, 'base\n', 'utf8');
+    const base = await engine.createSnapshot({ sessionId: 'hardlink', checkpointId: 'base' });
+    await fs.writeFile(tracked, 'target\n', 'utf8');
+    const target = await engine.createSnapshot({ sessionId: 'hardlink', checkpointId: 'target', parentCommitOid: base.commitOid });
+    await fs.link(tracked, alias);
+    await expect(engine.restoreSnapshot(base.commitOid, { mode: 'force' })).rejects.toMatchObject({
+      code: 'UNSUPPORTED_WORKSPACE_STATE',
+      paths: ['tracked.txt'],
+    });
+    expect(await fs.readFile(tracked, 'utf8')).toBe('target\n');
+    expect(await fs.readFile(alias, 'utf8')).toBe('target\n');
+    expect(target.commitOid).not.toBe(base.commitOid);
+  });
+
   it('rejects malformed omitted paths before touching the temporary index', async () => {
     await expect(engine.inspectWorkspace({ omitPaths: ['../outside.txt'] }))
       .rejects.toThrow(/Unsafe workspace path/);

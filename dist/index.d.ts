@@ -425,6 +425,12 @@ declare class WorkspaceRestoreConflictError extends Error {
     readonly code = "RESTORE_CONFLICT";
     constructor(paths: string[]);
 }
+/** Refuse restores that could overwrite an inode shared by another path. */
+declare class WorkspaceHardLinkError extends Error {
+    readonly paths: string[];
+    readonly code = "UNSUPPORTED_WORKSPACE_STATE";
+    constructor(paths: string[]);
+}
 declare class WorkspaceMergeConflictError extends Error {
     readonly paths: string[];
     readonly code = "RESTORE_MERGE_CONFLICT";
@@ -524,6 +530,7 @@ declare class GitPlumbingEngine {
     private mergeWorkspaceTree;
     /** Restore only selected tracked workspace paths using a disposable index. */
     restoreSelectedPaths(commitOrTreeOid: string, paths: string[], options?: GitSelectiveRestoreOptions): Promise<string[]>;
+    private assertNoHardLinkTargets;
     /** Restore quarantined ignored content without ever writing it into Git objects. */
     restoreIgnoredBackup(key: string): Promise<void>;
     /** Validate encrypted quarantine content before a restore mutates the workspace. */
@@ -737,4 +744,4 @@ declare class TimeMachinePlugin {
     constructor(ctx: Context, config?: Config);
 }
 
-export { AgentWriteRecord, CheckpointNode, Config, type DAGManagerOptions, DAGStateKeyError, DAGStateManager, DAGTree, DAG_FORMAT_VERSION, DiffResult, ExternalEffectAdapter, ExternalEffectCompensationResult, ExternalEffectRecord, type FallbackOptions, FallbackSnapshotEngine, FileChange, GitPlumbingEngine, type GitPlumbingOptions, type GitRestoreOptions, type GitSelectiveRestoreOptions, type GitSnapshot, PruneResult, QuarantineKeyError, type QuarantineMigrationResult, QuarantineQuotaError, ReflectionAdvisor, ReflectionSummary, RestoreOptions, RestorePlanError, RestorePreview, RestoreResult, SelectiveRestoreResult, SessionState, SessionSummary, type ShadowGcResult, type ShadowRepackResult, SnapshotSizeError, StorageQuotaError, StorageStatus, TimeMachineConfig, TimeMachinePlugin, TimeMachineService, type TimeMachineServiceOptions, TimeMachineWorkspaceHost, ToolMutationRecord, UnsupportedWorkspaceStateError, type WorkspaceCapabilities, WorkspaceDriftError, WorkspaceIsolation, WorkspaceMergeConflictError, WorkspaceRestoreConflictError, apply, collectFailedTools, TimeMachinePlugin as default, name };
+export { AgentWriteRecord, CheckpointNode, Config, type DAGManagerOptions, DAGStateKeyError, DAGStateManager, DAGTree, DAG_FORMAT_VERSION, DiffResult, ExternalEffectAdapter, ExternalEffectCompensationResult, ExternalEffectRecord, type FallbackOptions, FallbackSnapshotEngine, FileChange, GitPlumbingEngine, type GitPlumbingOptions, type GitRestoreOptions, type GitSelectiveRestoreOptions, type GitSnapshot, PruneResult, QuarantineKeyError, type QuarantineMigrationResult, QuarantineQuotaError, ReflectionAdvisor, ReflectionSummary, RestoreOptions, RestorePlanError, RestorePreview, RestoreResult, SelectiveRestoreResult, SessionState, SessionSummary, type ShadowGcResult, type ShadowRepackResult, SnapshotSizeError, StorageQuotaError, StorageStatus, TimeMachineConfig, TimeMachinePlugin, TimeMachineService, type TimeMachineServiceOptions, TimeMachineWorkspaceHost, ToolMutationRecord, UnsupportedWorkspaceStateError, type WorkspaceCapabilities, WorkspaceDriftError, WorkspaceHardLinkError, WorkspaceIsolation, WorkspaceMergeConflictError, WorkspaceRestoreConflictError, apply, collectFailedTools, TimeMachinePlugin as default, name };

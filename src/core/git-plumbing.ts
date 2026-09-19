@@ -130,6 +130,16 @@ export class WorkspaceRestoreConflictError extends Error {
   }
 }
 
+/** Refuse restores that could overwrite an inode shared by another path. */
+export class WorkspaceHardLinkError extends Error {
+  readonly code = 'UNSUPPORTED_WORKSPACE_STATE';
+
+  constructor(public readonly paths: string[]) {
+    super(`Workspace contains hard-linked restore targets: ${paths.slice(0, 8).join(', ')}. Replace the links or restore selectively elsewhere, then retry.`);
+    this.name = 'WorkspaceHardLinkError';
+  }
+}
+
 export class WorkspaceMergeConflictError extends Error {
   readonly code = 'RESTORE_MERGE_CONFLICT';
 
@@ -444,6 +454,7 @@ export class GitPlumbingEngine {
     const targetIgnored = new Set(options.targetIgnoredPaths ?? []);
     const ignoredToDelete = current.ignoredPaths.filter(item => !targetIgnored.has(item));
     const targetFiles = new Set(await this.listTreeFileNames(restoreTree));
+    await this.assertNoHardLinkTargets([...targetFiles]);
     const targetEntries = this.shadowObjectDir ? await this.listTreeEntries(restoreTree) : [];
     const collisions = current.ignoredPaths.filter(item => targetFiles.has(item));
     if (collisions.length && !options.deleteNewIgnoredPaths) {
@@ -576,6 +587,7 @@ export class GitPlumbingEngine {
     const currentFiles = await this.listTreeFileNames(current.treeOid);
     const selectedTargetFiles = targetFiles.filter(file => normalized.some(path => file === path || file.startsWith(`${path}/`)));
     const selectedCurrentFiles = currentFiles.filter(file => normalized.some(path => file === path || file.startsWith(`${path}/`)));
+    await this.assertNoHardLinkTargets(selectedCurrentFiles);
     if (selectedTargetFiles.length === 0 && selectedCurrentFiles.length === 0) {
       throw new Error(`None of the selected paths exist in the current or target snapshot: ${normalized.join(', ')}`);
     }
@@ -603,6 +615,15 @@ export class GitPlumbingEngine {
       await fs.rm(indexFile, { force: true }).catch(() => undefined);
       await fs.rm(path.dirname(exportDir), { recursive: true, force: true }).catch(() => undefined);
     }
+  }
+
+  private async assertNoHardLinkTargets(paths: string[]): Promise<void> {
+    const hardLinks: string[] = [];
+    for (const relative of paths) {
+      const stat = await fs.lstat(await this.safeWorkspacePath(relative)).catch(() => undefined);
+      if (stat?.isFile() && stat.nlink > 1) hardLinks.push(relative);
+    }
+    if (hardLinks.length) throw new WorkspaceHardLinkError(hardLinks.sort());
   }
 
   /** Restore quarantined ignored content without ever writing it into Git objects. */

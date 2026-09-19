@@ -71,6 +71,21 @@ The host slot and the companion-package boundary are documented in
 [DSH_NATIVE_UI.md](./DSH_NATIVE_UI.md); the service package intentionally does not
 claim this client surface until the separate Web package exists.
 
+### Pre-command safety boundary — implemented (opt-in)
+
+`autoPreCommandSnapshot` now hooks each Agent's `tools/pre-execute` waterfall
+and keeps `tools/execute` as a compatibility fallback. Configured high-risk
+tools receive a `pre-command` checkpoint before dispatch or argument rejection;
+call ids are deduplicated and `preCommandMaxPerTurn` defaults to one boundary,
+matching Hermes' per-turn anti-spam behavior. A value of zero permits one
+checkpoint per high-risk call. The source smoke can enable the live assertion
+with `TM_DSH_LIVE_PRECOMMAND=1`.
+
+**Acceptance:** the same call crossing both waterfalls creates one node;
+multiple calls in one turn respect the limit; a new turn resets the limit;
+failed capture does not block the tool; and a real DSH source smoke persists a
+`pre-command` node before a shell failure.
+
 ### Agent-write ledger for hand-edit preservation — implemented (opt-in)
 
 Hermes records hashes for successful agent writes and preserves later user edits

@@ -12,7 +12,8 @@ The portable plugin now exposes `GET /api/workspace-route?sessionId=...` and
 `TimeMachineClient.workspaceRoute()` so a companion can inspect the current
 route. Without a host adapter the response is explicitly
 `configured-root`/`shared-lock`; an adapter-provided route is validated before
-it is returned, and invalid relative paths fail closed.
+it is returned, including an existence/`realpath` check. Invalid relative,
+missing, or non-canonical paths fail closed.
 
 ## Required host surface
 

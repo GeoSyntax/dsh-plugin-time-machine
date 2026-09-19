@@ -176,7 +176,7 @@ export class TimeMachineWebServer {
       const route = this.hooks.workspaceRoute
         ? await this.hooks.workspaceRoute(sessionId)
         : { workspaceId: 'configured-root', cwd: this.service.workDir, isolation: 'shared-lock' as const };
-      validateWorkspaceRoute(route);
+      await validateWorkspaceRoute(route);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ sessionId, route, adapter: Boolean(this.hooks.workspaceRoute) }));
       return;
@@ -645,12 +645,21 @@ function effectivePort(hostHeader: string, protocol: string): string {
   return protocol === 'https:' ? '443' : '80';
 }
 
-function validateWorkspaceRoute(route: WorkspaceRoute): void {
+async function validateWorkspaceRoute(route: WorkspaceRoute): Promise<void> {
   if (!route || typeof route.workspaceId !== 'string' || !route.workspaceId.trim() || /[\0\r\n]/.test(route.workspaceId)) {
     throw Object.assign(new Error('Workspace route workspaceId is invalid.'), { code: 'BAD_REQUEST' });
   }
   if (typeof route.cwd !== 'string' || !path.isAbsolute(route.cwd) || /[\0\r\n]/.test(route.cwd)) {
     throw Object.assign(new Error('Workspace route cwd must be an absolute path.'), { code: 'BAD_REQUEST' });
+  }
+  try {
+    const canonical = await fs.realpath(route.cwd);
+    if (path.resolve(canonical) !== path.resolve(route.cwd)) {
+      throw Object.assign(new Error('Workspace route cwd must be a canonical real path.'), { code: 'BAD_REQUEST' });
+    }
+  } catch (error: any) {
+    if (error?.code === 'BAD_REQUEST') throw error;
+    throw Object.assign(new Error('Workspace route cwd does not exist.'), { code: 'BAD_REQUEST' });
   }
   if (!['shared-lock', 'isolated-worktree', 'isolated-container'].includes(route.isolation)) {
     throw Object.assign(new Error('Workspace route isolation is invalid.'), { code: 'BAD_REQUEST' });

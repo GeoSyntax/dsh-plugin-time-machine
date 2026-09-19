@@ -245,6 +245,8 @@ declare class TimeMachineService {
         externalEffectLedger: true;
         externalEffectAdapters: string[];
         workspaceIsolation: 'shared-lock';
+        /** Rewind restores files and opens a new DSH session; it never rewrites the append-only log. */
+        rewindSessionMode: 'fork';
         workspace: {
             sparseCheckout: boolean;
             submodulePaths: string[];

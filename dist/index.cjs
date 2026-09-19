@@ -2756,6 +2756,7 @@ var TimeMachineService = class {
       externalEffectLedger: true,
       externalEffectAdapters: this.listExternalEffectAdapters(),
       workspaceIsolation: "shared-lock",
+      rewindSessionMode: "fork",
       workspace,
       policies: {
         restoreMode: this.config.restoreMode,

@@ -8,6 +8,15 @@
   "exports": { ".": { "types": "./lib/types/index.d.ts", "default": "./lib/index.js" } },
   "files": ["lib"],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/GeoSyntax/dsh-plugin-time-machine.git",
+    "directory": "client-companion"
+  },
+  "homepage": "https://github.com/GeoSyntax/dsh-plugin-time-machine#readme",
+  "bugs": { "url": "https://github.com/GeoSyntax/dsh-plugin-time-machine/issues" },
+  "publishConfig": { "access": "public" },
+  "engines": { "node": ">=22.19.0" },
   "peerDependencies": {
     "@deepseek-ai/cordis": ">=4.0.0",
     "@deepseek-ai/dsh-client-ui-session": ">=0.1.6-alpha.1",
@@ -21,10 +30,10 @@
   },
   "devDependencies": {
     "@types/react": "^18.3.0",
-    "dsh-plugin-time-machine": "^0.2.0",
+    "dsh-plugin-time-machine": "file:..",
     "tsdown": "^0.15.0",
     "typescript": "^5.7.0"
   },
   "dsh": { "client": { "inject": ["@deepseek-ai/dsh-client-ui-session", "@deepseek-ai/dsh-client-ui-conversation", "@deepseek-ai/dsh-client-ui-slots", "@deepseek-ai/dsh-client-ui-workspace"], "platform": "web" } },
-  "scripts": { "build": "tsdown", "typecheck": "tsc --noEmit" }
+  "scripts": { "build": "tsdown", "typecheck": "tsc --noEmit", "test:smoke": "pnpm build && node test/slot-smoke.mjs", "prepack": "pnpm build" }
 }

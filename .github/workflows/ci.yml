@@ -56,6 +56,37 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm audit --prod --audit-level=high
 
+  client-companion:
+    name: Native DSH client companion
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.29.1
+          run_install: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22.19.0
+          cache: pnpm
+      - name: Install and build the core package
+        run: pnpm install --frozen-lockfile && pnpm build
+      - name: Install companion dependencies
+        working-directory: client-companion
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck companion
+        working-directory: client-companion
+        run: pnpm typecheck
+      - name: Build companion
+        working-directory: client-companion
+        run: pnpm build
+      - name: Smoke-test slot registration
+        working-directory: client-companion
+        run: pnpm test:smoke
+      - name: Verify companion package contents
+        working-directory: client-companion
+        run: pnpm pack --dry-run
+
   dsh-bundle-smoke:
     name: DSH bundle smoke
     runs-on: ubuntu-latest

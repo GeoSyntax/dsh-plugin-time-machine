@@ -30,8 +30,8 @@ assistant 的 `messageId`，并且按 session 注入；它不是一个可以从�
   只有部署者明确列出可信的本地 DSH client origin 后，companion 才能跨端口调用 REST API。
 - 已加入：`client-companion/` 独立 React/slot 包源码，使用 `TimeMachineClient`
   timeline、确认后的相对 undo 和 `uiWorkspace.openSession()` 导航；它只声明 DSH
-  client peer dependencies，不会被主服务包加载。当前已用本地 DSH alpha 类型完成
-  typecheck，npm 发布和跨版本 slot CI 仍是下一步门禁。
+  client peer dependencies，不会被主服务包加载。当前已用 DSH `0.1.6-alpha.2`
+  依赖完成 typecheck、构建和 pack dry-run；npm 发布和跨版本 slot CI 仍是下一步门禁。
 
 ## Client companion 设计与当前实现
 

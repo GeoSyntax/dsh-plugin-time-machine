@@ -8,3 +8,18 @@ The action loads the safety-aware timeline, shows partial/unattributed/external
 effect warnings, asks for confirmation, invokes relative undo, and opens the
 forked session returned by DSH. The service package deliberately does not
 include React or DSH client UI dependencies.
+
+## Development and packaging
+
+From this directory:
+
+```bash
+pnpm install
+pnpm typecheck
+pnpm build
+pnpm pack --dry-run
+```
+
+Install the published package alongside the core service and matching DSH Web
+client packages. The companion is opt-in; it does not change the service
+plugin's manifest or silently add UI dependencies to a headless profile.

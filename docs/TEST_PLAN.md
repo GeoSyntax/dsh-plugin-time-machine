@@ -295,7 +295,7 @@ artifacts/<run-id>/
 
 当前已经有证据：
 
-- 当前仓库全量自动化测试 99/99 通过；Web 21/21、CLI 13/13，覆盖 DSH durable `tool/call`/`tool/result` 失败配对、反思输入提取、失败 fork 点反思，以及 Web fork 失败补偿测试。CLI 的 `/tm-undo` 回归还验证了同一 turn 内 pre-command 节点不会改变按 turn 的回退距离，并且不会把 running checkpoint 当作已完成 turn。
+- 当前仓库全量自动化测试 100/100 通过；Web 21/21、CLI 13/13，companion client 4/4，覆盖 DSH durable `tool/call`/`tool/result` 失败配对、反思输入提取、失败 fork 点反思，以及 Web fork 失败补偿测试。CLI 的 `/tm-undo` 回归还验证了同一 turn 内 pre-command 节点不会改变按 turn 的回退距离，并且不会把 running checkpoint 当作已完成 turn；client timeline 回归锁定相同的 UI 安全规则。
 - Git 与 fallback 恢复完成后均执行工作区摘要校验；持久化 DAG 加载会校验节点、父节点、分支和会话归属。
 - 真实 DSH 源码宿主加载插件通过。
 - 真实本地模型请求、文件创建、turn 结束后的 finalized checkpoint 落盘通过。

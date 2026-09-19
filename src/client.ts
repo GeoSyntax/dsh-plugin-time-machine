@@ -81,6 +81,18 @@ export interface PreviewBoundAction {
   readonly preview: RestorePreview;
 }
 
+/** UI-neutral timeline row for native DSH or standalone companion clients. */
+export interface CompanionTimelineEntry {
+  checkpoint: CheckpointNode;
+  /** 0 is the current completed user turn; null means the node is not on the active lineage. */
+  relativeUndo: number | null;
+  isCurrent: boolean;
+  /** Internal safety boundaries remain inspectable but should not be offered as user undo targets. */
+  userVisible: boolean;
+  canUndo: boolean;
+  warnings: string[];
+}
+
 export class TimeMachineClient {
   private readonly baseUrl: string;
   private readonly http: typeof globalThis.fetch;
@@ -111,6 +123,13 @@ export class TimeMachineClient {
   async sessions(): Promise<SessionSummary[]> {
     const body = await this.get('/api/sessions');
     return objectField(body, 'sessions') as SessionSummary[];
+  }
+
+  /** Build a bounded, newest-first timeline without coupling consumers to React or DSH slots. */
+  async timeline(sessionId: string, limit = 50): Promise<CompanionTimelineEntry[]> {
+    if (!sessionId.trim()) throw new Error('timeline requires a non-empty sessionId.');
+    if (!Number.isInteger(limit) || limit < 1 || limit > 500) throw new Error('timeline limit must be an integer between 1 and 500.');
+    return buildCompanionTimeline(await this.dag(sessionId), limit);
   }
 
   async preview(sessionId: string, checkpointId: string): Promise<PreviewBoundAction> {
@@ -207,3 +226,58 @@ function objectField(value: unknown, field: string): any {
 }
 
 export type { CheckpointNode, DAGTree, RestorePreview, SessionSummary };
+
+/** Pure timeline projection shared by browser clients and tests. */
+export function buildCompanionTimeline(dag: DAGTree, limit = 50): CompanionTimelineEntry[] {
+  if (!Number.isInteger(limit) || limit < 1 || limit > 500) throw new Error('timeline limit must be an integer between 1 and 500.');
+  const currentId = dag.currentCheckpointId;
+  const lineage = currentId ? lineageFor(dag, currentId) : [];
+  const relativeById = new Map<string, number>();
+  const seenTurns = new Set<number>();
+  let relativeUndo = 0;
+  for (const node of [...lineage].reverse()) {
+    if (!isUserVisible(node) || seenTurns.has(node.turnIndex)) continue;
+    seenTurns.add(node.turnIndex);
+    relativeById.set(node.id, relativeUndo);
+    relativeUndo += 1;
+  }
+  return Object.values(dag.nodes)
+    .sort((left, right) => right.timestamp - left.timestamp)
+    .slice(0, limit)
+    .map((checkpoint) => {
+      const userVisible = isUserVisible(checkpoint);
+      const warnings: string[] = [];
+      if (checkpoint.status === 'running') warnings.push('turn is still running');
+      if (checkpoint.omittedPaths?.length) warnings.push(`${checkpoint.omittedPaths.length} path(s) omitted`);
+      if (checkpoint.unattributedChanges?.length) warnings.push(`${checkpoint.unattributedChanges.length} unattributed change(s)`);
+      if (checkpoint.externalEffects?.some(effect => effect.status !== 'compensated')) warnings.push('external effects require review');
+      const relative = relativeById.get(checkpoint.id);
+      return {
+        checkpoint,
+        relativeUndo: relative ?? null,
+        isCurrent: checkpoint.id === currentId,
+        userVisible,
+        canUndo: userVisible && checkpoint.status !== 'running' && relative !== undefined && relative > 0,
+        warnings,
+      };
+    });
+}
+
+function isUserVisible(node: CheckpointNode): boolean {
+  return node.status !== 'running'
+    && !node.tags?.includes('pre-command')
+    && !node.tags?.includes('rescue')
+    && !node.tags?.includes('selective-restore');
+}
+
+function lineageFor(dag: DAGTree, checkpointId: string): CheckpointNode[] {
+  const result: CheckpointNode[] = [];
+  let cursor: string | null = checkpointId;
+  while (cursor) {
+    const node: CheckpointNode | undefined = dag.nodes[cursor];
+    if (!node) break;
+    result.unshift(node);
+    cursor = node.parentId;
+  }
+  return result;
+}

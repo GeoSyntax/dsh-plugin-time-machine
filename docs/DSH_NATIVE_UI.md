@@ -13,9 +13,13 @@ assistant 的 `messageId`，并且按 session 注入；它不是一个可以从�
 - 已支持：CLI `/tm-preview`、`/tm-rewind`、`/tm-fork`。
 - 未承诺：在 DSH transcript 的 assistant action strip 中自动出现按钮。
 - 兼容回退：用户可以从 DSH 打开独立 Dashboard，或执行 CLI 命令。
-- 已提供：无 React/浏览器依赖的 `TimeMachineClient` companion contract；它封装
+- 已提供：无 React/浏览器依赖的 `TimeMachineClient` companion contract（npm 子路径
+  `dsh-plugin-time-machine/client`）；它封装
   status、capabilities、storage、DAG、diff、preview、rewind、fork、完整/选择性恢复、外部副作用记录/补偿和审计读取，并在客户端
   强制校验一次性 restore-plan 绑定。它不是原生 slot UI，也不会自动注入按钮。
+- 已提供：`client.timeline(sessionId)` 和 `buildCompanionTimeline()` 纯数据投影；
+  统一处理活动 lineage、相对 undo 编号、running/internal 节点和风险警告，供
+  React slot 或独立 Dashboard 复用。
 - 已提供：`GET /api/sessions` 与 `TimeMachineClient.sessions()`，用于原生 companion
   在多个真实 DSH session 之间发现和切换；Dashboard 也不再隐式创建 `default` DAG。
 - 已提供：`webAllowedOrigins` 精确 Origin allowlist 和 CORS 响应头；默认仍拒绝跨源请求，

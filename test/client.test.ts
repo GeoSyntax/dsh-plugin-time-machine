@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { TimeMachineClient, TimeMachineClientError } from '../src/client.js';
+import { buildCompanionTimeline, TimeMachineClient, TimeMachineClientError } from '../src/client.js';
 
 describe('TimeMachineClient companion contract', () => {
   it('binds preview tokens to rewind and fork requests', async () => {
@@ -36,6 +36,28 @@ describe('TimeMachineClient companion contract', () => {
       fetch: async () => new Response(JSON.stringify({ sessions: [{ sessionId: 's', checkpointCount: 2, currentBranch: 'main', currentCheckpointId: 'c', updatedAt: 1 }] }), { status: 200 }),
     });
     await expect(client.sessions()).resolves.toEqual([expect.objectContaining({ sessionId: 's', checkpointCount: 2 })]);
+  });
+
+  it('projects a safe native-companion timeline across internal checkpoints', async () => {
+    const node = (id: string, parentId: string | null, turnIndex: number, tags: string[] = [], status: string = 'success') => ({
+      id, parentId, branch: 'main', turnIndex, timestamp: turnIndex, prompt: `turn ${turnIndex}`, summary: '',
+      gitTreeOid: '', gitCommitOid: '', sessionState: { sessionId: 's', messages: [] }, changedFiles: [], status, tags,
+    });
+    const dag: any = {
+      sessionId: 's', currentBranch: 'main', currentCheckpointId: 'pre', branches: { main: { name: 'main', headId: 'pre', forkedFromId: null, createdAt: 1 } },
+      nodes: {
+        one: node('one', null, 1),
+        two: node('two', 'one', 2),
+        pre: node('pre', 'two', 2, ['pre-command']),
+        running: node('running', 'pre', 3, [], 'running'),
+      },
+    };
+    dag.currentCheckpointId = 'pre';
+    const rows = buildCompanionTimeline(dag);
+    expect(rows.find(row => row.checkpoint.id === 'pre')?.userVisible).toBe(false);
+    expect(rows.find(row => row.checkpoint.id === 'running')?.canUndo).toBe(false);
+    expect(rows.find(row => row.checkpoint.id === 'two')?.relativeUndo).toBe(0);
+    expect(rows.find(row => row.checkpoint.id === 'two')?.warnings).toEqual([]);
   });
 
   it('rejects malformed preview bindings and exposes structured HTTP errors', async () => {

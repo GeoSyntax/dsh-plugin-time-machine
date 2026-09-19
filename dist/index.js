@@ -3937,6 +3937,12 @@ var TimeMachineClient = class {
     const body = await this.get("/api/sessions");
     return objectField(body, "sessions");
   }
+  /** Build a bounded, newest-first timeline without coupling consumers to React or DSH slots. */
+  async timeline(sessionId, limit = 50) {
+    if (!sessionId.trim()) throw new Error("timeline requires a non-empty sessionId.");
+    if (!Number.isInteger(limit) || limit < 1 || limit > 500) throw new Error("timeline limit must be an integer between 1 and 500.");
+    return buildCompanionTimeline(await this.dag(sessionId), limit);
+  }
   async preview(sessionId, checkpointId) {
     const body = await this.get(`/api/preview?sessionId=${encodeURIComponent(sessionId)}&checkpoint=${encodeURIComponent(checkpointId)}`);
     const preview = objectField(body, "preview");
@@ -4012,6 +4018,51 @@ var TimeMachineClient = class {
 function objectField(value, field) {
   if (!value || typeof value !== "object" || !(field in value)) throw new Error(`Time Machine response is missing '${field}'.`);
   return value[field];
+}
+function buildCompanionTimeline(dag, limit = 50) {
+  if (!Number.isInteger(limit) || limit < 1 || limit > 500) throw new Error("timeline limit must be an integer between 1 and 500.");
+  const currentId = dag.currentCheckpointId;
+  const lineage = currentId ? lineageFor(dag, currentId) : [];
+  const relativeById = /* @__PURE__ */ new Map();
+  const seenTurns = /* @__PURE__ */ new Set();
+  let relativeUndo = 0;
+  for (const node of [...lineage].reverse()) {
+    if (!isUserVisible(node) || seenTurns.has(node.turnIndex)) continue;
+    seenTurns.add(node.turnIndex);
+    relativeById.set(node.id, relativeUndo);
+    relativeUndo += 1;
+  }
+  return Object.values(dag.nodes).sort((left, right) => right.timestamp - left.timestamp).slice(0, limit).map((checkpoint) => {
+    const userVisible = isUserVisible(checkpoint);
+    const warnings = [];
+    if (checkpoint.status === "running") warnings.push("turn is still running");
+    if (checkpoint.omittedPaths?.length) warnings.push(`${checkpoint.omittedPaths.length} path(s) omitted`);
+    if (checkpoint.unattributedChanges?.length) warnings.push(`${checkpoint.unattributedChanges.length} unattributed change(s)`);
+    if (checkpoint.externalEffects?.some((effect) => effect.status !== "compensated")) warnings.push("external effects require review");
+    const relative = relativeById.get(checkpoint.id);
+    return {
+      checkpoint,
+      relativeUndo: relative ?? null,
+      isCurrent: checkpoint.id === currentId,
+      userVisible,
+      canUndo: userVisible && checkpoint.status !== "running" && relative !== void 0 && relative > 0,
+      warnings
+    };
+  });
+}
+function isUserVisible(node) {
+  return node.status !== "running" && !node.tags?.includes("pre-command") && !node.tags?.includes("rescue") && !node.tags?.includes("selective-restore");
+}
+function lineageFor(dag, checkpointId) {
+  const result = [];
+  let cursor = checkpointId;
+  while (cursor) {
+    const node = dag.nodes[cursor];
+    if (!node) break;
+    result.unshift(node);
+    cursor = node.parentId;
+  }
+  return result;
 }
 
 // src/index.ts
@@ -4351,6 +4402,7 @@ export {
   WorkspaceMergeConflictError,
   WorkspaceRestoreConflictError,
   apply,
+  buildCompanionTimeline,
   collectFailedTools,
   index_default as default,
   name

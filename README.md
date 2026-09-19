@@ -240,11 +240,13 @@ DSH 原生消息操作的扩展边界和 companion package 验收条件见
 client slot 集成伪装成已支持能力。
 
 如果要开发自己的原生 UI companion，可直接复用无依赖的
-`TimeMachineClient`（`import { TimeMachineClient } from 'dsh-plugin-time-machine'`）。
+`TimeMachineClient`（`import { TimeMachineClient } from 'dsh-plugin-time-machine/client'`）。
 它提供 status、capabilities、storage、DAG、diff、preview、rewind、fork、选择性恢复和审计读取方法，
 其中 `restoreFilesFromPreview()` 与 rewind/fork 一样复用一次性 preview 绑定，
 并强制把 `restorePlanId` 绑定到 preview 返回的 session/checkpoint；服务端返回
-409 时会抛出带 `status`/`code`/`body` 的 `TimeMachineClientError`。
+409 时会抛出带 `status`/`code`/`body` 的 `TimeMachineClientError`。`timeline(sessionId)`
+还返回 UI 无关的活动 lineage 投影，标记 running、内部安全节点、partial checkpoint、
+未归因变更和待审查外部副作用，避免每个 UI 重复实现安全规则。
 
 ## License
 

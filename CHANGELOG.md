@@ -77,3 +77,5 @@ See [README.md](./README.md), [docs/COMPARISON.md](./docs/COMPARISON.md), and
   internal pre-command, rescue, and selective-restore nodes no longer shift
   the user-visible undo distance.
 - Exclude still-running checkpoints from the user-visible undo lineage.
+- Publish the dependency-free companion contract from the `./client` package
+  subpath, including `timeline()` and its shared safety-aware projection.

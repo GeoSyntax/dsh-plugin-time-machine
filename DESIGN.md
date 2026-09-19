@@ -9,6 +9,15 @@ Time Machine coordinates two independently durable domains:
 
 It never rewrites the append-only DSH event log. A rewind restores files and asks the host `sessionController` to create/fork a conversation. If the conversation operation fails, the workspace is restored from the automatic rescue checkpoint.
 
+The published package has two integration surfaces: the host service at `.` and a
+dependency-free companion contract at `./client`. The latter exposes
+`TimeMachineClient` plus the pure `buildCompanionTimeline()` projection. Native
+DSH slot packages can consume that projection without importing Cordis or
+duplicating the rules that hide running/internal checkpoints and surface partial,
+unattributed, or unresolved external-effect warnings. It intentionally does not
+register a React slot by itself; the optional browser package remains a separate
+compatibility surface.
+
 ## State model
 
 Each `CheckpointNode` records a parent, logical branch, pre-turn workspace object, Session boundary, turn outcome, and optional settled workspace signature. A pre-turn node therefore has two relevant signatures:

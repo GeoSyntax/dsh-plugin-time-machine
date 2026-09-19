@@ -115,6 +115,10 @@ The shadow store is opt-in. Loose unreachable objects are reclaimed after plugin
 
 ## Change history
 
+### 2026-09-19 — 只读反思与清理审计入口
+
+新增外部副作用查询、prune dry-run、companion prune，以及不会改变会话或工作区的 reflection 查询；构建产物与类型声明同步发布。
+
 ### 2026-09-18 — 0.2.0 safety and DSH compatibility pass
 
 **Changes:** migrated to `@deepseek-ai/cordis` 4.x, added real pre-step/turn-end integration and DSH session forks, isolated restore indexes, safe drift checks, rescue compensation, ignored quarantine, exact non-Git restore, atomic DAG writes, operation locking, loopback HTTP controls and DOM-safe rendering.

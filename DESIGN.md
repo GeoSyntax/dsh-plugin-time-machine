@@ -58,6 +58,10 @@ paths rather than inferring multi-workspace support.
 When a host provides the adapter through the Cordis `workspaceHost` service,
 Web rewind/undo/fork uses its atomic `forkSession()` operation; adapter failure
 therefore enters the same rescue compensation path as a normal session fork.
+The routing logic lives in `core/workspace-host.ts` and is independently tested
+for canonical same-root success, cross-root rejection, and invalid host result;
+this keeps the Web integration thin and makes the future multi-root adapter
+contract testable without a live DSH process.
 
 DAG mutations and workspace mutations are serialized per configured workspace. DAG files are published by writing a unique temporary file and renaming it into place.
 

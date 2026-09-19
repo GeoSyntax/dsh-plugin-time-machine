@@ -2838,27 +2838,44 @@ var TimeMachineService = class {
       const olderThanMs = options.olderThanMs !== void 0 ? Math.max(0, Math.floor(options.olderThanMs)) : void 0;
       const cutoff = olderThanMs !== void 0 && olderThanMs > 0 ? Date.now() - olderThanMs : void 0;
       let removed = [];
+      const dryRun = options.dryRun === true;
+      const currentLineageIds = new Set(dag.getLineage(dag.tree.currentCheckpointId ?? "").map((node) => node.id));
+      const protectedIds = /* @__PURE__ */ new Set([
+        ...dag.tree.currentCheckpointId ? [dag.tree.currentCheckpointId] : [],
+        ...Object.values(dag.tree.branches).map((branch) => branch.headId).filter(Boolean)
+      ]);
+      const plannedBranchRemoval = options.abandonedBranches ? nodes.filter((node) => node.branch !== dag.tree.currentBranch && !currentLineageIds.has(node.id)) : [];
       if (options.abandonedBranches) {
-        const abandonedBranches = Object.keys(dag.tree.branches).filter((branch) => branch !== dag.tree.currentBranch);
-        for (const branch of abandonedBranches) removed.push(...await dag.removeBranch(branch));
+        if (dryRun) removed.push(...plannedBranchRemoval);
+        else {
+          const abandonedBranches = Object.keys(dag.tree.branches).filter((branch) => branch !== dag.tree.currentBranch);
+          for (const branch of abandonedBranches) removed.push(...await dag.removeBranch(branch));
+        }
       }
-      const candidates = Object.values(dag.tree.nodes).filter((node) => !keep.has(node.id) && (cutoff === void 0 || node.timestamp < cutoff));
+      const remainingNodes = dryRun ? nodes.filter((node) => !plannedBranchRemoval.some((item) => item.id === node.id)) : Object.values(dag.tree.nodes);
+      const candidates = remainingNodes.filter((node) => !keep.has(node.id) && (cutoff === void 0 || node.timestamp < cutoff));
+      const childIds = new Set(remainingNodes.map((node) => node.parentId).filter((id) => Boolean(id)));
+      const plannedCandidates = options.compactHistory ? candidates.filter((node) => !protectedIds.has(node.id)) : candidates.filter((node) => !protectedIds.has(node.id) && !childIds.has(node.id));
       if (options.compactHistory) {
-        removed.push(...await dag.compactNodes(candidates.map((node) => node.id)));
+        if (dryRun) removed.push(...plannedCandidates);
+        else removed.push(...await dag.compactNodes(candidates.map((node) => node.id)));
       } else {
-        removed.push(...await dag.removeLeafNodes(candidates.map((node) => node.id)));
+        if (dryRun) removed.push(...plannedCandidates);
+        else removed.push(...await dag.removeLeafNodes(candidates.map((node) => node.id)));
       }
-      const reclaimed = await this.reclaimNodes(sessionId, removed);
-      const shadowRepack = options.repackShadowObjects && this.config.shadowStore ? await this.gitEngine.repackShadowObjects() : void 0;
+      const reclaimed = dryRun ? { reclaimedBytes: 0, gitRefsRemoved: 0, quarantineReclaimedBytes: 0 } : await this.reclaimNodes(sessionId, removed);
+      const shadowRepack = !dryRun && options.repackShadowObjects && this.config.shadowStore ? await this.gitEngine.repackShadowObjects() : void 0;
       return {
         sessionId,
-        removedCheckpointIds: removed.map((node) => node.id),
+        dryRun,
+        ...dryRun ? { wouldRemoveCheckpointIds: removed.map((node) => node.id) } : {},
+        removedCheckpointIds: dryRun ? [] : removed.map((node) => node.id),
         reclaimedBytes: reclaimed.reclaimedBytes,
         gitRefsRemoved: reclaimed.gitRefsRemoved,
         quarantineReclaimedBytes: reclaimed.quarantineReclaimedBytes,
         shadowObjectsReclaimedBytes: shadowRepack?.reclaimedBytes,
         shadowRepackSkippedReason: shadowRepack?.skippedReason,
-        note: reclaimed.gitRefsRemoved > 0 ? this.config.shadowStore ? "Plugin refs and shadow objects were pruned; the user repository was not garbage-collected." : "Git objects are shared; run repository maintenance only if you understand its impact." : cutoff === void 0 ? "Fallback snapshot bytes were removed from plugin storage." : `Only checkpoints older than ${olderThanMs} ms were eligible; protected DAG nodes were retained.`
+        note: dryRun ? `Dry run: ${removed.length} checkpoint(s) would be removed; no DAG, quarantine, or Git objects were changed.` : reclaimed.gitRefsRemoved > 0 ? this.config.shadowStore ? "Plugin refs and shadow objects were pruned; the user repository was not garbage-collected." : "Git objects are shared; run repository maintenance only if you understand its impact." : cutoff === void 0 ? "Fallback snapshot bytes were removed from plugin storage." : `Only checkpoints older than ${olderThanMs} ms were eligible; protected DAG nodes were retained.`
       };
     });
   }
@@ -3509,7 +3526,8 @@ var TimeMachineWebServer = class {
         olderThanMs,
         abandonedBranches: body.abandonedBranches === true,
         compactHistory: body.compactHistory === true,
-        repackShadowObjects: body.repackShadowObjects === true
+        repackShadowObjects: body.repackShadowObjects === true,
+        dryRun: body.dryRun === true
       });
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ success: true, result }));
@@ -3813,7 +3831,7 @@ ${changes.map((item) => `${item.status} ${item.path}`).join("\n")}` };
     scope.commands.register({
       name: "tm-prune",
       description: "Prune old non-head Time Machine checkpoints",
-      input: { hint: "[keep-latest] [--older-than=<duration>] [--abandoned-branches] [--compact-history] [--repack-shadow]" },
+      input: { hint: "[keep-latest] [--older-than=<duration>] [--abandoned-branches] [--compact-history] [--repack-shadow] [--dry-run]" },
       handler: async ({ agent, rawInput }) => {
         const args = rawInput.trim().split(/\s+/).filter(Boolean);
         const keepArg = args.find((arg) => !arg.startsWith("--"));
@@ -3827,12 +3845,14 @@ ${changes.map((item) => `${item.status} ${item.path}`).join("\n")}` };
           olderThanMs,
           abandonedBranches: args.includes("--abandoned-branches"),
           compactHistory: args.includes("--compact-history"),
-          repackShadowObjects: args.includes("--repack-shadow")
+          repackShadowObjects: args.includes("--repack-shadow"),
+          dryRun: args.includes("--dry-run")
         });
         const quarantine = result.quarantineReclaimedBytes ? ` Quarantine reclaimed ${formatBytes(result.quarantineReclaimedBytes)}.` : "";
         const shadow = result.shadowObjectsReclaimedBytes ? ` Shadow packs reclaimed ${formatBytes(result.shadowObjectsReclaimedBytes)}.` : "";
         const warning = result.shadowRepackSkippedReason ? ` Shadow repack skipped: ${result.shadowRepackSkippedReason}.` : "";
-        return { kind: "success", text: `Pruned ${result.removedCheckpointIds.length} checkpoint(s), reclaimed ${formatBytes(result.reclaimedBytes)}.${quarantine}${shadow}${warning} ${result.note}` };
+        const planned = result.dryRun ? ` Would remove: ${(result.wouldRemoveCheckpointIds ?? []).join(", ") || "(none)"}.` : "";
+        return { kind: "success", text: `${result.dryRun ? "Dry run." : `Pruned ${result.removedCheckpointIds.length} checkpoint(s), reclaimed ${formatBytes(result.reclaimedBytes)}.`}${planned}${quarantine}${shadow}${warning} ${result.note}` };
       }
     });
     scope.commands.register({

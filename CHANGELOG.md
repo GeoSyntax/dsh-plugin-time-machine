@@ -7,6 +7,8 @@
   before a user restores files or forks a conversation.
 - Add a read-only `/tm-external-list`, Web API, and client method for auditing
   unresolved external effects without accidentally invoking compensation.
+- Add prune dry-run support for CLI and Web API so retention/branch cleanup can
+  be reviewed before any DAG, quarantine, or Git-object deletion occurs.
 - Extend `/tm-doctor` to surface the shared-lock workspace boundary and the
   current plaintext-at-rest status of Shadow Git objects, with actionable
   warnings for community installations.

@@ -442,6 +442,21 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
     expect((await service.getDAGManager(sessionId)).getNode(current.id)).toBeTruthy();
   });
 
+  it('supports a non-mutating prune dry-run with the same candidate policy', async () => {
+    const sessionId = 'dry-prune-session';
+    const file = path.join(tmpDir, 'dry-prune.txt');
+    await fs.writeFile(file, 'one\n', 'utf8');
+    const first = await service.createTurnCheckpoint({ sessionId, turnIndex: 1, prompt: 'one', sessionState: { sessionId, messages: [] } });
+    await fs.writeFile(file, 'two\n', 'utf8');
+    const current = await service.createTurnCheckpoint({ sessionId, turnIndex: 2, prompt: 'two', sessionState: { sessionId, messages: [] } });
+    const result = await service.prune(sessionId, { keepLatest: 0, compactHistory: true, dryRun: true });
+    expect(result.dryRun).toBe(true);
+    expect(result.removedCheckpointIds).toEqual([]);
+    expect(result.wouldRemoveCheckpointIds).toContain(first.id);
+    expect(result.wouldRemoveCheckpointIds).not.toContain(current.id);
+    expect((await service.getDAGManager(sessionId)).getNode(first.id)).not.toBeNull();
+  });
+
   it('recovers an interrupted restore journal on the next service startup', async () => {
     const sessionId = 'journal-recovery';
     const file = path.join(tmpDir, 'journal.txt');

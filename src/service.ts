@@ -1031,7 +1031,7 @@ export class TimeMachineService {
     };
   }
 
-  async prune(sessionId: string, options: { keepLatest?: number; olderThanMs?: number; abandonedBranches?: boolean; compactHistory?: boolean; repackShadowObjects?: boolean } = {}): Promise<PruneResult> {
+  async prune(sessionId: string, options: { keepLatest?: number; olderThanMs?: number; abandonedBranches?: boolean; compactHistory?: boolean; repackShadowObjects?: boolean; dryRun?: boolean } = {}): Promise<PruneResult> {
     return this.runWorkspaceOperation(async () => {
       const dag = await this.getDAGManager(sessionId);
       const keepLatest = Math.max(0, Math.floor(options.keepLatest ?? 20));
@@ -1040,29 +1040,54 @@ export class TimeMachineService {
       const olderThanMs = options.olderThanMs !== undefined ? Math.max(0, Math.floor(options.olderThanMs)) : undefined;
       const cutoff = olderThanMs !== undefined && olderThanMs > 0 ? Date.now() - olderThanMs : undefined;
       let removed: CheckpointNode[] = [];
+      const dryRun = options.dryRun === true;
+      const currentLineageIds = new Set(dag.getLineage(dag.tree.currentCheckpointId ?? '').map(node => node.id));
+      const protectedIds = new Set<string>([
+        ...(dag.tree.currentCheckpointId ? [dag.tree.currentCheckpointId] : []),
+        ...Object.values(dag.tree.branches).map(branch => branch.headId).filter(Boolean),
+      ]);
+      const plannedBranchRemoval = options.abandonedBranches
+        ? nodes.filter(node => node.branch !== dag.tree.currentBranch && !currentLineageIds.has(node.id))
+        : [];
       if (options.abandonedBranches) {
-        const abandonedBranches = Object.keys(dag.tree.branches).filter(branch => branch !== dag.tree.currentBranch);
-        for (const branch of abandonedBranches) removed.push(...await dag.removeBranch(branch));
+        if (dryRun) removed.push(...plannedBranchRemoval);
+        else {
+          const abandonedBranches = Object.keys(dag.tree.branches).filter(branch => branch !== dag.tree.currentBranch);
+          for (const branch of abandonedBranches) removed.push(...await dag.removeBranch(branch));
+        }
       }
-      const candidates = Object.values(dag.tree.nodes).filter(node => !keep.has(node.id) && (cutoff === undefined || node.timestamp < cutoff));
+      const remainingNodes = dryRun
+        ? nodes.filter(node => !plannedBranchRemoval.some(item => item.id === node.id))
+        : Object.values(dag.tree.nodes);
+      const candidates = remainingNodes.filter(node => !keep.has(node.id) && (cutoff === undefined || node.timestamp < cutoff));
+      const childIds = new Set(remainingNodes.map(node => node.parentId).filter((id): id is string => Boolean(id)));
+      const plannedCandidates = options.compactHistory
+        ? candidates.filter(node => !protectedIds.has(node.id))
+        : candidates.filter(node => !protectedIds.has(node.id) && !childIds.has(node.id));
       if (options.compactHistory) {
-        removed.push(...await dag.compactNodes(candidates.map(node => node.id)));
+        if (dryRun) removed.push(...plannedCandidates);
+        else removed.push(...await dag.compactNodes(candidates.map(node => node.id)));
       } else {
-        removed.push(...await dag.removeLeafNodes(candidates.map(node => node.id)));
+        if (dryRun) removed.push(...plannedCandidates);
+        else removed.push(...await dag.removeLeafNodes(candidates.map(node => node.id)));
       }
-      const reclaimed = await this.reclaimNodes(sessionId, removed);
-      const shadowRepack = options.repackShadowObjects && this.config.shadowStore
+      const reclaimed = dryRun ? { reclaimedBytes: 0, gitRefsRemoved: 0, quarantineReclaimedBytes: 0 } : await this.reclaimNodes(sessionId, removed);
+      const shadowRepack = !dryRun && options.repackShadowObjects && this.config.shadowStore
         ? await this.gitEngine.repackShadowObjects()
         : undefined;
       return {
         sessionId,
-        removedCheckpointIds: removed.map(node => node.id),
+        dryRun,
+        ...(dryRun ? { wouldRemoveCheckpointIds: removed.map(node => node.id) } : {}),
+        removedCheckpointIds: dryRun ? [] : removed.map(node => node.id),
         reclaimedBytes: reclaimed.reclaimedBytes,
         gitRefsRemoved: reclaimed.gitRefsRemoved,
         quarantineReclaimedBytes: reclaimed.quarantineReclaimedBytes,
         shadowObjectsReclaimedBytes: shadowRepack?.reclaimedBytes,
         shadowRepackSkippedReason: shadowRepack?.skippedReason,
-        note: reclaimed.gitRefsRemoved > 0
+        note: dryRun
+          ? `Dry run: ${removed.length} checkpoint(s) would be removed; no DAG, quarantine, or Git objects were changed.`
+          : reclaimed.gitRefsRemoved > 0
           ? (this.config.shadowStore
             ? 'Plugin refs and shadow objects were pruned; the user repository was not garbage-collected.'
             : 'Git objects are shared; run repository maintenance only if you understand its impact.')

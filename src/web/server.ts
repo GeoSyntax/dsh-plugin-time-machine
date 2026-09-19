@@ -382,6 +382,7 @@ export class TimeMachineWebServer {
         abandonedBranches: body.abandonedBranches === true,
         compactHistory: body.compactHistory === true,
         repackShadowObjects: body.repackShadowObjects === true,
+        dryRun: body.dryRun === true,
       });
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, result }));

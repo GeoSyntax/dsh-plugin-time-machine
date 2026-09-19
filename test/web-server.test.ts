@@ -524,6 +524,25 @@ describe('TimeMachineWebServer', () => {
     expect((await response.json()).result.removedCheckpointIds).toContain(first.id);
   });
 
+  it('supports a non-mutating prune dry-run over the Web API', async () => {
+    const sessionId = 'storage-dry-web';
+    const file = path.join(tmpDir, 'storage-dry.txt');
+    await fs.writeFile(file, 'one\n', 'utf8');
+    const first = await service.createTurnCheckpoint({ sessionId, turnIndex: 1, prompt: 'one', sessionState: { sessionId, messages: [] } });
+    await fs.writeFile(file, 'two\n', 'utf8');
+    const current = await service.createTurnCheckpoint({ sessionId, turnIndex: 2, prompt: 'two', sessionState: { sessionId, messages: [] } });
+    const response = await fetch(`http://localhost:${testPort}/api/prune`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId, keepLatest: 0, compactHistory: true, dryRun: true }),
+    });
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.result.dryRun).toBe(true);
+    expect(body.result.wouldRemoveCheckpointIds).toContain(first.id);
+    expect(body.result.wouldRemoveCheckpointIds).not.toContain(current.id);
+    expect((await service.getDAGManager(sessionId)).getNode(first.id)).not.toBeNull();
+  });
+
   it('should compensate a physical rewind when conversation restart fails', async () => {
     const file = path.join(tmpDir, 'compensation.txt');
     await fs.writeFile(file, 'before\n', 'utf8');

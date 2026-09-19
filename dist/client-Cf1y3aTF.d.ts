@@ -260,6 +260,10 @@ interface StorageStatus {
 }
 interface PruneResult {
     sessionId: string;
+    /** True when this result is an audit-only plan and no checkpoints were removed. */
+    dryRun?: boolean;
+    /** Checkpoints that would be removed by a dry-run. */
+    wouldRemoveCheckpointIds?: string[];
     removedCheckpointIds: string[];
     reclaimedBytes: number;
     gitRefsRemoved: number;

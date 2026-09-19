@@ -243,4 +243,17 @@ describe('registered DSH time-machine commands', () => {
     expect(valid.kind).toBe('success');
     expect(valid.text).toContain('Pruned');
   });
+
+  it('previews prune candidates without deleting checkpoints', async () => {
+    const sessionId = 'cli-dry-prune';
+    await fs.writeFile(path.join(root, 'dry-prune.txt'), 'one\n', 'utf8');
+    const first = await service.createTurnCheckpoint({ sessionId, turnIndex: 1, prompt: 'one', sessionState: { sessionId, messages: [] } });
+    await fs.writeFile(path.join(root, 'dry-prune.txt'), 'two\n', 'utf8');
+    await service.createTurnCheckpoint({ sessionId, turnIndex: 2, prompt: 'two', sessionState: { sessionId, messages: [] } });
+    const result = await handlers['tm-prune']({ agent: { session: { id: sessionId } }, rawInput: '0 --compact-history --dry-run' });
+    expect(result.kind).toBe('success');
+    expect(result.text).toContain('Dry run');
+    expect(result.text).toContain(first.id);
+    expect((await service.getDAGManager(sessionId)).getNode(first.id)).not.toBeNull();
+  });
 });

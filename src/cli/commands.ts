@@ -126,7 +126,7 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
     scope.commands.register({
       name: 'tm-prune',
       description: 'Prune old non-head Time Machine checkpoints',
-      input: { hint: '[keep-latest] [--older-than=<duration>] [--abandoned-branches] [--compact-history] [--repack-shadow]' },
+      input: { hint: '[keep-latest] [--older-than=<duration>] [--abandoned-branches] [--compact-history] [--repack-shadow] [--dry-run]' },
       handler: async ({ agent, rawInput }: CommandInvocationLike): Promise<CommandResult> => {
         const args = rawInput.trim().split(/\s+/).filter(Boolean);
         const keepArg = args.find(arg => !arg.startsWith('--'));
@@ -141,11 +141,13 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
           abandonedBranches: args.includes('--abandoned-branches'),
           compactHistory: args.includes('--compact-history'),
           repackShadowObjects: args.includes('--repack-shadow'),
+          dryRun: args.includes('--dry-run'),
         });
         const quarantine = result.quarantineReclaimedBytes ? ` Quarantine reclaimed ${formatBytes(result.quarantineReclaimedBytes)}.` : '';
         const shadow = result.shadowObjectsReclaimedBytes ? ` Shadow packs reclaimed ${formatBytes(result.shadowObjectsReclaimedBytes)}.` : '';
         const warning = result.shadowRepackSkippedReason ? ` Shadow repack skipped: ${result.shadowRepackSkippedReason}.` : '';
-        return { kind: 'success', text: `Pruned ${result.removedCheckpointIds.length} checkpoint(s), reclaimed ${formatBytes(result.reclaimedBytes)}.${quarantine}${shadow}${warning} ${result.note}` };
+        const planned = result.dryRun ? ` Would remove: ${(result.wouldRemoveCheckpointIds ?? []).join(', ') || '(none)'}.` : '';
+        return { kind: 'success', text: `${result.dryRun ? 'Dry run.' : `Pruned ${result.removedCheckpointIds.length} checkpoint(s), reclaimed ${formatBytes(result.reclaimedBytes)}.`}${planned}${quarantine}${shadow}${warning} ${result.note}` };
       },
     });
 

@@ -3248,6 +3248,7 @@ var TimeMachineService = class {
       preCommandSnapshots: this.config.autoPreCommandSnapshot,
       preCommandTools: [...this.config.preCommandTools],
       preCommandMaxPerTurn: this.config.preCommandMaxPerTurn,
+      toolMutationLedger: this.config.autoPreCommandSnapshot,
       unattributedMutationInventory: true,
       externalEffectLedger: true,
       externalEffectAdapters: this.listExternalEffectAdapters(),

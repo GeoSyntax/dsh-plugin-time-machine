@@ -285,6 +285,7 @@ declare class TimeMachineService {
         preCommandSnapshots: boolean;
         preCommandTools: string[];
         preCommandMaxPerTurn: number;
+        toolMutationLedger: boolean;
         unattributedMutationInventory: boolean;
         externalEffectLedger: true;
         externalEffectAdapters: string[];

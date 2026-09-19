@@ -17,6 +17,7 @@ supported only when it is covered by the current implementation and tests.
 | Selective file restore | `tm-restore-files`, Web API | Yes | Yes | Varies |
 | Full workspace restore without conversation fork | `tm-restore`, `POST /api/restore-workspace` | Product-specific | Product-specific | Often the default undo behavior |
 | Conversation/session alignment | DSH `sessionController` fork | Product-specific | Product-specific | Usually undo/redo or same window |
+| Message-anchored native rewind action | Optional `client-companion` registers `conversation.chat.assistant-actions`; finalized message id maps to a checkpoint, unknown messages hide the action | Product-specific | Host/UI-dependent | `dsh-rewind` focuses on same-window message rewind |
 | Multi-session discovery | `GET /api/sessions`, URL-bound Dashboard selector, and companion `sessions()` API; unknown IDs fail closed | Product-specific | Host/UI-dependent | Usually same-window only |
 | Cross-origin companion boundary | Disabled by default; exact `webAllowedOrigins` entries enable local client packages with explicit CORS headers | Host-managed | Host/UI-dependent | Usually unavailable |
 | Agent-write ledger / hand-edit preservation | Explicit opt-in `enableAgentWriteLedger`; native `write`/`edit`/`str_replace_editor` events auto-record, other integrations use `recordAgentWrite()`; `--preserve-hand-edits` remains fail-closed without evidence | Hermes records hashes of agent writes and keeps later hand-edits by default; `--all` opts into overwrite | Product-specific | Varies |

@@ -37,6 +37,12 @@ interface TimeMachineWorkspaceHost {
 }
 ```
 
+When the adapter is present in the Cordis context as `workspaceHost`, Web
+rewind/undo/fork calls invoke `forkSession()` instead of the legacy
+`sessionController.fork()`. The plugin validates the resolved route first; an
+adapter error propagates through the existing rescue-checkpoint compensation
+path, so a child session is never reported as usable after a failed attach.
+
 `resolveSessionWorkspace()` must return a canonical, real path. The plugin must
 reject a path that is relative, escapes the declared root, or changes while an
 operation is running. `forkSession()` must create/attach the child session and

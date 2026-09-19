@@ -55,6 +55,9 @@ Workspace routing is intentionally explicit. `TimeMachineWorkspaceHost` and
 cwd, and actual isolation mode. Without that adapter the service reports
 `configured-root`/`shared-lock`; route validation rejects relative or malformed
 paths rather than inferring multi-workspace support.
+When a host provides the adapter through the Cordis `workspaceHost` service,
+Web rewind/undo/fork uses its atomic `forkSession()` operation; adapter failure
+therefore enters the same rescue compensation path as a normal session fork.
 
 DAG mutations and workspace mutations are serialized per configured workspace. DAG files are published by writing a unique temporary file and renaming it into place.
 

@@ -442,6 +442,8 @@ declare class TimeMachineService {
      * 核心：回滚物理工作区与会话状态至指定快照
      */
     rewindToCheckpoint(sessionId: string, checkpointId: string, options?: RestoreOptions): Promise<RestoreResult>;
+    /** Restore the full workspace and DAG cursor without requiring a host session fork. */
+    restoreWorkspaceToCheckpoint(sessionId: string, checkpointId: string, options?: RestoreOptions): Promise<RestoreResult>;
     /** Restore selected workspace paths without changing the DSH conversation. */
     restoreSelectedPaths(sessionId: string, checkpointId: string, paths: string[], options?: Pick<RestoreOptions, 'mode' | 'restorePlanId'>): Promise<SelectiveRestoreResult>;
     /**
@@ -912,6 +914,7 @@ interface SessionControllerLike {
     }): Promise<{
         readonly sessionId: string;
     }>;
+    inspect?(sessionId: string): Promise<unknown>;
 }
 interface CommandRuntimeLike {
     register(definition: unknown): () => void;

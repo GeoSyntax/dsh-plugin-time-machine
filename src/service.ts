@@ -529,6 +529,11 @@ export class TimeMachineService {
     });
   }
 
+  /** Restore the full workspace and DAG cursor without requiring a host session fork. */
+  async restoreWorkspaceToCheckpoint(sessionId: string, checkpointId: string, options: RestoreOptions = {}): Promise<RestoreResult> {
+    return this.rewindToCheckpoint(sessionId, checkpointId, options);
+  }
+
   /** Restore selected workspace paths without changing the DSH conversation. */
   async restoreSelectedPaths(
     sessionId: string,

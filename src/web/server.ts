@@ -207,6 +207,24 @@ export class TimeMachineWebServer {
       return;
     }
 
+    if (pathname === '/api/restore-workspace' && req.method === 'POST') {
+      const body = await this.readJsonBody(req);
+      const sessionId = this.requireSessionId(body.sessionId);
+      if (typeof body.checkpointId !== 'string' || !body.checkpointId.trim()) {
+        throw Object.assign(new Error('checkpointId is required'), { code: 'BAD_REQUEST' });
+      }
+      await this.requirePersistedSession(sessionId);
+      const result = await this.service.restoreWorkspaceToCheckpoint(sessionId, body.checkpointId, {
+        mode: body.force === true ? 'force' : body.merge === true ? 'merge' : undefined,
+        preserveVerifiedHandEdits: body.preserveVerifiedHandEdits === true,
+        deleteNewIgnoredPaths: body.deleteNewIgnoredPaths === true,
+        restorePlanId: typeof body.restorePlanId === 'string' ? body.restorePlanId : undefined,
+      });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, result }));
+      return;
+    }
+
     if (pathname === '/api/restore-files' && req.method === 'POST') {
       const body = await this.readJsonBody(req);
       const sessionId = this.requireSessionId(body.sessionId);

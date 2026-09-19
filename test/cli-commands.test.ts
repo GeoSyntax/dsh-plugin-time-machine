@@ -44,8 +44,8 @@ describe('registered DSH time-machine commands', () => {
     await fs.rm(root, { recursive: true, force: true });
   });
 
-  it('registers tm-tree, tm-doctor, tm-fork, and tm-rewind handlers', () => {
-    expect(Object.keys(handlers)).toEqual(expect.arrayContaining(['tm-tree', 'tm-doctor', 'tm-fork', 'tm-rewind', 'tm-agent-writes', 'tm-unattributed', 'tm-quarantine-migrate', 'tm-external-record', 'tm-external-compensate']));
+  it('registers tm-tree, tm-doctor, tm-fork, tm-rewind, and tm-restore handlers', () => {
+    expect(Object.keys(handlers)).toEqual(expect.arrayContaining(['tm-tree', 'tm-doctor', 'tm-fork', 'tm-rewind', 'tm-restore', 'tm-agent-writes', 'tm-unattributed', 'tm-quarantine-migrate', 'tm-external-record', 'tm-external-compensate']));
   });
 
   it('diagnoses dual-track readiness and actionable warnings', async () => {
@@ -54,6 +54,19 @@ describe('registered DSH time-machine commands', () => {
     expect(result.text).toContain('Conversation fork/rewind: available');
     expect(result.text).toContain('Pre-command checkpoints: disabled');
     expect(result.text).toContain('enable autoPreCommandSnapshot');
+  });
+
+  it('restores the full workspace without invoking the session controller', async () => {
+    const sessionId = 'cli-restore-session';
+    const file = path.join(root, 'restore.txt');
+    await fs.writeFile(file, 'before\n', 'utf8');
+    const checkpoint = await service.createTurnCheckpoint({ sessionId, turnIndex: 1, prompt: 'restore', sessionState: { sessionId, messages: [] } });
+    await fs.writeFile(file, 'after\n', 'utf8');
+    await service.finalizeTurnCheckpoint({ sessionId, checkpointId: checkpoint.id, status: 'success' });
+    const result = await handlers['tm-restore']({ agent: { session: { id: sessionId } }, rawInput: checkpoint.id });
+    expect(result.kind).toBe('success');
+    expect(result.text).toContain('conversation unchanged');
+    expect(await fs.readFile(file, 'utf8')).toBe('before\n');
   });
 
   it('exposes a read-only Agent-write ledger view', async () => {

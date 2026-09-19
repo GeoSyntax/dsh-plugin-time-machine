@@ -215,6 +215,23 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
     });
 
     scope.commands.register({
+      name: 'tm-restore',
+      description: 'Restore the full workspace to a checkpoint without forking the conversation',
+      input: { hint: '<checkpoint> [--merge|--force] [--delete-new-ignored] [--plan=<id>]' },
+      handler: async ({ agent, rawInput }: CommandInvocationLike): Promise<CommandResult> => {
+        const args = rawInput.trim().split(/\s+/).filter(Boolean);
+        const checkpointId = args.find(arg => !arg.startsWith('--'));
+        if (!checkpointId) return { kind: 'error', text: 'Usage: /tm-restore <checkpoint> [--merge|--force] [--delete-new-ignored]' };
+        const result = await service.restoreWorkspaceToCheckpoint(agent.session.id, checkpointId, {
+          mode: args.includes('--force') ? 'force' : args.includes('--merge') ? 'merge' : undefined,
+          deleteNewIgnoredPaths: args.includes('--delete-new-ignored'),
+          restorePlanId: optionValue(args, '--plan'),
+        });
+        return { kind: 'success', text: `Restored workspace to ${checkpointId}; conversation unchanged. Rescue point: ${result.rescueCheckpointId ?? 'none'}.` };
+      },
+    });
+
+    scope.commands.register({
       name: 'tm-preview',
       description: 'Preview workspace changes before a rewind or fork',
       input: { hint: '<checkpoint>' },

@@ -338,6 +338,22 @@ describe('TimeMachineWebServer', () => {
     expect(await fs.readFile(right, 'utf8')).toBe('live-right\n');
   });
 
+  it('restores a full workspace without requiring conversation restart', async () => {
+    const sessionId = 'restore-workspace-web';
+    const file = path.join(tmpDir, 'restore-workspace.txt');
+    await fs.writeFile(file, 'before\n', 'utf8');
+    const checkpoint = await service.createTurnCheckpoint({ sessionId, turnIndex: 1, prompt: 'restore', sessionState: { sessionId, messages: [] } });
+    await fs.writeFile(file, 'after\n', 'utf8');
+    await service.finalizeTurnCheckpoint({ sessionId, checkpointId: checkpoint.id, status: 'success' });
+    const response = await fetch(`http://localhost:${testPort}/api/restore-workspace`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId, checkpointId: checkpoint.id }),
+    });
+    expect(response.status).toBe(200);
+    expect((await response.json()).success).toBe(true);
+    expect(await fs.readFile(file, 'utf8')).toBe('before\n');
+  });
+
   it('reports Git merge capability when the workspace is a normal repository', async () => {
     await execAsync('git', ['init'], { cwd: tmpDir });
     await execAsync('git', ['config', 'user.name', 'TestBot'], { cwd: tmpDir });

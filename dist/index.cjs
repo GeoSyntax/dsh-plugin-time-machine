@@ -2428,6 +2428,10 @@ var TimeMachineService = class {
       };
     });
   }
+  /** Restore the full workspace and DAG cursor without requiring a host session fork. */
+  async restoreWorkspaceToCheckpoint(sessionId, checkpointId, options = {}) {
+    return this.rewindToCheckpoint(sessionId, checkpointId, options);
+  }
   /** Restore selected workspace paths without changing the DSH conversation. */
   async restoreSelectedPaths(sessionId, checkpointId, paths, options = {}) {
     return this.runWorkspaceOperation(async () => {
@@ -3260,6 +3264,23 @@ var TimeMachineWebServer = class {
       res.end(JSON.stringify({ success: true, result, conversation }));
       return;
     }
+    if (pathname === "/api/restore-workspace" && req.method === "POST") {
+      const body = await this.readJsonBody(req);
+      const sessionId = this.requireSessionId(body.sessionId);
+      if (typeof body.checkpointId !== "string" || !body.checkpointId.trim()) {
+        throw Object.assign(new Error("checkpointId is required"), { code: "BAD_REQUEST" });
+      }
+      await this.requirePersistedSession(sessionId);
+      const result = await this.service.restoreWorkspaceToCheckpoint(sessionId, body.checkpointId, {
+        mode: body.force === true ? "force" : body.merge === true ? "merge" : void 0,
+        preserveVerifiedHandEdits: body.preserveVerifiedHandEdits === true,
+        deleteNewIgnoredPaths: body.deleteNewIgnoredPaths === true,
+        restorePlanId: typeof body.restorePlanId === "string" ? body.restorePlanId : void 0
+      });
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: true, result }));
+      return;
+    }
     if (pathname === "/api/restore-files" && req.method === "POST") {
       const body = await this.readJsonBody(req);
       const sessionId = this.requireSessionId(body.sessionId);
@@ -3729,6 +3750,22 @@ ${changes.map((item) => `${item.status} ${item.path}`).join("\n")}` };
           await service.completeRestoreJournal(result.restoreJournalId);
           throw error;
         }
+      }
+    });
+    scope.commands.register({
+      name: "tm-restore",
+      description: "Restore the full workspace to a checkpoint without forking the conversation",
+      input: { hint: "<checkpoint> [--merge|--force] [--delete-new-ignored] [--plan=<id>]" },
+      handler: async ({ agent, rawInput }) => {
+        const args = rawInput.trim().split(/\s+/).filter(Boolean);
+        const checkpointId = args.find((arg) => !arg.startsWith("--"));
+        if (!checkpointId) return { kind: "error", text: "Usage: /tm-restore <checkpoint> [--merge|--force] [--delete-new-ignored]" };
+        const result = await service.restoreWorkspaceToCheckpoint(agent.session.id, checkpointId, {
+          mode: args.includes("--force") ? "force" : args.includes("--merge") ? "merge" : void 0,
+          deleteNewIgnoredPaths: args.includes("--delete-new-ignored"),
+          restorePlanId: optionValue(args, "--plan")
+        });
+        return { kind: "success", text: `Restored workspace to ${checkpointId}; conversation unchanged. Rescue point: ${result.rescueCheckpointId ?? "none"}.` };
       }
     });
     scope.commands.register({

@@ -55,6 +55,13 @@ DAG mutations and workspace mutations are serialized per configured workspace. D
 6. Fork the DSH conversation at `boundarySeq`.
 7. If step 6 fails, restore the rescue node and cursor.
 
+Preview plans also bind the hand-edit policy that was reviewed. A request that
+changes `preserveVerifiedHandEdits` after preview is rejected, so the dashboard
+cannot silently review one restore policy and execute another. When the host
+exposes the optional `sessionController.rewind({ sessionId, atSeq })` extension,
+the same protocol may finish with an in-place session rewind; current DSH alpha
+hosts use the fork path.
+
 This is compensating transaction semantics, not a filesystem-wide ACID transaction.
 
 ## Git decisions

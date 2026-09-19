@@ -25,6 +25,12 @@
   and arbitrary code writes still require explicit integration evidence.
 - CLI, Web API, Dashboard, DSH source smoke tests, cross-platform CI, and
   machine-readable benchmark output.
+- Opt-in Hermes-style pre-command checkpoints on DSH `tools/pre-execute` with
+  `tools/execute` fallback, configurable mutation-tool allowlist, per-turn
+  limit, call-id deduplication, and a live source smoke assertion.
+- Dependency-free `TimeMachineClient` companion contract for status,
+  capabilities, storage, DAG, diff, preview-bound rewind/fork, selective
+  restore, and audit reads; Web fork now consumes the same restore-plan fence.
 
 ### Safety boundaries
 
@@ -34,6 +40,8 @@
 - `workspaceIsolation` is `shared-lock`, not an independent worktree or
   container.
 - `shadowStoreEncryption` and native DSH message-action UI are not implemented.
+- The companion client is a transport contract, not a native transcript slot;
+  a separate DSH Web client package is still required to render buttons.
 - Database, network, process, and cloud side effects require explicit external
   adapters; filesystem restore never claims to undo them.
 

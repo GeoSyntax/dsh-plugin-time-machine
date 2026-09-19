@@ -1,7 +1,7 @@
 import { Context } from '@deepseek-ai/cordis';
 import Schema from '@deepseek-ai/schemastery';
-import { D as DAGTree, C as CheckpointNode, T as TimeMachineConfig, S as SessionState, A as AgentWriteRecord, F as FileChange, E as ExternalEffectRecord, a as ExternalEffectAdapter, b as ExternalEffectCompensationResult, R as RestoreOptions, c as RestoreResult, d as SelectiveRestoreResult, e as ReflectionSummary, f as DiffResult, g as RestorePreview, h as StorageStatus, i as SessionSummary, P as PruneResult } from './client-CLIlLDKa.js';
-export { j as CompanionTimelineEntry, k as ExternalCompensationRequest, l as ExternalEffectCompensationContext, m as ExternalEffectRequest, n as ForkRequest, o as PreviewBoundAction, p as RestoreFilesRequest, q as RestoreWorkspaceRequest, r as RewindRequest, s as SessionMessage, t as TimeMachineClient, u as TimeMachineClientError, v as TimeMachineClientOptions, U as UndoRequest, w as buildCompanionTimeline } from './client-CLIlLDKa.js';
+import { D as DAGTree, C as CheckpointNode, T as TimeMachineConfig, S as SessionState, A as AgentWriteRecord, F as FileChange, E as ExternalEffectRecord, a as ExternalEffectAdapter, b as ExternalEffectCompensationResult, R as RestoreOptions, c as RestoreResult, d as SelectiveRestoreResult, e as ReflectionSummary, f as DiffResult, g as RestorePreview, h as StorageStatus, i as SessionSummary, P as PruneResult } from './client-BNxrpZv8.js';
+export { j as CompanionTimelineEntry, k as ExternalCompensationRequest, l as ExternalEffectCompensationContext, m as ExternalEffectRequest, n as ForkRequest, o as PreviewBoundAction, p as RestoreFilesRequest, q as RestoreWorkspaceRequest, r as RewindRequest, s as SessionMessage, t as TimeMachineClient, u as TimeMachineClientError, v as TimeMachineClientOptions, U as UndoRequest, w as buildCompanionTimeline } from './client-BNxrpZv8.js';
 
 interface DAGManagerOptions {
     sessionId: string;
@@ -136,6 +136,7 @@ declare class TimeMachineService {
             error: string;
         }>;
         assistantMessageId?: string;
+        assistantMessageIds?: string[];
     }): Promise<CheckpointNode>;
     /** Resolve a finalized assistant message to its turn checkpoint for message actions. */
     findCheckpointByAssistantMessage(sessionId: string, messageId: string): Promise<CheckpointNode | null>;

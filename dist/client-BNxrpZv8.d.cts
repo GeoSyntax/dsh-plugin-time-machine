@@ -90,6 +90,8 @@ interface CheckpointNode {
     status: 'running' | 'success' | 'failed' | 'aborted';
     /** Durable assistant message produced by this turn, when the host exposes one. */
     assistantMessageId?: string;
+    /** All finalized assistant messages produced by this turn, including tool-loop intermediates. */
+    assistantMessageIds?: string[];
     errorMessage?: string;
     failedTools?: Array<{
         toolName: string;

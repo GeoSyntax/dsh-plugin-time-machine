@@ -158,6 +158,7 @@ export function apply(ctx: Context, config: Config = {}): void {
   }
 
   const checkpoints = new Map<string, string>();
+  const checkpointAssistantBaselines = new Map<string, Set<string>>();
   const observedWrites = new Map<string, { sessionId: string; turn: number; paths: Map<string, 'modify' | 'delete'> }>();
   const pendingLedgerWrites = new Map<string, Promise<void>>();
   const preCommandCalls = new Set<string>();
@@ -280,6 +281,8 @@ export function apply(ctx: Context, config: Config = {}): void {
     const checkpointId = checkpoints.get(key);
     if (!checkpointId) return;
     checkpoints.delete(key);
+    const baseline = checkpointAssistantBaselines.get(key) ?? new Set<string>();
+    checkpointAssistantBaselines.delete(key);
     const reason = asRecord(event.data.reason);
     const kind = typeof reason?.kind === 'string' ? reason.kind : 'error';
     const failure = asRecord(reason?.error);
@@ -290,13 +293,15 @@ export function apply(ctx: Context, config: Config = {}): void {
       if (callKey.startsWith(`${session.id}\0`) && callKey.endsWith(`\0${turn as number}`)) preCommandCalls.delete(callKey);
     }
     preCommandCounts.delete(`${session.id}\0${turn as number}`);
+    const assistantMessageIds = assistantMessageIdsForTurn(getMessages(session), baseline);
     void ledgerWrites.then(() => service.finalizeTurnCheckpoint({
       sessionId: session.id,
       checkpointId,
       status: kind === 'completed' ? 'success' : kind === 'aborted' || kind === 'interrupted' ? 'aborted' : 'failed',
       errorMessage: typeof failure?.message === 'string' ? failure.message : kind === 'completed' ? undefined : `Turn ended: ${kind}`,
       failedTools: failedTools.length > 0 ? failedTools : undefined,
-      assistantMessageId: latestAssistantMessageId(getMessages(session)),
+      assistantMessageId: assistantMessageIds.at(-1),
+      assistantMessageIds,
     })).catch((error: unknown) => {
       ctx.logger.error(`[time-machine] could not finalize ${checkpointId}: ${errorMessage(error)}`);
     });
@@ -334,6 +339,10 @@ export function apply(ctx: Context, config: Config = {}): void {
           status: 'running',
         });
         checkpoints.set(checkpointKey(session.id, turn), checkpoint.id);
+        checkpointAssistantBaselines.set(
+          checkpointKey(session.id, turn),
+          new Set(allAssistantMessageIds(getMessages(session))),
+        );
       } catch (error) {
         scope.logger.error(`[time-machine] checkpoint for turn ${turn} failed: ${errorMessage(error)}`);
         throw error;
@@ -430,12 +439,18 @@ function getMessages(session: SessionLike): SessionMessage[] {
   return session.deriveMessages().map(message => message as SessionMessage);
 }
 
-function latestAssistantMessageId(messages: readonly SessionMessage[]): string | undefined {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index] as SessionMessage & { id?: unknown };
-    if (message.role === 'assistant' && typeof message.id === 'string' && message.id.trim()) return message.id;
+function assistantMessageIdsForTurn(messages: readonly SessionMessage[], baseline: ReadonlySet<string>): string[] {
+  const ids: string[] = [];
+  for (const message of messages) {
+    const candidate = message as SessionMessage & { id?: unknown };
+    if (candidate.role !== 'assistant' || typeof candidate.id !== 'string' || !candidate.id.trim() || baseline.has(candidate.id)) continue;
+    ids.push(candidate.id);
   }
-  return undefined;
+  return [...new Set(ids)];
+}
+
+function allAssistantMessageIds(messages: readonly SessionMessage[]): string[] {
+  return assistantMessageIdsForTurn(messages, new Set<string>());
 }
 
 function findLastEvent(

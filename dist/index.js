@@ -1784,6 +1784,9 @@ var DAGStateManager = class {
       if (node.assistantMessageId !== void 0 && (typeof node.assistantMessageId !== "string" || !node.assistantMessageId.trim())) {
         throw new Error(`DAG checkpoint '${id}' has an invalid assistant message id.`);
       }
+      if (node.assistantMessageIds !== void 0 && (!Array.isArray(node.assistantMessageIds) || node.assistantMessageIds.some((messageId) => typeof messageId !== "string" || !messageId.trim()))) {
+        throw new Error(`DAG checkpoint '${id}' has invalid assistant message ids.`);
+      }
       if (node.parentId !== null && !tree.nodes[node.parentId]) {
         throw new Error(`DAG checkpoint '${id}' references missing parent '${node.parentId}'.`);
       }
@@ -2199,6 +2202,7 @@ var TimeMachineService = class {
         errorMessage: params.errorMessage,
         failedTools: params.failedTools,
         ...params.assistantMessageId ? { assistantMessageId: params.assistantMessageId } : {},
+        ...params.assistantMessageIds?.length ? { assistantMessageIds: [...new Set(params.assistantMessageIds)] } : {},
         settledGitTreeOid: settled?.treeOid,
         settledIgnoredPaths: settled?.ignoredPaths,
         unattributedChanges
@@ -2209,7 +2213,7 @@ var TimeMachineService = class {
   async findCheckpointByAssistantMessage(sessionId, messageId) {
     if (!messageId.trim()) return null;
     const dag = await this.getDAGManager(sessionId);
-    const matches = Object.values(dag.tree.nodes).filter((node) => node.assistantMessageId === messageId).sort((left, right) => right.timestamp - left.timestamp);
+    const matches = Object.values(dag.tree.nodes).filter((node) => node.assistantMessageId === messageId || node.assistantMessageIds?.includes(messageId)).sort((left, right) => right.timestamp - left.timestamp);
     return matches[0] ? cloneJson2(matches[0]) : null;
   }
   /**
@@ -4199,6 +4203,7 @@ function apply(ctx, config = {}) {
     }, "time-machine.web");
   }
   const checkpoints = /* @__PURE__ */ new Map();
+  const checkpointAssistantBaselines = /* @__PURE__ */ new Map();
   const observedWrites = /* @__PURE__ */ new Map();
   const pendingLedgerWrites = /* @__PURE__ */ new Map();
   const preCommandCalls = /* @__PURE__ */ new Set();
@@ -4305,6 +4310,8 @@ function apply(ctx, config = {}) {
     const checkpointId = checkpoints.get(key);
     if (!checkpointId) return;
     checkpoints.delete(key);
+    const baseline = checkpointAssistantBaselines.get(key) ?? /* @__PURE__ */ new Set();
+    checkpointAssistantBaselines.delete(key);
     const reason = asRecord(event.data.reason);
     const kind = typeof reason?.kind === "string" ? reason.kind : "error";
     const failure = asRecord(reason?.error);
@@ -4315,13 +4322,15 @@ function apply(ctx, config = {}) {
       if (callKey.startsWith(`${session.id}\0`) && callKey.endsWith(`\0${turn}`)) preCommandCalls.delete(callKey);
     }
     preCommandCounts.delete(`${session.id}\0${turn}`);
+    const assistantMessageIds = assistantMessageIdsForTurn(getMessages(session), baseline);
     void ledgerWrites.then(() => service.finalizeTurnCheckpoint({
       sessionId: session.id,
       checkpointId,
       status: kind === "completed" ? "success" : kind === "aborted" || kind === "interrupted" ? "aborted" : "failed",
       errorMessage: typeof failure?.message === "string" ? failure.message : kind === "completed" ? void 0 : `Turn ended: ${kind}`,
       failedTools: failedTools.length > 0 ? failedTools : void 0,
-      assistantMessageId: latestAssistantMessageId(getMessages(session))
+      assistantMessageId: assistantMessageIds.at(-1),
+      assistantMessageIds
     })).catch((error) => {
       ctx.logger.error(`[time-machine] could not finalize ${checkpointId}: ${errorMessage(error)}`);
     });
@@ -4356,6 +4365,10 @@ function apply(ctx, config = {}) {
           status: "running"
         });
         checkpoints.set(checkpointKey(session.id, turn), checkpoint.id);
+        checkpointAssistantBaselines.set(
+          checkpointKey(session.id, turn),
+          new Set(allAssistantMessageIds(getMessages(session)))
+        );
       } catch (error) {
         scope.logger.error(`[time-machine] checkpoint for turn ${turn} failed: ${errorMessage(error)}`);
         throw error;
@@ -4424,12 +4437,17 @@ function getMessages(session) {
   if (typeof session.deriveMessages !== "function") return [];
   return session.deriveMessages().map((message) => message);
 }
-function latestAssistantMessageId(messages) {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (message.role === "assistant" && typeof message.id === "string" && message.id.trim()) return message.id;
+function assistantMessageIdsForTurn(messages, baseline) {
+  const ids = [];
+  for (const message of messages) {
+    const candidate = message;
+    if (candidate.role !== "assistant" || typeof candidate.id !== "string" || !candidate.id.trim() || baseline.has(candidate.id)) continue;
+    ids.push(candidate.id);
   }
-  return void 0;
+  return [...new Set(ids)];
+}
+function allAssistantMessageIds(messages) {
+  return assistantMessageIdsForTurn(messages, /* @__PURE__ */ new Set());
 }
 function findLastEvent(events, predicate) {
   for (let index = events.length - 1; index >= 0; index -= 1) {

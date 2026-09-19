@@ -13,7 +13,7 @@ assistant 的 `messageId`，并且按 session 注入；它不是一个可以从�
 - 已支持：CLI `/tm-preview`、`/tm-rewind`、`/tm-fork`。
 - 可选 companion 同时贡献 `conversation.session.header.actions` 和
   `conversation.chat.assistant-actions`：后者只在服务端能把 finalized assistant
-  message 映射到 checkpoint 时出现，旧消息/内部消息会自动隐藏。
+  message（包括同一 turn 的工具循环中间消息）映射到 checkpoint 时出现，旧消息/内部消息会自动隐藏。
 - 兼容回退：用户可以从 DSH 打开独立 Dashboard，或执行 CLI 命令。
 - 已提供：无 React/浏览器依赖的 `TimeMachineClient` companion contract（npm 子路径
   `dsh-plugin-time-machine/client`）；它封装

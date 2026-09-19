@@ -343,6 +343,9 @@ export class DAGStateManager {
       if (node.assistantMessageId !== undefined && (typeof node.assistantMessageId !== 'string' || !node.assistantMessageId.trim())) {
         throw new Error(`DAG checkpoint '${id}' has an invalid assistant message id.`);
       }
+      if (node.assistantMessageIds !== undefined && (!Array.isArray(node.assistantMessageIds) || node.assistantMessageIds.some(messageId => typeof messageId !== 'string' || !messageId.trim()))) {
+        throw new Error(`DAG checkpoint '${id}' has invalid assistant message ids.`);
+      }
       if (node.parentId !== null && !tree.nodes[node.parentId]) {
         throw new Error(`DAG checkpoint '${id}' references missing parent '${node.parentId}'.`);
       }

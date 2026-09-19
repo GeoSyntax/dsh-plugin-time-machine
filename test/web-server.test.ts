@@ -135,7 +135,7 @@ describe('TimeMachineWebServer', () => {
     const checkpoint = await service.createTurnCheckpoint({
       sessionId, turnIndex: 1, prompt: 'message action', sessionState: { sessionId, messages: [] },
     });
-    await service.finalizeTurnCheckpoint({ sessionId, checkpointId: checkpoint.id, status: 'success', assistantMessageId: 'assistant-1' });
+    await service.finalizeTurnCheckpoint({ sessionId, checkpointId: checkpoint.id, status: 'success', assistantMessageId: 'assistant-2', assistantMessageIds: ['assistant-1', 'assistant-2'] });
     const response = await fetch(`http://localhost:${testPort}/api/checkpoint-for-message?sessionId=${sessionId}&messageId=assistant-1`);
     expect(response.status).toBe(200);
     expect((await response.json()).checkpoint.id).toBe(checkpoint.id);

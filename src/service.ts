@@ -304,6 +304,7 @@ export class TimeMachineService {
     errorMessage?: string;
     failedTools?: Array<{ toolName: string; input: any; error: string }>;
     assistantMessageId?: string;
+    assistantMessageIds?: string[];
   }): Promise<CheckpointNode> {
     return this.runWorkspaceOperation(async () => {
       const dag = await this.getDAGManager(params.sessionId);
@@ -324,6 +325,7 @@ export class TimeMachineService {
         errorMessage: params.errorMessage,
         failedTools: params.failedTools,
         ...(params.assistantMessageId ? { assistantMessageId: params.assistantMessageId } : {}),
+        ...(params.assistantMessageIds?.length ? { assistantMessageIds: [...new Set(params.assistantMessageIds)] } : {}),
         settledGitTreeOid: settled?.treeOid,
         settledIgnoredPaths: settled?.ignoredPaths,
         unattributedChanges,
@@ -336,7 +338,7 @@ export class TimeMachineService {
     if (!messageId.trim()) return null;
     const dag = await this.getDAGManager(sessionId);
     const matches = Object.values(dag.tree.nodes)
-      .filter(node => node.assistantMessageId === messageId)
+      .filter(node => node.assistantMessageId === messageId || node.assistantMessageIds?.includes(messageId))
       .sort((left, right) => right.timestamp - left.timestamp);
     return matches[0] ? cloneJson(matches[0]) : null;
   }

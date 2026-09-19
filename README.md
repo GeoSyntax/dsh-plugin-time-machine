@@ -90,6 +90,7 @@ dsh plugin --profile web list --depth 0
 - **Shadow pack 维护:** `shadowStore: true` 时，显式传入 `--repack-shadow`（或 Web API `repackShadowObjects: true`）会仅根据 `refs/dsh-tm/*` 重建 shadow pack，并删除旧的不可达 pack；不会运行用户仓库的全局 GC。
 - **崩溃恢复:** rewind/fork/选择性恢复会写入 durable restore journal；插件下次启动时如果发现未完成操作，会先恢复 rescue checkpoint，再清理 journal。
 - **可验证的人工修改保留（显式 opt-in）:** 开启 `enableAgentWriteLedger` 后，插件会从 DSH 原生 `fs/observed` + `tools/result` 事件自动登记 `write`、`edit`、`str_replace_editor` 的成功写入；删除事件也会登记为 `delete`，使用确定性的 absent tombstone 哈希。其他集成也可调用 `recordAgentWrite()` 登记路径和 SHA-256。`/tm-rewind --preserve-hand-edits` 只保留登记哈希已经变化的路径。未登记路径不会被猜测为人工修改，哈希缺失或账本损坏仍然 fail-closed。
+- **可选的 Hermes 风格默认保留:** 设置 `preserveVerifiedHandEditsByDefault: true` 会自动启用 Agent-write ledger，并在未显式传入 `--preserve-hand-edits` 时保留账本已验证、后来发生人工修改的路径；显式 `preserveVerifiedHandEdits: false` 仍可恢复严格覆盖语义。默认值为 `false`，因此现有安全策略不变。
 - **账本可审计:** 时间线检查点详情、CLI `/tm-agent-writes <checkpoint>` 与只读 `GET /api/agent-writes?sessionId=...&checkpoint=...` 暴露已验证的路径、操作、SHA-256 和时间戳，便于在回滚前解释哪些内容由 Agent 写入。
 - **未归因变更显式告警:** turn 结束时 Git 或 fallback manifest 会对比 checkpoint 起点与 settled workspace；没有对应 Agent-write 证据的路径会记录为 `unattributedChanges`，并在时间线中标记。插件不会把这类 bash/PTC/人工修改猜成 Agent 写入。
 - **未归因变更可查询:** CLI `/tm-unattributed <checkpoint>` 与 `GET /api/unattributed-changes?sessionId=...&checkpoint=...` 提供机器可读的只读清单。
@@ -157,6 +158,9 @@ dsh plugin --profile web list --depth 0
     allowPartialSnapshots: false
     # Optional, disabled by default. Enables integration-supplied Agent-write evidence.
     enableAgentWriteLedger: false
+    # Optional. Implies enableAgentWriteLedger and preserves verified hand-edits
+    # unless the request explicitly sets preserveVerifiedHandEdits=false.
+    preserveVerifiedHandEditsByDefault: false
     # Optional Hermes-style boundary before high-risk DSH tools.
     autoPreCommandSnapshot: false
     preCommandTools:
@@ -176,7 +180,7 @@ dsh plugin --profile web list --depth 0
 ```
 
 Web dashboard 只绑定 loopback，并拒绝非本机 Host 和跨 origin 请求。若要让独立的 DSH client companion 跨端口调用 API，必须显式配置 `webAllowedOrigins`；该列表只允许精确的 `http(s)` Origin，默认为空。Dashboard 顶部提供 `Undo latest turn` 快捷操作，它调用与 CLI 相同的 `/api/undo` contract；需要查看冲突和 partial 路径时仍应使用时间线中的 preview/rewind。`/tm-rewind` 与 `/tm-fork` 需要宿主提供 `sessionController`，否则插件会拒绝只恢复文件的危险降级行为。
-集成方可读取带有 `version: 1` 的 `GET /api/capabilities`，提前判断当前工作区是否支持 Git 三方 merge、fallback 文本 diff、selective restore、shadow store、shadow 加密、quarantine 加密/迁移、外部副作用账本、增量捕获、Agent-write ledger、pre-command snapshots 和已注册的 compensation adapters，以及 sparse checkout/submodule/进行中操作限制；`handEditPolicy: reject-drift` 表示默认不会猜测文件作者，`ledger-opt-in` 表示已开启显式 Agent-write 账本但仍需传入 `--preserve-hand-edits`；返回的 `policies` 还公开 restore 模式、快照/存储/quarantine 配额、自动保留年龄、锁等待上限和前置高风险工具集合，便于 UI 在操作前解释边界；`workspaceIsolation: shared-lock` 明确表示当前是共享工作区加锁，不是独立 worktree/container；`rewindSessionMode: fork` 明确表示回滚不会改写 DSH append-only history，而是恢复工作区后打开新会话。
+集成方可读取带有 `version: 1` 的 `GET /api/capabilities`，提前判断当前工作区是否支持 Git 三方 merge、fallback 文本 diff、selective restore、shadow store、shadow 加密、quarantine 加密/迁移、外部副作用账本、增量捕获、Agent-write ledger、pre-command snapshots 和已注册的 compensation adapters，以及 sparse checkout/submodule/进行中操作限制；`handEditPolicy: reject-drift` 表示默认不会猜测文件作者，`ledger-opt-in` 表示已开启显式 Agent-write 账本但仍需传入 `--preserve-hand-edits`，`ledger-default` 表示已启用经账本验证的人工修改默认保留；返回的 `policies` 还公开 restore 模式、快照/存储/quarantine 配额、自动保留年龄、锁等待上限和前置高风险工具集合，便于 UI 在操作前解释边界；`workspaceIsolation: shared-lock` 明确表示当前是共享工作区加锁，不是独立 worktree/container；`rewindSessionMode: fork` 明确表示回滚不会改写 DSH append-only history，而是恢复工作区后打开新会话。
 
 ## Verification
 

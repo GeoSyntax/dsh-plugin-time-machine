@@ -67,7 +67,7 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
           `Conversation fork/rewind: ${sessionController ? 'available' : 'unavailable (no sessionController)'}`,
           `Web dashboard: ${service.config.enableWebUI === false ? 'disabled' : `available on ${service.config.webHost ?? '127.0.0.1'}:${service.config.webPort ?? 3088}`}`,
           `Pre-command checkpoints: ${service.config.autoPreCommandSnapshot ? 'enabled' : 'disabled'}`,
-          `Agent-write ledger: ${service.config.enableAgentWriteLedger ? 'enabled' : 'disabled'}`,
+          `Agent-write ledger: ${service.config.enableAgentWriteLedger ? (service.config.preserveVerifiedHandEditsByDefault ? 'enabled (preserve hand-edits by default)' : 'enabled') : 'disabled'}`,
           `Storage: ${formatBytes(storage.bytes)} in ${storage.files} files; ${storage.checkpoints} checkpoints`,
         ];
         const warnings: string[] = [];
@@ -215,7 +215,7 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
         const sessionId = agent.session.id;
         const result = await service.rewindToCheckpoint(sessionId, checkpointId, {
           mode: args.includes('--force') ? 'force' : args.includes('--merge') ? 'merge' : undefined,
-          preserveVerifiedHandEdits: args.includes('--preserve-hand-edits'),
+          ...(args.includes('--preserve-hand-edits') ? { preserveVerifiedHandEdits: true } : {}),
           deleteNewIgnoredPaths: args.includes('--delete-new-ignored'),
           restorePlanId: optionValue(args, '--plan'),
         });
@@ -251,7 +251,7 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
         if (!checkpointId) return { kind: 'error', text: `Cannot undo ${count} turn(s): the active session has fewer than ${count + 1} completed turns.` };
         const result = await service.rewindToCheckpoint(sessionId, checkpointId, {
           mode: args.includes('--force') ? 'force' : args.includes('--merge') ? 'merge' : undefined,
-          preserveVerifiedHandEdits: args.includes('--preserve-hand-edits'),
+          ...(args.includes('--preserve-hand-edits') ? { preserveVerifiedHandEdits: true } : {}),
           deleteNewIgnoredPaths: args.includes('--delete-new-ignored'),
         });
         try {

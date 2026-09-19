@@ -123,7 +123,8 @@ export class TimeMachineService {
       maxSnapshotFileBytes: Math.max(0, Math.floor(options.config?.maxSnapshotFileBytes ?? 0)),
       maxSnapshotBytes: Math.max(0, Math.floor(options.config?.maxSnapshotBytes ?? 0)),
       allowPartialSnapshots: options.config?.allowPartialSnapshots ?? false,
-      enableAgentWriteLedger: options.config?.enableAgentWriteLedger ?? false,
+      enableAgentWriteLedger: options.config?.enableAgentWriteLedger ?? options.config?.preserveVerifiedHandEditsByDefault ?? false,
+      preserveVerifiedHandEditsByDefault: options.config?.preserveVerifiedHandEditsByDefault ?? false,
       autoPreCommandSnapshot: options.config?.autoPreCommandSnapshot ?? false,
       preCommandTools: [...(options.config?.preCommandTools ?? ['write', 'edit', 'str_replace_editor', 'bash', 'shell', 'pwsh', 'powershell', 'terminal_bash', 'terminal_exec', 'run_code', 'python'])],
       preCommandMaxPerTurn: Math.max(0, Math.floor(options.config?.preCommandMaxPerTurn ?? 1)),
@@ -908,7 +909,7 @@ export class TimeMachineService {
     /** Safe dirty-path overlay is available for normal Git workspaces. */
     incrementalCapture: boolean;
     /** Current restore semantics; ledger mode is explicit and opt-in. */
-    handEditPolicy: 'reject-drift' | 'ledger-opt-in';
+    handEditPolicy: 'reject-drift' | 'ledger-opt-in' | 'ledger-default';
     agentWriteLedger: boolean;
     preCommandSnapshots: boolean;
     preCommandTools: string[];
@@ -929,6 +930,7 @@ export class TimeMachineService {
       maxSnapshotBytes: number;
       allowPartialSnapshots: boolean;
       enableAgentWriteLedger: boolean;
+      preserveVerifiedHandEditsByDefault: boolean;
       autoPreCommandSnapshot: boolean;
       preCommandTools: string[];
       preCommandMaxPerTurn: number;
@@ -954,7 +956,9 @@ export class TimeMachineService {
       quarantineMigration: git && Boolean(this.config.quarantineEncryptionKeyEnv),
       partialSnapshots: git && this.config.allowPartialSnapshots && (this.config.maxSnapshotFileBytes > 0 || this.config.maxSnapshotBytes > 0),
       incrementalCapture: usable && this.config.maxSnapshotFileBytes === 0 && this.config.maxSnapshotBytes === 0,
-      handEditPolicy: this.config.enableAgentWriteLedger ? 'ledger-opt-in' : 'reject-drift',
+      handEditPolicy: this.config.preserveVerifiedHandEditsByDefault
+        ? 'ledger-default'
+        : this.config.enableAgentWriteLedger ? 'ledger-opt-in' : 'reject-drift',
       agentWriteLedger: this.config.enableAgentWriteLedger,
       preCommandSnapshots: this.config.autoPreCommandSnapshot,
       preCommandTools: [...this.config.preCommandTools],
@@ -974,6 +978,7 @@ export class TimeMachineService {
         maxSnapshotBytes: this.config.maxSnapshotBytes,
         allowPartialSnapshots: this.config.allowPartialSnapshots,
         enableAgentWriteLedger: this.config.enableAgentWriteLedger,
+        preserveVerifiedHandEditsByDefault: this.config.preserveVerifiedHandEditsByDefault,
         autoPreCommandSnapshot: this.config.autoPreCommandSnapshot,
         preCommandTools: [...this.config.preCommandTools],
         preCommandMaxPerTurn: this.config.preCommandMaxPerTurn,
@@ -1124,7 +1129,8 @@ export class TimeMachineService {
   ): Promise<{ rescue?: CheckpointNode; deletedIgnoredPaths: string[]; journalId?: string; preservedHandEditPaths: string[] }> {
     const current = dag.getCurrentNode() ?? undefined;
     const mode = options.mode ?? this.config.restoreMode;
-    const preserveHandEdits = options.preserveVerifiedHandEdits === true;
+    const preserveHandEdits = options.preserveVerifiedHandEdits === true
+      || (options.preserveVerifiedHandEdits === undefined && this.config.preserveVerifiedHandEditsByDefault);
     const preservedPaths = preserveHandEdits && current ? await this.findVerifiedHandEdits(current) : [];
     if (await this.gitEngine.isGitRepo()) await this.gitEngine.assertSupportedWorkspace();
 

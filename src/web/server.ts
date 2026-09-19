@@ -203,7 +203,7 @@ export class TimeMachineWebServer {
       await this.requirePersistedSession(sourceSessionId);
       const result = await this.service.rewindToCheckpoint(sourceSessionId, checkpointId, {
         mode: body.force === true ? 'force' : body.merge === true ? 'merge' : undefined,
-        preserveVerifiedHandEdits: body.preserveVerifiedHandEdits === true,
+        ...(typeof body.preserveVerifiedHandEdits === 'boolean' ? { preserveVerifiedHandEdits: body.preserveVerifiedHandEdits } : {}),
         deleteNewIgnoredPaths: body.deleteNewIgnoredPaths === true,
         restorePlanId: typeof body.restorePlanId === 'string' ? body.restorePlanId : undefined,
       });
@@ -234,7 +234,7 @@ export class TimeMachineWebServer {
       if (!target) throw Object.assign(new Error(`No completed turn exists ${count} step(s) before the active checkpoint.`), { code: 'UNDO_TARGET_NOT_FOUND' });
       const result = await this.service.rewindToCheckpoint(sourceSessionId, target.id, {
         mode: body.force === true ? 'force' : body.merge === true ? 'merge' : undefined,
-        preserveVerifiedHandEdits: body.preserveVerifiedHandEdits === true,
+        ...(typeof body.preserveVerifiedHandEdits === 'boolean' ? { preserveVerifiedHandEdits: body.preserveVerifiedHandEdits } : {}),
         deleteNewIgnoredPaths: body.deleteNewIgnoredPaths === true,
       });
       let conversation: { sessionId: string };
@@ -260,7 +260,7 @@ export class TimeMachineWebServer {
       await this.requirePersistedSession(sessionId);
       const result = await this.service.restoreWorkspaceToCheckpoint(sessionId, body.checkpointId, {
         mode: body.force === true ? 'force' : body.merge === true ? 'merge' : undefined,
-        preserveVerifiedHandEdits: body.preserveVerifiedHandEdits === true,
+        ...(typeof body.preserveVerifiedHandEdits === 'boolean' ? { preserveVerifiedHandEdits: body.preserveVerifiedHandEdits } : {}),
         deleteNewIgnoredPaths: body.deleteNewIgnoredPaths === true,
         restorePlanId: typeof body.restorePlanId === 'string' ? body.restorePlanId : undefined,
       });

@@ -1,7 +1,7 @@
 import { Context } from '@deepseek-ai/cordis';
 import Schema from '@deepseek-ai/schemastery';
-import { D as DAGTree, C as CheckpointNode, T as TimeMachineConfig, S as SessionState, A as AgentWriteRecord, F as FileChange, E as ExternalEffectRecord, a as ExternalEffectAdapter, b as ExternalEffectCompensationResult, R as RestoreOptions, c as RestoreResult, d as SelectiveRestoreResult, e as ReflectionSummary, f as DiffResult, g as RestorePreview, h as StorageStatus, i as SessionSummary, P as PruneResult } from './client-BNxrpZv8.js';
-export { j as CompanionTimelineEntry, k as ExternalCompensationRequest, l as ExternalEffectCompensationContext, m as ExternalEffectRequest, n as ForkRequest, o as PreviewBoundAction, p as RestoreFilesRequest, q as RestoreWorkspaceRequest, r as RewindRequest, s as SessionMessage, t as TimeMachineClient, u as TimeMachineClientError, v as TimeMachineClientOptions, U as UndoRequest, w as buildCompanionTimeline } from './client-BNxrpZv8.js';
+import { D as DAGTree, C as CheckpointNode, T as TimeMachineConfig, S as SessionState, A as AgentWriteRecord, F as FileChange, E as ExternalEffectRecord, a as ExternalEffectAdapter, b as ExternalEffectCompensationResult, R as RestoreOptions, c as RestoreResult, d as SelectiveRestoreResult, e as ReflectionSummary, f as DiffResult, g as RestorePreview, h as StorageStatus, i as SessionSummary, P as PruneResult } from './client-DPhmyAyP.js';
+export { j as CompanionTimelineEntry, k as ExternalCompensationRequest, l as ExternalEffectCompensationContext, m as ExternalEffectRequest, n as ForkRequest, o as PreviewBoundAction, p as RestoreFilesRequest, q as RestoreWorkspaceRequest, r as RewindRequest, s as SessionMessage, t as TimeMachineClient, u as TimeMachineClientError, v as TimeMachineClientOptions, U as UndoRequest, w as buildCompanionTimeline } from './client-DPhmyAyP.js';
 
 interface DAGManagerOptions {
     sessionId: string;
@@ -240,7 +240,7 @@ declare class TimeMachineService {
         /** Safe dirty-path overlay is available for normal Git workspaces. */
         incrementalCapture: boolean;
         /** Current restore semantics; ledger mode is explicit and opt-in. */
-        handEditPolicy: 'reject-drift' | 'ledger-opt-in';
+        handEditPolicy: 'reject-drift' | 'ledger-opt-in' | 'ledger-default';
         agentWriteLedger: boolean;
         preCommandSnapshots: boolean;
         preCommandTools: string[];
@@ -265,6 +265,7 @@ declare class TimeMachineService {
             maxSnapshotBytes: number;
             allowPartialSnapshots: boolean;
             enableAgentWriteLedger: boolean;
+            preserveVerifiedHandEditsByDefault: boolean;
             autoPreCommandSnapshot: boolean;
             preCommandTools: string[];
             preCommandMaxPerTurn: number;

@@ -184,6 +184,8 @@ export interface TimeMachineConfig {
   allowPartialSnapshots?: boolean;
   /** Record integration-supplied Agent writes for explicit hand-edit preservation. */
   enableAgentWriteLedger?: boolean;
+  /** Automatically preserve verified hand edits during restore when the ledger is enabled. */
+  preserveVerifiedHandEditsByDefault?: boolean;
   /** Create a workspace checkpoint immediately before high-risk external tools. */
   autoPreCommandSnapshot?: boolean;
   /** Tool names treated as high-risk when autoPreCommandSnapshot is enabled. */

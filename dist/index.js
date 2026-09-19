@@ -2050,7 +2050,8 @@ var TimeMachineService = class {
       maxSnapshotFileBytes: Math.max(0, Math.floor(options.config?.maxSnapshotFileBytes ?? 0)),
       maxSnapshotBytes: Math.max(0, Math.floor(options.config?.maxSnapshotBytes ?? 0)),
       allowPartialSnapshots: options.config?.allowPartialSnapshots ?? false,
-      enableAgentWriteLedger: options.config?.enableAgentWriteLedger ?? false,
+      enableAgentWriteLedger: options.config?.enableAgentWriteLedger ?? options.config?.preserveVerifiedHandEditsByDefault ?? false,
+      preserveVerifiedHandEditsByDefault: options.config?.preserveVerifiedHandEditsByDefault ?? false,
       autoPreCommandSnapshot: options.config?.autoPreCommandSnapshot ?? false,
       preCommandTools: [...options.config?.preCommandTools ?? ["write", "edit", "str_replace_editor", "bash", "shell", "pwsh", "powershell", "terminal_bash", "terminal_exec", "run_code", "python"]],
       preCommandMaxPerTurn: Math.max(0, Math.floor(options.config?.preCommandMaxPerTurn ?? 1))
@@ -2712,7 +2713,7 @@ var TimeMachineService = class {
       quarantineMigration: git && Boolean(this.config.quarantineEncryptionKeyEnv),
       partialSnapshots: git && this.config.allowPartialSnapshots && (this.config.maxSnapshotFileBytes > 0 || this.config.maxSnapshotBytes > 0),
       incrementalCapture: usable && this.config.maxSnapshotFileBytes === 0 && this.config.maxSnapshotBytes === 0,
-      handEditPolicy: this.config.enableAgentWriteLedger ? "ledger-opt-in" : "reject-drift",
+      handEditPolicy: this.config.preserveVerifiedHandEditsByDefault ? "ledger-default" : this.config.enableAgentWriteLedger ? "ledger-opt-in" : "reject-drift",
       agentWriteLedger: this.config.enableAgentWriteLedger,
       preCommandSnapshots: this.config.autoPreCommandSnapshot,
       preCommandTools: [...this.config.preCommandTools],
@@ -2732,6 +2733,7 @@ var TimeMachineService = class {
         maxSnapshotBytes: this.config.maxSnapshotBytes,
         allowPartialSnapshots: this.config.allowPartialSnapshots,
         enableAgentWriteLedger: this.config.enableAgentWriteLedger,
+        preserveVerifiedHandEditsByDefault: this.config.preserveVerifiedHandEditsByDefault,
         autoPreCommandSnapshot: this.config.autoPreCommandSnapshot,
         preCommandTools: [...this.config.preCommandTools],
         preCommandMaxPerTurn: this.config.preCommandMaxPerTurn,
@@ -2858,7 +2860,7 @@ var TimeMachineService = class {
   async restoreWithRescue(dag, target, options, kind = "rewind") {
     const current = dag.getCurrentNode() ?? void 0;
     const mode = options.mode ?? this.config.restoreMode;
-    const preserveHandEdits = options.preserveVerifiedHandEdits === true;
+    const preserveHandEdits = options.preserveVerifiedHandEdits === true || options.preserveVerifiedHandEdits === void 0 && this.config.preserveVerifiedHandEditsByDefault;
     const preservedPaths = preserveHandEdits && current ? await this.findVerifiedHandEdits(current) : [];
     if (await this.gitEngine.isGitRepo()) await this.gitEngine.assertSupportedWorkspace();
     if (mode === "safe" && current) {
@@ -3249,7 +3251,7 @@ var TimeMachineWebServer = class {
       await this.requirePersistedSession(sourceSessionId);
       const result = await this.service.rewindToCheckpoint(sourceSessionId, checkpointId, {
         mode: body.force === true ? "force" : body.merge === true ? "merge" : void 0,
-        preserveVerifiedHandEdits: body.preserveVerifiedHandEdits === true,
+        ...typeof body.preserveVerifiedHandEdits === "boolean" ? { preserveVerifiedHandEdits: body.preserveVerifiedHandEdits } : {},
         deleteNewIgnoredPaths: body.deleteNewIgnoredPaths === true,
         restorePlanId: typeof body.restorePlanId === "string" ? body.restorePlanId : void 0
       });
@@ -3279,7 +3281,7 @@ var TimeMachineWebServer = class {
       if (!target) throw Object.assign(new Error(`No completed turn exists ${count} step(s) before the active checkpoint.`), { code: "UNDO_TARGET_NOT_FOUND" });
       const result = await this.service.rewindToCheckpoint(sourceSessionId, target.id, {
         mode: body.force === true ? "force" : body.merge === true ? "merge" : void 0,
-        preserveVerifiedHandEdits: body.preserveVerifiedHandEdits === true,
+        ...typeof body.preserveVerifiedHandEdits === "boolean" ? { preserveVerifiedHandEdits: body.preserveVerifiedHandEdits } : {},
         deleteNewIgnoredPaths: body.deleteNewIgnoredPaths === true
       });
       let conversation;
@@ -3304,7 +3306,7 @@ var TimeMachineWebServer = class {
       await this.requirePersistedSession(sessionId);
       const result = await this.service.restoreWorkspaceToCheckpoint(sessionId, body.checkpointId, {
         mode: body.force === true ? "force" : body.merge === true ? "merge" : void 0,
-        preserveVerifiedHandEdits: body.preserveVerifiedHandEdits === true,
+        ...typeof body.preserveVerifiedHandEdits === "boolean" ? { preserveVerifiedHandEdits: body.preserveVerifiedHandEdits } : {},
         deleteNewIgnoredPaths: body.deleteNewIgnoredPaths === true,
         restorePlanId: typeof body.restorePlanId === "string" ? body.restorePlanId : void 0
       });
@@ -3788,7 +3790,7 @@ ${changes.map((item) => `${item.status} ${item.path}`).join("\n")}` };
         const sessionId = agent.session.id;
         const result = await service.rewindToCheckpoint(sessionId, checkpointId, {
           mode: args.includes("--force") ? "force" : args.includes("--merge") ? "merge" : void 0,
-          preserveVerifiedHandEdits: args.includes("--preserve-hand-edits"),
+          ...args.includes("--preserve-hand-edits") ? { preserveVerifiedHandEdits: true } : {},
           deleteNewIgnoredPaths: args.includes("--delete-new-ignored"),
           restorePlanId: optionValue(args, "--plan")
         });
@@ -3822,7 +3824,7 @@ ${changes.map((item) => `${item.status} ${item.path}`).join("\n")}` };
         if (!checkpointId) return { kind: "error", text: `Cannot undo ${count} turn(s): the active session has fewer than ${count + 1} completed turns.` };
         const result = await service.rewindToCheckpoint(sessionId, checkpointId, {
           mode: args.includes("--force") ? "force" : args.includes("--merge") ? "merge" : void 0,
-          preserveVerifiedHandEdits: args.includes("--preserve-hand-edits"),
+          ...args.includes("--preserve-hand-edits") ? { preserveVerifiedHandEdits: true } : {},
           deleteNewIgnoredPaths: args.includes("--delete-new-ignored")
         });
         try {
@@ -4165,6 +4167,7 @@ var Config = Schema.object({
   maxSnapshotBytes: Schema.number().default(0),
   allowPartialSnapshots: Schema.boolean().default(false),
   enableAgentWriteLedger: Schema.boolean().default(false),
+  preserveVerifiedHandEditsByDefault: Schema.boolean().default(false),
   autoPreCommandSnapshot: Schema.boolean().default(false),
   preCommandTools: Schema.array(Schema.string()).default(["write", "edit", "str_replace_editor", "bash", "shell", "pwsh", "powershell", "terminal_bash", "terminal_exec", "run_code", "python"]),
   preCommandMaxPerTurn: Schema.number().step(1).min(0).default(1)

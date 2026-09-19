@@ -108,7 +108,7 @@ companion client exposes the same `sessions()` read API.
 unknown or missing session IDs return a structured 404/400 instead of creating a
 ghost timeline.
 
-### Agent-write ledger for hand-edit preservation — implemented (opt-in)
+### Agent-write ledger for hand-edit preservation — implemented (opt-in/default-preserve)
 
 Hermes records hashes for successful agent writes and preserves later user edits
 during ordinary rollback. Time Machine now provides the same evidence-based seam
@@ -117,7 +117,10 @@ native DSH `fs/observed` + `tools/result` pair automatically covers first-party
 `write`, `edit`, and `str_replace_editor`, while other integrations can call
 `recordAgentWrite()`. Users opt into `--preserve-hand-edits`. A path is preserved
 only when its current SHA-256 no longer matches the recorded Agent hash; missing
-or corrupt evidence remains fail-closed.
+or corrupt evidence remains fail-closed. `preserveVerifiedHandEditsByDefault` is an
+optional convenience policy that implies the ledger and applies preservation when
+the request does not explicitly set `preserveVerifiedHandEdits: false`; the
+legacy default remains strict drift rejection.
 
 **Acceptance:** an opt-in mode restores Agent-owned paths while preserving
 verified post-checkpoint hand-edits, and explicit safe/merge/force modes remain

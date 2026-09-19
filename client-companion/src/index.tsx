@@ -84,6 +84,7 @@ function TimeMachineAction({ sessionId, client, openSession }: ActionProps) {
       {error ? <p role="alert">{error}</p> : null}
       {capabilities?.rewindSessionMode === 'fork' ? <p>Rewind restores files and opens a new session; DSH history is append-only.</p> : null}
       {capabilities?.workspaceIsolation === 'shared-lock' ? <p>Workspace mode: shared lock (not an isolated worktree).</p> : null}
+      {capabilities?.handEditPolicy === 'ledger-default' ? <p>Verified hand-edits are preserved by default; use an explicit full-restore option when needed.</p> : null}
       {!busy && rows.length === 0 && !error ? <p>No completed turns available.</p> : null}
       {rows.filter(row => row.userVisible).map(row => <button key={row.checkpoint.id} type="button" disabled={!row.canUndo || busy} onClick={() => { void undo(row) }} style={{ display: 'block', width: '100%', textAlign: 'left', marginTop: 4 }}>
         {row.relativeUndo === 0 ? 'Current' : `Undo ${row.relativeUndo}`} · Turn {row.checkpoint.turnIndex}

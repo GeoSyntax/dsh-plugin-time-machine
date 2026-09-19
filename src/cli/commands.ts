@@ -68,7 +68,7 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
           `Conversation fork/rewind: ${sessionController ? 'available' : 'unavailable (no sessionController)'}`,
           `Workspace isolation: ${capabilities.workspaceIsolation}`,
           `Workspace routing: ${capabilities.workspaceRouting}`,
-          `Shadow Git object encryption: ${capabilities.shadowStoreEncryption ? 'enabled' : 'not available (objects are plaintext at rest)'}`,
+          `Shadow Git object encryption: ${capabilities.shadowStoreEncryption ? 'enabled' : capabilities.shadowStoreMigrationRequired ? 'migration required (legacy plaintext objects detected)' : 'not available (objects are plaintext at rest)'}`,
           `Shadow Git key rotation: ${capabilities.shadowStoreKeyRotation ? 'ready (current + previous keys configured)' : 'not configured'}`,
           `DAG/session metadata encryption: ${capabilities.dagStateEncryption ? 'enabled' : 'disabled (metadata is plaintext at rest)'}`,
           `DAG/session key rotation: ${capabilities.dagStateKeyRotation ? 'ready (current + previous keys configured)' : 'not configured'}`,
@@ -82,6 +82,7 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
         if (!sessionController) warnings.push('Workspace restore can run, but the conversation cannot be switched automatically.');
         if (capabilities.workspaceIsolation === 'shared-lock') warnings.push('Forked sessions share the configured workspace; this is not an isolated Git worktree or container.');
         if (capabilities.workspaceRouting === 'single-root') warnings.push('Sessions whose cwd differs from the configured workspace are skipped; run one plugin instance per workspace.');
+        if (capabilities.shadowStoreMigrationRequired) warnings.push('Legacy plaintext Shadow Git objects detected; run /tm-shadow-migrate before creating new checkpoints.');
         if (!capabilities.shadowStoreEncryption && capabilities.shadowStore) warnings.push('Shadow Git objects are plaintext at rest; protect the storage directory with OS-level encryption and permissions.');
         if (!capabilities.dagStateEncryption) warnings.push('DAG/session metadata is plaintext at rest; set stateEncryptionKeyEnv when prompts or tool inputs are sensitive.');
         if (!service.config.autoPreCommandSnapshot) warnings.push('High-risk tool boundaries are not captured; enable autoPreCommandSnapshot for stronger crash recovery.');

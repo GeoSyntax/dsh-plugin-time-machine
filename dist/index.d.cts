@@ -264,6 +264,7 @@ declare class TimeMachineService {
         selectiveRestore: boolean;
         shadowStore: boolean;
         shadowStoreEncryption: boolean;
+        shadowStoreMigrationRequired: boolean;
         shadowStoreKeyRotation: boolean;
         dagStateEncryption: boolean;
         dagStateKeyRotation: boolean;
@@ -469,6 +470,10 @@ declare class GitPlumbingEngine {
         migrated: boolean;
         entries: number;
         bytes: number;
+    }>;
+    encryptedShadowStatus(): Promise<{
+        ready: boolean;
+        migrationRequired: boolean;
     }>;
     isGitRepo(): Promise<boolean>;
     getRepoRoot(): Promise<string>;

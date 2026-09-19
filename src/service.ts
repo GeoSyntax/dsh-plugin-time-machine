@@ -931,6 +931,7 @@ export class TimeMachineService {
     const leaves = managers.reduce((sum, manager) => sum + this.pruneCandidates(manager).length, 0);
     const files = await countFiles(this.storageDir);
     const bytes = await directoryBytes(this.storageDir);
+    const shadowStatus = await this.gitEngine.encryptedShadowStatus();
     return {
       storageDir: this.storageDir,
       bytes,
@@ -939,7 +940,7 @@ export class TimeMachineService {
       checkpoints,
       pruneCandidates: leaves,
       gitObjectsShared: await this.gitEngine.isGitRepo() && !this.config.shadowStore,
-      gitObjectsEncrypted: this.gitEngine.usesEncryptedShadowStore,
+      gitObjectsEncrypted: shadowStatus.ready,
       dagStateEncrypted: Boolean(this.config.stateEncryptionKeyEnv && process.env[this.config.stateEncryptionKeyEnv]),
       quarantineEncrypted: Boolean(this.config.quarantineEncryptionKeyEnv && process.env[this.config.quarantineEncryptionKeyEnv]),
     };
@@ -998,6 +999,7 @@ export class TimeMachineService {
     selectiveRestore: boolean;
     shadowStore: boolean;
     shadowStoreEncryption: boolean;
+    shadowStoreMigrationRequired: boolean;
     shadowStoreKeyRotation: boolean;
     dagStateEncryption: boolean;
     dagStateKeyRotation: boolean;
@@ -1043,6 +1045,7 @@ export class TimeMachineService {
       ? await this.gitEngine.inspectWorkspaceCapabilities()
       : { sparseCheckout: false, submodulePaths: [], inProgressOperation: null };
     const usable = git && !workspace.sparseCheckout && workspace.submodulePaths.length === 0 && !workspace.inProgressOperation;
+    const shadowStatus = await this.gitEngine.encryptedShadowStatus();
     return {
       version: 1,
       dagStorageFormatVersion: DAG_FORMAT_VERSION,
@@ -1052,7 +1055,8 @@ export class TimeMachineService {
       fallbackTextDiff: !git,
       selectiveRestore: usable || !git,
       shadowStore: git && this.config.shadowStore,
-      shadowStoreEncryption: git && this.gitEngine.usesEncryptedShadowStore,
+      shadowStoreEncryption: git && this.gitEngine.usesEncryptedShadowStore && shadowStatus.ready,
+      shadowStoreMigrationRequired: git && this.gitEngine.usesEncryptedShadowStore && shadowStatus.migrationRequired,
       shadowStoreKeyRotation: Boolean(
         this.config.shadowStoreEncryptionKeyEnv && process.env[this.config.shadowStoreEncryptionKeyEnv]
         && this.config.shadowStoreEncryptionPreviousKeyEnv && process.env[this.config.shadowStoreEncryptionPreviousKeyEnv],

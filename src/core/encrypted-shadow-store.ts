@@ -106,6 +106,16 @@ export class EncryptedShadowStore {
     return { migrated: true, entries: manifest.entries.length, bytes: manifest.entries.reduce((sum, item) => sum + item.bytes, 0) };
   }
 
+  /** Report whether encrypted storage is ready or an explicit migration is required. */
+  async status(): Promise<{ ready: boolean; migrationRequired: boolean }> {
+    const manifest = await exists(path.join(this.archiveDir, 'manifest.v1.json'));
+    const plaintext = await listFiles(this.runtimeDir);
+    return {
+      ready: manifest || plaintext.length === 0,
+      migrationRequired: !manifest && plaintext.length > 0,
+    };
+  }
+
   private async materialize(): Promise<void> {
     const manifest = await this.readManifestOptional();
     const plaintext = await listFiles(this.runtimeDir);

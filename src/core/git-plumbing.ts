@@ -224,6 +224,11 @@ export class GitPlumbingEngine {
     return this.encryptedShadowStore.migratePlaintext();
   }
 
+  async encryptedShadowStatus(): Promise<{ ready: boolean; migrationRequired: boolean }> {
+    if (!this.encryptedShadowStore) return { ready: false, migrationRequired: false };
+    return this.encryptedShadowStore.status();
+  }
+
   async isGitRepo(): Promise<boolean> {
     if (this.isRepoCached !== null) return this.isRepoCached;
     try {

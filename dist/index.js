@@ -131,6 +131,15 @@ var init_encrypted_shadow_store = __esm({
         await fs.rm(this.runtimeDir, { recursive: true, force: true });
         return { migrated: true, entries: manifest.entries.length, bytes: manifest.entries.reduce((sum, item) => sum + item.bytes, 0) };
       }
+      /** Report whether encrypted storage is ready or an explicit migration is required. */
+      async status() {
+        const manifest = await exists(path2.join(this.archiveDir, "manifest.v1.json"));
+        const plaintext = await listFiles(this.runtimeDir);
+        return {
+          ready: manifest || plaintext.length === 0,
+          migrationRequired: !manifest && plaintext.length > 0
+        };
+      }
       async materialize() {
         const manifest = await this.readManifestOptional();
         const plaintext = await listFiles(this.runtimeDir);
@@ -453,6 +462,10 @@ var init_git_plumbing = __esm({
       async migrateShadowStore() {
         if (!this.encryptedShadowStore) throw new ShadowStoreKeyError("Encrypted shadow migration requires shadowStore and a configured key.");
         return this.encryptedShadowStore.migratePlaintext();
+      }
+      async encryptedShadowStatus() {
+        if (!this.encryptedShadowStore) return { ready: false, migrationRequired: false };
+        return this.encryptedShadowStore.status();
       }
       async isGitRepo() {
         if (this.isRepoCached !== null) return this.isRepoCached;
@@ -3103,6 +3116,7 @@ var TimeMachineService = class {
     const leaves = managers.reduce((sum, manager) => sum + this.pruneCandidates(manager).length, 0);
     const files = await countFiles(this.storageDir);
     const bytes = await directoryBytes2(this.storageDir);
+    const shadowStatus = await this.gitEngine.encryptedShadowStatus();
     return {
       storageDir: this.storageDir,
       bytes,
@@ -3111,7 +3125,7 @@ var TimeMachineService = class {
       checkpoints,
       pruneCandidates: leaves,
       gitObjectsShared: await this.gitEngine.isGitRepo() && !this.config.shadowStore,
-      gitObjectsEncrypted: this.gitEngine.usesEncryptedShadowStore,
+      gitObjectsEncrypted: shadowStatus.ready,
       dagStateEncrypted: Boolean(this.config.stateEncryptionKeyEnv && process.env[this.config.stateEncryptionKeyEnv]),
       quarantineEncrypted: Boolean(this.config.quarantineEncryptionKeyEnv && process.env[this.config.quarantineEncryptionKeyEnv])
     };
@@ -3157,6 +3171,7 @@ var TimeMachineService = class {
     const git = await this.gitEngine.isGitRepo();
     const workspace = git ? await this.gitEngine.inspectWorkspaceCapabilities() : { sparseCheckout: false, submodulePaths: [], inProgressOperation: null };
     const usable = git && !workspace.sparseCheckout && workspace.submodulePaths.length === 0 && !workspace.inProgressOperation;
+    const shadowStatus = await this.gitEngine.encryptedShadowStatus();
     return {
       version: 1,
       dagStorageFormatVersion: DAG_FORMAT_VERSION,
@@ -3166,7 +3181,8 @@ var TimeMachineService = class {
       fallbackTextDiff: !git,
       selectiveRestore: usable || !git,
       shadowStore: git && this.config.shadowStore,
-      shadowStoreEncryption: git && this.gitEngine.usesEncryptedShadowStore,
+      shadowStoreEncryption: git && this.gitEngine.usesEncryptedShadowStore && shadowStatus.ready,
+      shadowStoreMigrationRequired: git && this.gitEngine.usesEncryptedShadowStore && shadowStatus.migrationRequired,
       shadowStoreKeyRotation: Boolean(
         this.config.shadowStoreEncryptionKeyEnv && process.env[this.config.shadowStoreEncryptionKeyEnv] && this.config.shadowStoreEncryptionPreviousKeyEnv && process.env[this.config.shadowStoreEncryptionPreviousKeyEnv]
       ),
@@ -4173,7 +4189,7 @@ Use /tm-undo N to restore and fork from the numbered active-lineage checkpoint.`
           `Conversation fork/rewind: ${sessionController ? "available" : "unavailable (no sessionController)"}`,
           `Workspace isolation: ${capabilities.workspaceIsolation}`,
           `Workspace routing: ${capabilities.workspaceRouting}`,
-          `Shadow Git object encryption: ${capabilities.shadowStoreEncryption ? "enabled" : "not available (objects are plaintext at rest)"}`,
+          `Shadow Git object encryption: ${capabilities.shadowStoreEncryption ? "enabled" : capabilities.shadowStoreMigrationRequired ? "migration required (legacy plaintext objects detected)" : "not available (objects are plaintext at rest)"}`,
           `Shadow Git key rotation: ${capabilities.shadowStoreKeyRotation ? "ready (current + previous keys configured)" : "not configured"}`,
           `DAG/session metadata encryption: ${capabilities.dagStateEncryption ? "enabled" : "disabled (metadata is plaintext at rest)"}`,
           `DAG/session key rotation: ${capabilities.dagStateKeyRotation ? "ready (current + previous keys configured)" : "not configured"}`,
@@ -4187,6 +4203,7 @@ Use /tm-undo N to restore and fork from the numbered active-lineage checkpoint.`
         if (!sessionController) warnings.push("Workspace restore can run, but the conversation cannot be switched automatically.");
         if (capabilities.workspaceIsolation === "shared-lock") warnings.push("Forked sessions share the configured workspace; this is not an isolated Git worktree or container.");
         if (capabilities.workspaceRouting === "single-root") warnings.push("Sessions whose cwd differs from the configured workspace are skipped; run one plugin instance per workspace.");
+        if (capabilities.shadowStoreMigrationRequired) warnings.push("Legacy plaintext Shadow Git objects detected; run /tm-shadow-migrate before creating new checkpoints.");
         if (!capabilities.shadowStoreEncryption && capabilities.shadowStore) warnings.push("Shadow Git objects are plaintext at rest; protect the storage directory with OS-level encryption and permissions.");
         if (!capabilities.dagStateEncryption) warnings.push("DAG/session metadata is plaintext at rest; set stateEncryptionKeyEnv when prompts or tool inputs are sensitive.");
         if (!service.config.autoPreCommandSnapshot) warnings.push("High-risk tool boundaries are not captured; enable autoPreCommandSnapshot for stronger crash recovery.");

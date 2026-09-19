@@ -165,8 +165,10 @@ automatic time-based expiration is available as the opt-in
 `retentionMaxAgeMs` policy; it protects current and branch-head checkpoints.
 Shadow-object encryption is now opt-in through `shadowStoreEncryptionKeyEnv`.
 `GET /api/storage` reports `gitObjectsEncrypted: true` only when the service is
-actually using the AES-GCM archive; otherwise it remains `false`. Existing
-plaintext objects require explicit `/tm-shadow-migrate`, and normal operations
+actually using the AES-GCM archive (or the encrypted store is freshly configured
+with no objects yet); otherwise it remains `false`. `GET /api/capabilities`
+surfaces `shadowStoreMigrationRequired: true` when legacy plaintext objects are
+detected. Existing plaintext objects require explicit `/tm-shadow-migrate`, and normal operations
 remove the disposable Git runtime directory after each plumbing call. The
 archive still needs a durable append journal for crash-resume hardening.
 Ignored-file quarantine can independently be encrypted with

@@ -395,11 +395,13 @@ describe('GitPlumbingEngine', () => {
     await fs.writeFile(path.join(tmpDir, 'legacy-shadow.txt'), 'legacy-secret\n', 'utf8');
     const snapshot = await legacy.createSnapshot({ sessionId: 'legacy-shadow', checkpointId: 'one' });
     const encrypted = new GitPlumbingEngine({ workDir: tmpDir, shadowObjectDir, shadowEncryptionKey: 'migration-secret' });
+    await expect(encrypted.encryptedShadowStatus()).resolves.toEqual({ ready: false, migrationRequired: true });
     const result = await encrypted.migrateShadowStore();
     expect(result.migrated).toBe(true);
     expect(result.entries).toBeGreaterThan(0);
     expect(await fs.readdir(path.join(tmpDir, '.dsh-tm', 'git-shadow-encrypted'))).toContain('manifest.v1.json');
     expect(await fs.access(shadowObjectDir).then(() => true, () => false)).toBe(false);
+    await expect(encrypted.encryptedShadowStatus()).resolves.toEqual({ ready: true, migrationRequired: false });
     expect((await encrypted.runGit(['cat-file', '-t', snapshot.commitOid])).stdout.trim()).toBe('commit');
   });
 

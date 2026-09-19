@@ -229,7 +229,7 @@ tracked baseline，再模拟每轮只修改 5 个文件；Git 路径会从上一
 Git status 报告的变更路径。小仓库仍有 Git 进程启动开销，但在 1k/10k 文件场景
 已体现增量捕获收益；完整性仍由 status 路径枚举和临时隔离 index 保证。
 在 100 文件、100 个连续 turn 的长会话 fixture 中，Git 路径相对传统复制约
-2.40× 延迟，但对象存储约 0.038×；这说明长期保留的主要收益在存储和历史密度，
+2.76× 平均延迟（P50/P95 为 679/769ms），但对象存储约 0.038×；这说明长期保留的主要收益在存储和历史密度，
 而不是小仓库的单轮延迟。
 - `/tm-preview` 和 Web 预览会签发一次性、会话绑定的 restore plan；Web rewind 会把 plan 一并提交，若预览后工作区、活动 checkpoint、Git HEAD/branch/进行中操作或 plan TTL 发生变化，服务返回 `RESTORE_PLAN_INVALID`（HTTP 409）并要求重新预览。`restorePlanTtlMs: 0` 可关闭过期时间，但 plan 仍只能消费一次。
 - 多文件恢复提供 rescue/compensation 和崩溃后 journal 恢复，但文件系统本身没有跨文件 ACID 事务。

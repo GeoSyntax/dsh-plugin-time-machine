@@ -15,6 +15,12 @@ interface ShadowArchiveManifest {
   entries: ShadowArchiveEntry[];
 }
 
+interface ShadowArchiveJournal {
+  version: 1;
+  staging: string;
+  phase: 'staging' | 'published';
+}
+
 export class ShadowStoreKeyError extends Error {
   readonly code = 'SHADOW_KEY_INVALID';
 
@@ -71,6 +77,7 @@ export class EncryptedShadowStore {
     this.runtimeDepth = 1;
     let materialized = false;
     try {
+      await this.recoverJournal();
       await this.materialize();
       materialized = true;
       return await operation();
@@ -155,19 +162,22 @@ export class EncryptedShadowStore {
       }
       const manifest: ShadowArchiveManifest = { version: 1, entries };
       await fs.mkdir(this.archiveDir, { recursive: true });
+      await this.writeJournal({ version: 1, staging: path.relative(this.archiveDir, staging).replace(/\\/g, '/'), phase: 'staging' });
       for (const entry of entries) {
         const target = path.join(this.archiveDir, entry.payload);
         await fs.mkdir(path.dirname(target), { recursive: true });
         await fs.rename(path.join(staging, entry.payload), target);
       }
       const temporaryManifest = path.join(this.archiveDir, `.manifest-${randomUUID()}.tmp`);
-      await fs.writeFile(temporaryManifest, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+      await writeDurable(temporaryManifest, `${JSON.stringify(manifest, null, 2)}\n`);
       await fs.rename(temporaryManifest, path.join(this.archiveDir, 'manifest.v1.json'));
+      await this.writeJournal({ version: 1, staging: path.relative(this.archiveDir, staging).replace(/\\/g, '/'), phase: 'published' });
       const referenced = new Set(entries.map(entry => entry.payload.replace(/\\/g, '/')));
       for (const payloadFile of await listFiles(path.join(this.archiveDir, 'payload'))) {
         const relative = path.relative(this.archiveDir, payloadFile).replace(/\\/g, '/');
         if (!referenced.has(relative)) await fs.rm(payloadFile, { force: true });
       }
+      await fs.rm(path.join(this.archiveDir, 'journal.json'), { force: true });
     } finally {
       await fs.rm(staging, { recursive: true, force: true }).catch(() => undefined);
     }
@@ -199,6 +209,42 @@ export class EncryptedShadowStore {
     }
   }
 
+  private async writeJournal(journal: ShadowArchiveJournal): Promise<void> {
+    await fs.mkdir(this.archiveDir, { recursive: true });
+    const temporary = path.join(this.archiveDir, `.journal-${randomUUID()}.tmp`);
+    await writeDurable(temporary, `${JSON.stringify(journal, null, 2)}\n`);
+    await fs.rename(temporary, path.join(this.archiveDir, 'journal.json'));
+  }
+
+  private async recoverJournal(): Promise<void> {
+    const journalPath = path.join(this.archiveDir, 'journal.json');
+    const raw = await fs.readFile(journalPath, 'utf8').catch((error: any) => {
+      if (error?.code === 'ENOENT') return undefined;
+      throw new ShadowArchiveCorruptError(`Encrypted shadow journal cannot be read: ${error?.message ?? 'unknown error'}`);
+    });
+    if (!raw) return;
+    let journal: ShadowArchiveJournal;
+    try {
+      journal = JSON.parse(raw) as ShadowArchiveJournal;
+      if (journal.version !== 1 || !journal.staging || !['staging', 'published'].includes(journal.phase)) throw new Error('unsupported journal');
+      safeRelative(journal.staging);
+    } catch (error: any) {
+      throw new ShadowArchiveCorruptError(`Encrypted shadow journal is invalid: ${error?.message ?? 'unknown error'}`);
+    }
+    await fs.rm(path.join(this.archiveDir, journal.staging), { recursive: true, force: true });
+    await fs.rm(journalPath, { force: true });
+    await this.removeUnreferencedPayloads();
+  }
+
+  private async removeUnreferencedPayloads(): Promise<void> {
+    const manifest = await this.readManifestOptional();
+    const referenced = new Set((manifest?.entries ?? []).map(entry => entry.payload.replace(/\\/g, '/')));
+    for (const payloadFile of await listFiles(path.join(this.archiveDir, 'payload'))) {
+      const relative = path.relative(this.archiveDir, payloadFile).replace(/\\/g, '/');
+      if (!referenced.has(relative)) await fs.rm(payloadFile, { force: true });
+    }
+  }
+
   private decrypt(encrypted: Buffer, nonceText: string, relative: string): Buffer {
     const keys = this.previousKey ? [this.currentKey, this.previousKey] : [this.currentKey];
     for (let index = 0; index < keys.length; index += 1) {
@@ -227,6 +273,16 @@ function safeRelative(value: string): string {
 
 async function exists(file: string): Promise<boolean> {
   return fs.access(file).then(() => true, () => false);
+}
+
+async function writeDurable(file: string, content: string): Promise<void> {
+  const handle = await fs.open(file, 'w');
+  try {
+    await handle.writeFile(content, 'utf8');
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
 }
 
 async function listFiles(root: string): Promise<string[]> {

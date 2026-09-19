@@ -51,6 +51,15 @@ function safeRelative(value) {
 async function exists(file) {
   return import_promises.default.access(file).then(() => true, () => false);
 }
+async function writeDurable(file, content) {
+  const handle = await import_promises.default.open(file, "w");
+  try {
+    await handle.writeFile(content, "utf8");
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
 async function listFiles(root) {
   const output = [];
   async function visit(directory) {
@@ -118,6 +127,7 @@ var init_encrypted_shadow_store = __esm({
         this.runtimeDepth = 1;
         let materialized = false;
         try {
+          await this.recoverJournal();
           await this.materialize();
           materialized = true;
           return await operation();
@@ -199,20 +209,23 @@ var init_encrypted_shadow_store = __esm({
           }
           const manifest = { version: 1, entries };
           await import_promises.default.mkdir(this.archiveDir, { recursive: true });
+          await this.writeJournal({ version: 1, staging: import_node_path.default.relative(this.archiveDir, staging).replace(/\\/g, "/"), phase: "staging" });
           for (const entry of entries) {
             const target = import_node_path.default.join(this.archiveDir, entry.payload);
             await import_promises.default.mkdir(import_node_path.default.dirname(target), { recursive: true });
             await import_promises.default.rename(import_node_path.default.join(staging, entry.payload), target);
           }
           const temporaryManifest = import_node_path.default.join(this.archiveDir, `.manifest-${(0, import_node_crypto.randomUUID)()}.tmp`);
-          await import_promises.default.writeFile(temporaryManifest, `${JSON.stringify(manifest, null, 2)}
-`, "utf8");
+          await writeDurable(temporaryManifest, `${JSON.stringify(manifest, null, 2)}
+`);
           await import_promises.default.rename(temporaryManifest, import_node_path.default.join(this.archiveDir, "manifest.v1.json"));
+          await this.writeJournal({ version: 1, staging: import_node_path.default.relative(this.archiveDir, staging).replace(/\\/g, "/"), phase: "published" });
           const referenced = new Set(entries.map((entry) => entry.payload.replace(/\\/g, "/")));
           for (const payloadFile of await listFiles(import_node_path.default.join(this.archiveDir, "payload"))) {
             const relative = import_node_path.default.relative(this.archiveDir, payloadFile).replace(/\\/g, "/");
             if (!referenced.has(relative)) await import_promises.default.rm(payloadFile, { force: true });
           }
+          await import_promises.default.rm(import_node_path.default.join(this.archiveDir, "journal.json"), { force: true });
         } finally {
           await import_promises.default.rm(staging, { recursive: true, force: true }).catch(() => void 0);
         }
@@ -239,6 +252,40 @@ var init_encrypted_shadow_store = __esm({
           return value;
         } catch (error) {
           throw new ShadowArchiveCorruptError(`Encrypted shadow archive manifest is invalid: ${error?.message ?? "unknown error"}`);
+        }
+      }
+      async writeJournal(journal) {
+        await import_promises.default.mkdir(this.archiveDir, { recursive: true });
+        const temporary = import_node_path.default.join(this.archiveDir, `.journal-${(0, import_node_crypto.randomUUID)()}.tmp`);
+        await writeDurable(temporary, `${JSON.stringify(journal, null, 2)}
+`);
+        await import_promises.default.rename(temporary, import_node_path.default.join(this.archiveDir, "journal.json"));
+      }
+      async recoverJournal() {
+        const journalPath = import_node_path.default.join(this.archiveDir, "journal.json");
+        const raw = await import_promises.default.readFile(journalPath, "utf8").catch((error) => {
+          if (error?.code === "ENOENT") return void 0;
+          throw new ShadowArchiveCorruptError(`Encrypted shadow journal cannot be read: ${error?.message ?? "unknown error"}`);
+        });
+        if (!raw) return;
+        let journal;
+        try {
+          journal = JSON.parse(raw);
+          if (journal.version !== 1 || !journal.staging || !["staging", "published"].includes(journal.phase)) throw new Error("unsupported journal");
+          safeRelative(journal.staging);
+        } catch (error) {
+          throw new ShadowArchiveCorruptError(`Encrypted shadow journal is invalid: ${error?.message ?? "unknown error"}`);
+        }
+        await import_promises.default.rm(import_node_path.default.join(this.archiveDir, journal.staging), { recursive: true, force: true });
+        await import_promises.default.rm(journalPath, { force: true });
+        await this.removeUnreferencedPayloads();
+      }
+      async removeUnreferencedPayloads() {
+        const manifest = await this.readManifestOptional();
+        const referenced = new Set((manifest?.entries ?? []).map((entry) => entry.payload.replace(/\\/g, "/")));
+        for (const payloadFile of await listFiles(import_node_path.default.join(this.archiveDir, "payload"))) {
+          const relative = import_node_path.default.relative(this.archiveDir, payloadFile).replace(/\\/g, "/");
+          if (!referenced.has(relative)) await import_promises.default.rm(payloadFile, { force: true });
         }
       }
       decrypt(encrypted, nonceText, relative) {

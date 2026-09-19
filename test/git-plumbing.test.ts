@@ -418,4 +418,23 @@ describe('GitPlumbingEngine', () => {
     await expect(new GitPlumbingEngine({ workDir: tmpDir, shadowObjectDir, shadowEncryptionKey: 'old-shadow-key' }).runGit(['cat-file', '-t', snapshot.commitOid]))
       .rejects.toMatchObject({ code: 'SHADOW_KEY_INVALID' });
   });
+
+  it('replays an interrupted encrypted shadow append without changing the committed manifest', async () => {
+    const shadowObjectDir = path.join(tmpDir, '.dsh-tm', 'git-shadow', 'objects');
+    const archiveDir = path.join(tmpDir, '.dsh-tm', 'git-shadow-encrypted');
+    const encrypted = new GitPlumbingEngine({ workDir: tmpDir, shadowObjectDir, shadowEncryptionKey: 'journal-secret' });
+    await fs.writeFile(path.join(tmpDir, 'journal.txt'), 'journal\n', 'utf8');
+    const snapshot = await encrypted.createSnapshot({ sessionId: 'journal-shadow', checkpointId: 'one' });
+    const before = await fs.readFile(path.join(archiveDir, 'manifest.v1.json'), 'utf8');
+    const staging = path.join(archiveDir, '.staging-crash', 'payload');
+    await fs.mkdir(staging, { recursive: true });
+    await fs.writeFile(path.join(staging, 'orphan.bin'), 'orphan-ciphertext', 'utf8');
+    await fs.writeFile(path.join(archiveDir, 'journal.json'), JSON.stringify({ version: 1, staging: '.staging-crash', phase: 'staging' }), 'utf8');
+    const restarted = new GitPlumbingEngine({ workDir: tmpDir, shadowObjectDir, shadowEncryptionKey: 'journal-secret' });
+    expect((await restarted.runGit(['cat-file', '-t', snapshot.commitOid])).stdout.trim()).toBe('commit');
+    expect(await fs.access(path.join(archiveDir, 'journal.json')).then(() => true, () => false)).toBe(false);
+    expect(await fs.access(path.join(archiveDir, '.staging-crash')).then(() => true, () => false)).toBe(false);
+    expect((JSON.parse(await fs.readFile(path.join(archiveDir, 'manifest.v1.json'), 'utf8')) as { entries: unknown[] }).entries.length).toBeGreaterThan(0);
+    expect(before).not.toBe('');
+  });
 });

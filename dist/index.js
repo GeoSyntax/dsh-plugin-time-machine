@@ -31,6 +31,15 @@ function safeRelative(value) {
 async function exists(file) {
   return fs.access(file).then(() => true, () => false);
 }
+async function writeDurable(file, content) {
+  const handle = await fs.open(file, "w");
+  try {
+    await handle.writeFile(content, "utf8");
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
 async function listFiles(root) {
   const output = [];
   async function visit(directory) {
@@ -95,6 +104,7 @@ var init_encrypted_shadow_store = __esm({
         this.runtimeDepth = 1;
         let materialized = false;
         try {
+          await this.recoverJournal();
           await this.materialize();
           materialized = true;
           return await operation();
@@ -176,20 +186,23 @@ var init_encrypted_shadow_store = __esm({
           }
           const manifest = { version: 1, entries };
           await fs.mkdir(this.archiveDir, { recursive: true });
+          await this.writeJournal({ version: 1, staging: path2.relative(this.archiveDir, staging).replace(/\\/g, "/"), phase: "staging" });
           for (const entry of entries) {
             const target = path2.join(this.archiveDir, entry.payload);
             await fs.mkdir(path2.dirname(target), { recursive: true });
             await fs.rename(path2.join(staging, entry.payload), target);
           }
           const temporaryManifest = path2.join(this.archiveDir, `.manifest-${randomUUID()}.tmp`);
-          await fs.writeFile(temporaryManifest, `${JSON.stringify(manifest, null, 2)}
-`, "utf8");
+          await writeDurable(temporaryManifest, `${JSON.stringify(manifest, null, 2)}
+`);
           await fs.rename(temporaryManifest, path2.join(this.archiveDir, "manifest.v1.json"));
+          await this.writeJournal({ version: 1, staging: path2.relative(this.archiveDir, staging).replace(/\\/g, "/"), phase: "published" });
           const referenced = new Set(entries.map((entry) => entry.payload.replace(/\\/g, "/")));
           for (const payloadFile of await listFiles(path2.join(this.archiveDir, "payload"))) {
             const relative = path2.relative(this.archiveDir, payloadFile).replace(/\\/g, "/");
             if (!referenced.has(relative)) await fs.rm(payloadFile, { force: true });
           }
+          await fs.rm(path2.join(this.archiveDir, "journal.json"), { force: true });
         } finally {
           await fs.rm(staging, { recursive: true, force: true }).catch(() => void 0);
         }
@@ -216,6 +229,40 @@ var init_encrypted_shadow_store = __esm({
           return value;
         } catch (error) {
           throw new ShadowArchiveCorruptError(`Encrypted shadow archive manifest is invalid: ${error?.message ?? "unknown error"}`);
+        }
+      }
+      async writeJournal(journal) {
+        await fs.mkdir(this.archiveDir, { recursive: true });
+        const temporary = path2.join(this.archiveDir, `.journal-${randomUUID()}.tmp`);
+        await writeDurable(temporary, `${JSON.stringify(journal, null, 2)}
+`);
+        await fs.rename(temporary, path2.join(this.archiveDir, "journal.json"));
+      }
+      async recoverJournal() {
+        const journalPath = path2.join(this.archiveDir, "journal.json");
+        const raw = await fs.readFile(journalPath, "utf8").catch((error) => {
+          if (error?.code === "ENOENT") return void 0;
+          throw new ShadowArchiveCorruptError(`Encrypted shadow journal cannot be read: ${error?.message ?? "unknown error"}`);
+        });
+        if (!raw) return;
+        let journal;
+        try {
+          journal = JSON.parse(raw);
+          if (journal.version !== 1 || !journal.staging || !["staging", "published"].includes(journal.phase)) throw new Error("unsupported journal");
+          safeRelative(journal.staging);
+        } catch (error) {
+          throw new ShadowArchiveCorruptError(`Encrypted shadow journal is invalid: ${error?.message ?? "unknown error"}`);
+        }
+        await fs.rm(path2.join(this.archiveDir, journal.staging), { recursive: true, force: true });
+        await fs.rm(journalPath, { force: true });
+        await this.removeUnreferencedPayloads();
+      }
+      async removeUnreferencedPayloads() {
+        const manifest = await this.readManifestOptional();
+        const referenced = new Set((manifest?.entries ?? []).map((entry) => entry.payload.replace(/\\/g, "/")));
+        for (const payloadFile of await listFiles(path2.join(this.archiveDir, "payload"))) {
+          const relative = path2.relative(this.archiveDir, payloadFile).replace(/\\/g, "/");
+          if (!referenced.has(relative)) await fs.rm(payloadFile, { force: true });
         }
       }
       decrypt(encrypted, nonceText, relative) {

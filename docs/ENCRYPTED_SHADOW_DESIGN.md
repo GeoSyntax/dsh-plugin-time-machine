@@ -2,9 +2,9 @@
 
 The encrypted shadow archive is implemented behind `shadowStoreEncryptionKeyEnv`.
 Git still receives a disposable plaintext runtime directory, while durable
-objects are authenticated AES-256-GCM payloads. The remaining journal and
-quota items below are explicit hardening work; capability reporting must only
-claim the archive behavior covered by tests.
+objects are authenticated AES-256-GCM payloads. Journal replay now cleans
+interrupted staging safely; quota-aware archive compaction remains explicit
+hardening work, and capability reporting only claims behavior covered by tests.
 
 ## Why Git objects cannot simply be encrypted
 
@@ -39,8 +39,8 @@ the DAG, manifest, logs, refs, or error messages.
 5. Encrypt all runtime files and atomically advance the manifest.
 6. Remove the runtime directory after the operation. A crash or forced
    process termination can still leave a short-lived plaintext runtime;
-   durable journal replay is future hardening and is not claimed by the
-   current capability.
+   on the next access, the durable journal removes unreferenced staging and
+   payload files without replacing the last committed manifest.
 
 The runtime directory is disposable and is not a claim against a compromised
 process, OS administrator, swap capture, or memory inspection.
@@ -53,8 +53,9 @@ process, OS administrator, swap capture, or memory inspection.
   remove plaintext only after the encrypted manifest has been written.
 - Wrong/missing keys, corrupt authentication tags, truncated payloads, and
   object hash mismatches fail closed and preserve the original archive.
-- Storage accounting includes encrypted payloads, the manifest, and temporary
-  runtime bytes; quota-aware archive compaction remains future hardening.
+- Storage accounting includes encrypted payloads, the manifest, journal, and
+  temporary runtime bytes; quota-aware archive compaction remains future
+  hardening.
 
 ## Acceptance matrix
 
@@ -63,7 +64,7 @@ process, OS administrator, swap capture, or memory inspection.
 | Fresh encrypted checkpoint | Restart with the key and restore every checkpoint |
 | Wrong or missing key | `SHADOW_KEY_INVALID`; no workspace/ref/object deletion |
 | Corrupt segment/tag | `SHADOW_ARCHIVE_CORRUPT`; archive remains recoverable |
-| Crash during append | Temporary archive staging is removed; a durable journal for resumable append remains future hardening |
+| Crash during append | Journal replay removes only temporary files and leaves the last committed manifest intact |
 | Explicit migration | Restart, restore, prune and quota accounting pass |
 | Key rotation | New archive is verified before old archive removal |
 | Plaintext audit | Normal operation removes the runtime directory after each Git operation; crash/OS-abort windows remain a documented limitation |

@@ -36,6 +36,8 @@ jobs:
       - name: Run full test suite
         run: pnpm test
       - run: pnpm build
+      - name: Verify empty-directory consumer install
+        run: pnpm test:consumer
       - name: Verify committed distribution
         if: matrix.os == 'ubuntu-latest' && matrix.node == '22.19.0'
         run: git diff --exit-code -- dist/index.cjs dist/index.js dist/index.d.ts dist/index.d.cts dist/client

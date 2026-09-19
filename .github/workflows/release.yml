@@ -36,6 +36,8 @@ jobs:
           registry-url: https://registry.npmjs.org
       - run: pnpm install --frozen-lockfile
       - run: pnpm test:release
+      - name: Verify empty-directory consumer install
+        run: pnpm test:consumer
       - name: Verify tag matches package version
         if: startsWith(github.ref, 'refs/tags/v')
         shell: bash

@@ -14,6 +14,8 @@
 - Make preview results policy-aware: preserved verified hand-edits are listed
   separately from paths that still require force/merge, including fallback
   workspaces and the standalone dashboard.
+- Add an empty-directory consumer smoke that installs the actual core tarball
+  and imports both the main package and `./client` export before release.
 - Add an optional host `sessionController.rewind()` seam; hosts that provide it
   are advertised as `rewindSessionMode: in-place`, while current DSH alpha
   hosts continue to use the tested fork path.

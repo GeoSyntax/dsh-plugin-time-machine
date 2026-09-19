@@ -112,7 +112,7 @@
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
     "tsup": "^8.4.0",
-    "typescript": "^5.8.2",
+    "typescript": "^7.0.2",
     "vitest": "^3.0.8",
     "tsx": "^4.19.2",
     "@types/node": "^22.13.9"

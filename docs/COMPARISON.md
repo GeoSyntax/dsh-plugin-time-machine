@@ -30,7 +30,7 @@ supported only when it is covered by the current implementation and tests.
 | Durable interrupted-restore journal | Yes; startup restores rescue checkpoint | Store recovery | Yes | Varies |
 | Independent shadow store | Opt-in `shadowStore: true`; loose GC plus explicit private-pack repack | Yes | Yes | Usually local backups |
 | Cross-process workspace lock | Yes; bounded wait with stale-owner recovery | Product-specific | Change Ledger documents active-session blocking and Git-operation fences | Usually unavailable |
-| Pre-destructive tool checkpoint | Opt-in `autoPreCommandSnapshot` on DSH `tools/execute`; configurable high-risk tool names, tagged `pre-command` | Built-in terminal safety guidance | Product-specific | Usually unavailable |
+| Pre-destructive tool checkpoint | Opt-in `autoPreCommandSnapshot` on DSH `tools/pre-execute` with `tools/execute` fallback; configurable high-risk tool names, tagged `pre-command` | Built-in terminal safety guidance | Product-specific | Usually unavailable |
 
 ## Choosing the right tool
 
@@ -79,8 +79,8 @@ for that behavior.
 
 Hermes' secure-workstation guidance also describes checkpoints before
 destructive terminal commands. Time Machine now offers the same boundary for
-DSH tools when `autoPreCommandSnapshot` is enabled: the `tools/execute`
-waterfall creates a tagged checkpoint before configured high-risk tools. This
+DSH tools when `autoPreCommandSnapshot` is enabled: the `tools/pre-execute`
+waterfall (with an `execute` fallback) creates a tagged checkpoint before configured high-risk tools. This
 does not intercept a shell launched outside DSH, and disabled-by-default keeps
 the extra DAG nodes and snapshot cost explicit. First-party file-tool events
 remain ledger-backed while later shell/PTC changes are still inventoried as

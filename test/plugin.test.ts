@@ -114,13 +114,19 @@ describe('DSH Cordis plugin entry', () => {
         step: 1,
         signal: new AbortController().signal,
       }, async () => undefined);
-      const result = await ctx.waterfall('tools/execute', {
+      const result = await ctx.waterfall('tools/pre-execute', {
+        callId: 'high-risk-call',
+        name: 'bash',
+        arguments: { command: 'rm -rf build' },
+        agent,
+      }, async () => ({ kind: 'allow' }));
+      expect(result).toEqual({ kind: 'allow' });
+      await ctx.waterfall('tools/execute', {
         callId: 'high-risk-call',
         name: 'bash',
         arguments: { command: 'rm -rf build' },
         agent,
       }, async () => ({ isError: false }));
-      expect(result).toEqual({ isError: false });
       const nodes = Object.values((await (ctx.get('timeMachine') as TimeMachineService).getDAGManager(session.id)).tree.nodes);
       expect(nodes).toHaveLength(2);
       expect(nodes[1]).toMatchObject({

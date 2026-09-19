@@ -875,6 +875,7 @@ declare module '@deepseek-ai/cordis' {
         'fs/observed'(target: FsObservedTargetLike, observation: FsObservedLike, actor: unknown): void;
         'tools/result'(execution: ToolEventExecutionLike, result: ToolEventResultLike): undefined;
         'tools/execute'(execution: ToolExecutionLike, next: () => Promise<unknown>): Promise<unknown>;
+        'tools/pre-execute'(execution: ToolExecutionLike, next: () => Promise<unknown>): Promise<unknown>;
         'agent/created'(payload: {
             readonly agent: AgentLike;
         }): undefined | Promise<undefined>;

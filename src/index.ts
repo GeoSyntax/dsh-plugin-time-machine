@@ -111,6 +111,7 @@ declare module '@deepseek-ai/cordis' {
     'fs/observed'(target: FsObservedTargetLike, observation: FsObservedLike, actor: unknown): void;
     'tools/result'(execution: ToolEventExecutionLike, result: ToolEventResultLike): undefined;
     'tools/execute'(execution: ToolExecutionLike, next: () => Promise<unknown>): Promise<unknown>;
+    'tools/pre-execute'(execution: ToolExecutionLike, next: () => Promise<unknown>): Promise<unknown>;
     'agent/created'(payload: { readonly agent: AgentLike }): undefined | Promise<undefined>;
   }
 }
@@ -147,18 +148,19 @@ export function apply(ctx: Context, config: Config = {}): void {
   const observedWrites = new Map<string, { sessionId: string; turn: number; paths: Map<string, 'modify' | 'delete'> }>();
   const pendingLedgerWrites = new Map<string, Promise<void>>();
 
-  // Hermes-style pre-destructive boundaries. DSH's tools/execute waterfall is
-  // the last reliable seam before a shell/PTC tool mutates the workspace. We
+  // Hermes-style pre-destructive boundaries. DSH's pre-execute/execute
+  // waterfalls are the last reliable seams before a shell/PTC tool mutates the workspace. We
   // keep this opt-in because every high-risk call intentionally creates a DAG
   // node and some profiles do not expose the waterfall.
   let installAgentToolBoundary: ((agent: AgentLike) => void) | undefined;
   if (service.config.autoPreCommandSnapshot) {
     const installedAgents = new WeakSet<object>();
+    const capturedCalls = new Set<string>();
     installAgentToolBoundary = (agent: AgentLike): void => {
       const agentContext = agent.ctx;
       if (!agentContext || installedAgents.has(agent)) return;
       installedAgents.add(agent);
-      agentContext.on('tools/execute', async (execution, next) => {
+      const captureBeforeHighRiskTool = async (execution: ToolExecutionLike): Promise<void> => {
         const session = execution.agent?.session;
         const toolName = execution.name;
         const turn = session ? currentSessionTurn(session) : undefined;
@@ -166,7 +168,10 @@ export function apply(ctx: Context, config: Config = {}): void {
           ? checkpoints.get(checkpointKey(session.id, turn as number))
           : undefined;
         const configured = service.config.preCommandTools ?? [];
-        if (!session || !toolName || !configured.includes(toolName) || !turnCheckpoint) return next();
+        if (!session || !toolName || !configured.includes(toolName) || !turnCheckpoint) return;
+        const callKey = `${session.id}\0${execution.callId ?? toolName}\0${turn}`;
+        if (capturedCalls.has(callKey)) return;
+        capturedCalls.add(callKey);
         try {
           const boundary = await service.createTurnCheckpoint({
             sessionId: session.id,
@@ -185,6 +190,13 @@ export function apply(ctx: Context, config: Config = {}): void {
         } catch (error) {
           ctx.logger.warn(`[time-machine] pre-command checkpoint skipped for ${toolName}: ${errorMessage(error)}`);
         }
+      };
+      agentContext.on('tools/pre-execute', async (execution, next) => {
+        await captureBeforeHighRiskTool(execution);
+        return next();
+      }, { prepend: true });
+      agentContext.on('tools/execute', async (execution, next) => {
+        await captureBeforeHighRiskTool(execution);
         return next();
       }, { prepend: true });
     };

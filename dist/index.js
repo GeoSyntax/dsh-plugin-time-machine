@@ -3636,17 +3636,21 @@ function apply(ctx, config = {}) {
   let installAgentToolBoundary;
   if (service.config.autoPreCommandSnapshot) {
     const installedAgents = /* @__PURE__ */ new WeakSet();
+    const capturedCalls = /* @__PURE__ */ new Set();
     installAgentToolBoundary = (agent) => {
       const agentContext = agent.ctx;
       if (!agentContext || installedAgents.has(agent)) return;
       installedAgents.add(agent);
-      agentContext.on("tools/execute", async (execution, next) => {
+      const captureBeforeHighRiskTool = async (execution) => {
         const session = execution.agent?.session;
         const toolName = execution.name;
         const turn = session ? currentSessionTurn(session) : void 0;
         const turnCheckpoint = session && Number.isSafeInteger(turn) ? checkpoints.get(checkpointKey(session.id, turn)) : void 0;
         const configured = service.config.preCommandTools ?? [];
-        if (!session || !toolName || !configured.includes(toolName) || !turnCheckpoint) return next();
+        if (!session || !toolName || !configured.includes(toolName) || !turnCheckpoint) return;
+        const callKey = `${session.id}\0${execution.callId ?? toolName}\0${turn}`;
+        if (capturedCalls.has(callKey)) return;
+        capturedCalls.add(callKey);
         try {
           const boundary = await service.createTurnCheckpoint({
             sessionId: session.id,
@@ -3665,6 +3669,13 @@ function apply(ctx, config = {}) {
         } catch (error) {
           ctx.logger.warn(`[time-machine] pre-command checkpoint skipped for ${toolName}: ${errorMessage(error)}`);
         }
+      };
+      agentContext.on("tools/pre-execute", async (execution, next) => {
+        await captureBeforeHighRiskTool(execution);
+        return next();
+      }, { prepend: true });
+      agentContext.on("tools/execute", async (execution, next) => {
+        await captureBeforeHighRiskTool(execution);
         return next();
       }, { prepend: true });
     };

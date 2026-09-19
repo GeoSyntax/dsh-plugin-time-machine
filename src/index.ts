@@ -35,6 +35,8 @@ export const Config: Schema<Config> = Schema.object({
   maxSnapshotBytes: Schema.number().default(0),
   allowPartialSnapshots: Schema.boolean().default(false),
   enableAgentWriteLedger: Schema.boolean().default(false),
+  autoPreCommandSnapshot: Schema.boolean().default(false),
+  preCommandTools: Schema.array(Schema.string()).default(['bash', 'shell', 'pwsh', 'powershell', 'terminal_bash', 'terminal_exec', 'run_code', 'python']),
 });
 
 interface SessionEventLike {
@@ -53,6 +55,7 @@ interface SessionLike {
 
 interface AgentLike {
   readonly session: SessionLike;
+  readonly ctx?: Context;
 }
 
 interface SessionControllerLike {
@@ -82,11 +85,19 @@ interface ToolEventResultLike {
   readonly isError?: boolean;
 }
 
+interface ToolExecutionLike {
+  readonly callId?: string;
+  readonly name?: string;
+  readonly arguments?: unknown;
+  readonly agent?: { readonly session?: SessionLike };
+}
+
 declare module '@deepseek-ai/cordis' {
   interface Context {
     timeMachine: TimeMachineService;
     agents: unknown;
     sessions: unknown;
+    tools: unknown;
     commands: CommandRuntimeLike;
     sessionController: SessionControllerLike;
   }
@@ -99,6 +110,8 @@ declare module '@deepseek-ai/cordis' {
     'session/event'(session: SessionLike, event: SessionEventLike): void;
     'fs/observed'(target: FsObservedTargetLike, observation: FsObservedLike, actor: unknown): void;
     'tools/result'(execution: ToolEventExecutionLike, result: ToolEventResultLike): undefined;
+    'tools/execute'(execution: ToolExecutionLike, next: () => Promise<unknown>): Promise<unknown>;
+    'agent/created'(payload: { readonly agent: AgentLike }): undefined | Promise<undefined>;
   }
 }
 
@@ -133,6 +146,50 @@ export function apply(ctx: Context, config: Config = {}): void {
   const checkpoints = new Map<string, string>();
   const observedWrites = new Map<string, { sessionId: string; turn: number; paths: Map<string, 'modify' | 'delete'> }>();
   const pendingLedgerWrites = new Map<string, Promise<void>>();
+
+  // Hermes-style pre-destructive boundaries. DSH's tools/execute waterfall is
+  // the last reliable seam before a shell/PTC tool mutates the workspace. We
+  // keep this opt-in because every high-risk call intentionally creates a DAG
+  // node and some profiles do not expose the waterfall.
+  let installAgentToolBoundary: ((agent: AgentLike) => void) | undefined;
+  if (service.config.autoPreCommandSnapshot) {
+    const installedAgents = new WeakSet<object>();
+    installAgentToolBoundary = (agent: AgentLike): void => {
+      const agentContext = agent.ctx;
+      if (!agentContext || installedAgents.has(agent)) return;
+      installedAgents.add(agent);
+      agentContext.on('tools/execute', async (execution, next) => {
+        const session = execution.agent?.session;
+        const toolName = execution.name;
+        const turn = session ? currentSessionTurn(session) : undefined;
+        const turnCheckpoint = session && Number.isSafeInteger(turn)
+          ? checkpoints.get(checkpointKey(session.id, turn as number))
+          : undefined;
+        const configured = service.config.preCommandTools ?? [];
+        if (!session || !toolName || !configured.includes(toolName) || !turnCheckpoint) return next();
+        try {
+          const boundary = await service.createTurnCheckpoint({
+            sessionId: session.id,
+            turnIndex: turn as number,
+            prompt: `DSH pre-command boundary: ${toolName}`,
+            summary: `Workspace immediately before high-risk tool ${toolName}`,
+            sessionState: {
+              sessionId: session.id,
+              messages: getMessages(session),
+              ...(getEvents(session).length > 0 ? { boundarySeq: getEvents(session).at(-1)?.seq } : {}),
+            },
+            status: 'success',
+            tags: ['pre-command', `tool:${toolName}`],
+          });
+          ctx.logger.info(`[time-machine] captured pre-command checkpoint ${boundary.id} before ${toolName}`);
+        } catch (error) {
+          ctx.logger.warn(`[time-machine] pre-command checkpoint skipped for ${toolName}: ${errorMessage(error)}`);
+        }
+        return next();
+      }, { prepend: true });
+    };
+    ctx.on('agent/created', ({ agent }) => { installAgentToolBoundary?.(agent); return undefined; });
+  }
 
   // These are global lifecycle observations. Register them on the plugin root
   // (rather than an injected service scope) so native DSH events emitted by
@@ -204,6 +261,7 @@ export function apply(ctx: Context, config: Config = {}): void {
   ctx.inject(['agents', 'sessions'], (scope: Context) => {
     scope.on('agent/pre-step', async ({ agent, turn, step }, next) => {
       if (!service.config.autoSnapshot || step !== 1) return next();
+      installAgentToolBoundary?.(agent);
       const session = agent.session;
       const cwd = session.header.cwd ? path.resolve(session.header.cwd) : workDir;
       if (cwd !== service.workDir) {

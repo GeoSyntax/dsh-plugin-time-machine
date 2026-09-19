@@ -81,4 +81,56 @@ describe('DSH Cordis plugin entry', () => {
       await fs.rm(workDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
   });
+
+  it('captures an opt-in pre-command checkpoint before a high-risk DSH tool', async () => {
+    const previousCwd = process.cwd();
+    const workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-plugin-pre-command-'));
+    let ctx: Context | undefined;
+    let eventScope: Context | undefined;
+    try {
+      process.chdir(workDir);
+      ctx = new Context();
+      ctx.provide('agents', {} as never);
+      ctx.provide('sessions', {} as never);
+      ctx.provide('tools', {} as never);
+      new TimeMachinePlugin(ctx, {
+        enableWebUI: false,
+        autoPreCommandSnapshot: true,
+        storageDir: path.join(workDir, '.dsh-tm'),
+      });
+      await ctx.inject(['agents', 'sessions'], (scope: Context) => { eventScope = scope; });
+      const session = {
+        id: 'pre-command-session',
+        header: { cwd: workDir },
+        events: [{ type: 'turn/start', seq: 1, data: { turn: 1 } }],
+        snapshotEvents() { return this.events; },
+        deriveMessages() { return []; },
+      } as any;
+      const agent = { session, ctx };
+      ctx.emit('agent/created', { agent });
+      await eventScope!.waterfall('agent/pre-step', {
+        agent,
+        turn: 1,
+        step: 1,
+        signal: new AbortController().signal,
+      }, async () => undefined);
+      const result = await ctx.waterfall('tools/execute', {
+        callId: 'high-risk-call',
+        name: 'bash',
+        arguments: { command: 'rm -rf build' },
+        agent,
+      }, async () => ({ isError: false }));
+      expect(result).toEqual({ isError: false });
+      const nodes = Object.values((await (ctx.get('timeMachine') as TimeMachineService).getDAGManager(session.id)).tree.nodes);
+      expect(nodes).toHaveLength(2);
+      expect(nodes[1]).toMatchObject({
+        status: 'success',
+        tags: ['pre-command', 'tool:bash'],
+      });
+    } finally {
+      await (ctx?.fiber?.dispose?.() ?? Promise.resolve());
+      process.chdir(previousCwd);
+      await fs.rm(workDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
+  });
 });

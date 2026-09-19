@@ -122,6 +122,8 @@ export class TimeMachineService {
       maxSnapshotBytes: Math.max(0, Math.floor(options.config?.maxSnapshotBytes ?? 0)),
       allowPartialSnapshots: options.config?.allowPartialSnapshots ?? false,
       enableAgentWriteLedger: options.config?.enableAgentWriteLedger ?? false,
+      autoPreCommandSnapshot: options.config?.autoPreCommandSnapshot ?? false,
+      preCommandTools: [...(options.config?.preCommandTools ?? ['bash', 'shell', 'pwsh', 'powershell', 'terminal_bash', 'terminal_exec', 'run_code', 'python'])],
     };
 
     this.gitEngine = new GitPlumbingEngine({
@@ -831,6 +833,8 @@ export class TimeMachineService {
     /** Current restore semantics; ledger mode is explicit and opt-in. */
     handEditPolicy: 'reject-drift' | 'ledger-opt-in';
     agentWriteLedger: boolean;
+    preCommandSnapshots: boolean;
+    preCommandTools: string[];
     unattributedMutationInventory: boolean;
     externalEffectLedger: true;
     externalEffectAdapters: string[];
@@ -845,6 +849,8 @@ export class TimeMachineService {
       maxSnapshotBytes: number;
       allowPartialSnapshots: boolean;
       enableAgentWriteLedger: boolean;
+      autoPreCommandSnapshot: boolean;
+      preCommandTools: string[];
       maxQuarantineBytes: number;
       workspaceLockTimeoutMs: number;
     };
@@ -868,6 +874,8 @@ export class TimeMachineService {
       incrementalCapture: usable && this.config.maxSnapshotFileBytes === 0 && this.config.maxSnapshotBytes === 0,
       handEditPolicy: this.config.enableAgentWriteLedger ? 'ledger-opt-in' : 'reject-drift',
       agentWriteLedger: this.config.enableAgentWriteLedger,
+      preCommandSnapshots: this.config.autoPreCommandSnapshot,
+      preCommandTools: [...this.config.preCommandTools],
       unattributedMutationInventory: true,
       externalEffectLedger: true,
       externalEffectAdapters: this.listExternalEffectAdapters(),
@@ -882,6 +890,8 @@ export class TimeMachineService {
         maxSnapshotBytes: this.config.maxSnapshotBytes,
         allowPartialSnapshots: this.config.allowPartialSnapshots,
         enableAgentWriteLedger: this.config.enableAgentWriteLedger,
+        autoPreCommandSnapshot: this.config.autoPreCommandSnapshot,
+        preCommandTools: [...this.config.preCommandTools],
         maxQuarantineBytes: this.config.maxQuarantineBytes,
         workspaceLockTimeoutMs: this.config.workspaceLockTimeoutMs,
       },

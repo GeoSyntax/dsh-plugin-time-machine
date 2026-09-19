@@ -1972,7 +1972,9 @@ var TimeMachineService = class {
       maxSnapshotFileBytes: Math.max(0, Math.floor(options.config?.maxSnapshotFileBytes ?? 0)),
       maxSnapshotBytes: Math.max(0, Math.floor(options.config?.maxSnapshotBytes ?? 0)),
       allowPartialSnapshots: options.config?.allowPartialSnapshots ?? false,
-      enableAgentWriteLedger: options.config?.enableAgentWriteLedger ?? false
+      enableAgentWriteLedger: options.config?.enableAgentWriteLedger ?? false,
+      autoPreCommandSnapshot: options.config?.autoPreCommandSnapshot ?? false,
+      preCommandTools: [...options.config?.preCommandTools ?? ["bash", "shell", "pwsh", "powershell", "terminal_bash", "terminal_exec", "run_code", "python"]]
     };
     this.gitEngine = new GitPlumbingEngine({
       workDir: this.workDir,
@@ -2569,6 +2571,8 @@ var TimeMachineService = class {
       incrementalCapture: usable && this.config.maxSnapshotFileBytes === 0 && this.config.maxSnapshotBytes === 0,
       handEditPolicy: this.config.enableAgentWriteLedger ? "ledger-opt-in" : "reject-drift",
       agentWriteLedger: this.config.enableAgentWriteLedger,
+      preCommandSnapshots: this.config.autoPreCommandSnapshot,
+      preCommandTools: [...this.config.preCommandTools],
       unattributedMutationInventory: true,
       externalEffectLedger: true,
       externalEffectAdapters: this.listExternalEffectAdapters(),
@@ -2583,6 +2587,8 @@ var TimeMachineService = class {
         maxSnapshotBytes: this.config.maxSnapshotBytes,
         allowPartialSnapshots: this.config.allowPartialSnapshots,
         enableAgentWriteLedger: this.config.enableAgentWriteLedger,
+        autoPreCommandSnapshot: this.config.autoPreCommandSnapshot,
+        preCommandTools: [...this.config.preCommandTools],
         maxQuarantineBytes: this.config.maxQuarantineBytes,
         workspaceLockTimeoutMs: this.config.workspaceLockTimeoutMs
       }
@@ -3597,7 +3603,9 @@ var Config = Schema.object({
   maxSnapshotFileBytes: Schema.number().default(0),
   maxSnapshotBytes: Schema.number().default(0),
   allowPartialSnapshots: Schema.boolean().default(false),
-  enableAgentWriteLedger: Schema.boolean().default(false)
+  enableAgentWriteLedger: Schema.boolean().default(false),
+  autoPreCommandSnapshot: Schema.boolean().default(false),
+  preCommandTools: Schema.array(Schema.string()).default(["bash", "shell", "pwsh", "powershell", "terminal_bash", "terminal_exec", "run_code", "python"])
 });
 function apply(ctx, config = {}) {
   const workDir = path8.resolve(process.cwd());
@@ -3625,6 +3633,46 @@ function apply(ctx, config = {}) {
   const checkpoints = /* @__PURE__ */ new Map();
   const observedWrites = /* @__PURE__ */ new Map();
   const pendingLedgerWrites = /* @__PURE__ */ new Map();
+  let installAgentToolBoundary;
+  if (service.config.autoPreCommandSnapshot) {
+    const installedAgents = /* @__PURE__ */ new WeakSet();
+    installAgentToolBoundary = (agent) => {
+      const agentContext = agent.ctx;
+      if (!agentContext || installedAgents.has(agent)) return;
+      installedAgents.add(agent);
+      agentContext.on("tools/execute", async (execution, next) => {
+        const session = execution.agent?.session;
+        const toolName = execution.name;
+        const turn = session ? currentSessionTurn(session) : void 0;
+        const turnCheckpoint = session && Number.isSafeInteger(turn) ? checkpoints.get(checkpointKey(session.id, turn)) : void 0;
+        const configured = service.config.preCommandTools ?? [];
+        if (!session || !toolName || !configured.includes(toolName) || !turnCheckpoint) return next();
+        try {
+          const boundary = await service.createTurnCheckpoint({
+            sessionId: session.id,
+            turnIndex: turn,
+            prompt: `DSH pre-command boundary: ${toolName}`,
+            summary: `Workspace immediately before high-risk tool ${toolName}`,
+            sessionState: {
+              sessionId: session.id,
+              messages: getMessages(session),
+              ...getEvents(session).length > 0 ? { boundarySeq: getEvents(session).at(-1)?.seq } : {}
+            },
+            status: "success",
+            tags: ["pre-command", `tool:${toolName}`]
+          });
+          ctx.logger.info(`[time-machine] captured pre-command checkpoint ${boundary.id} before ${toolName}`);
+        } catch (error) {
+          ctx.logger.warn(`[time-machine] pre-command checkpoint skipped for ${toolName}: ${errorMessage(error)}`);
+        }
+        return next();
+      }, { prepend: true });
+    };
+    ctx.on("agent/created", ({ agent }) => {
+      installAgentToolBoundary?.(agent);
+      return void 0;
+    });
+  }
   if (service.config.enableAgentWriteLedger) {
     ctx.on("fs/observed", (target, _observation, actor) => {
       const execution = actor;
@@ -3685,6 +3733,7 @@ function apply(ctx, config = {}) {
   ctx.inject(["agents", "sessions"], (scope) => {
     scope.on("agent/pre-step", async ({ agent, turn, step }, next) => {
       if (!service.config.autoSnapshot || step !== 1) return next();
+      installAgentToolBoundary?.(agent);
       const session = agent.session;
       const cwd = session.header.cwd ? path8.resolve(session.header.cwd) : workDir;
       if (cwd !== service.workDir) {

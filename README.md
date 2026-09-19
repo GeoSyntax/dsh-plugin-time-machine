@@ -94,6 +94,7 @@ dsh plugin --profile web list --depth 0
 - **外部副作用补偿边界:** 集成方可注册命名 compensation adapter；`/tm-external-compensate` 和 `POST /api/external-effects/compensate` 默认只 dry-run，只有显式 `--execute`/`execute: true` 才调用适配器。核心持久化幂等 key、结果和 unknown 状态，但不替适配器管理认证或远程事务。
   dry-run 即使 adapter 尚未加载也会返回 `adapterAvailable: false` 的结构化告警；只有真正执行时才会因缺少 adapter 拒绝请求，并返回 `EXTERNAL_ADAPTER_UNAVAILABLE`（Web HTTP 409）。
 - **外部副作用登记 API:** companion 集成可通过 `POST /api/external-effects` 声明 adapter、操作、可逆性和失败语义；该接口只写入审计账本，不会调用远程系统，成功返回 HTTP 201。
+- **高风险命令前置边界（可选）:** 设置 `autoPreCommandSnapshot: true` 后，插件会在 DSH `tools/execute` waterfall 进入 `bash`、`shell`、`terminal_bash`、`terminal_exec`、`run_code` 或 `python` 前创建带 `pre-command` 标签的 checkpoint；可通过 `preCommandTools` 收紧或扩展工具集合。该能力只覆盖经过 DSH waterfall 的工具，不会拦截宿主外部手工 shell。
 
 ## Safety model
 
@@ -136,10 +137,21 @@ dsh plugin --profile web list --depth 0
     allowPartialSnapshots: false
     # Optional, disabled by default. Enables integration-supplied Agent-write evidence.
     enableAgentWriteLedger: false
+    # Optional Hermes-style boundary before high-risk DSH tools.
+    autoPreCommandSnapshot: false
+    preCommandTools:
+      - bash
+      - shell
+      - pwsh
+      - powershell
+      - terminal_bash
+      - terminal_exec
+      - run_code
+      - python
 ```
 
 Web dashboard 只绑定 loopback，并拒绝非本机 Host 和跨 origin 请求。`/tm-rewind` 与 `/tm-fork` 需要宿主提供 `sessionController`，否则插件会拒绝只恢复文件的危险降级行为。
-集成方可读取带有 `version: 1` 的 `GET /api/capabilities`，提前判断当前工作区是否支持 Git 三方 merge、selective restore、shadow store、shadow 加密、quarantine 加密/迁移、外部副作用账本、增量捕获、Agent-write ledger 和已注册的 compensation adapters，以及 sparse checkout/submodule/进行中操作限制；`handEditPolicy: reject-drift` 表示默认不会猜测文件作者，`ledger-opt-in` 表示已开启显式 Agent-write 账本但仍需传入 `--preserve-hand-edits`；返回的 `policies` 还公开 restore 模式、快照/存储/quarantine 配额、自动保留年龄和锁等待上限，便于 UI 在操作前解释边界；`workspaceIsolation: shared-lock` 明确表示当前是共享工作区加锁，不是独立 worktree/container。
+集成方可读取带有 `version: 1` 的 `GET /api/capabilities`，提前判断当前工作区是否支持 Git 三方 merge、selective restore、shadow store、shadow 加密、quarantine 加密/迁移、外部副作用账本、增量捕获、Agent-write ledger、pre-command snapshots 和已注册的 compensation adapters，以及 sparse checkout/submodule/进行中操作限制；`handEditPolicy: reject-drift` 表示默认不会猜测文件作者，`ledger-opt-in` 表示已开启显式 Agent-write 账本但仍需传入 `--preserve-hand-edits`；返回的 `policies` 还公开 restore 模式、快照/存储/quarantine 配额、自动保留年龄、锁等待上限和前置高风险工具集合，便于 UI 在操作前解释边界；`workspaceIsolation: shared-lock` 明确表示当前是共享工作区加锁，不是独立 worktree/container。
 
 ## Verification
 
@@ -194,7 +206,7 @@ Git status 报告的变更路径。小仓库仍有 Git 进程启动开销，但�
 - `/tm-preview` 和 Web 预览会签发一次性、会话绑定的 restore plan；Web rewind 会把 plan 一并提交，若预览后工作区、活动 checkpoint、Git HEAD/branch/进行中操作或 plan TTL 发生变化，服务返回 `RESTORE_PLAN_INVALID`（HTTP 409）并要求重新预览。`restorePlanTtlMs: 0` 可关闭过期时间，但 plan 仍只能消费一次。
 - 多文件恢复提供 rescue/compensation 和崩溃后 journal 恢复，但文件系统本身没有跨文件 ACID 事务。
 - Git sparse checkout、submodule 和 merge/rebase/cherry-pick 进行中状态会被明确识别并拒绝创建/预览/恢复 checkpoint（`UNSUPPORTED_WORKSPACE_STATE`），避免把不完整工作区误报为可回滚快照；请先完成操作或使用普通 worktree。
-- 当前 manifest 只声明 `web` profile；原生 TUI 不在兼容承诺范围内。
+- 当前 manifest 只声明 `web` profile；原生 TUI 不在兼容承诺范围内。`autoPreCommandSnapshot` 只对宿主实际派发到 `tools/execute` 的工具生效。
 - Hermes Agent v2 已有自己的 checkpoint/rollback；本插件适合需要 DSH Session fork、DAG 探索或失败反思的场景。
 - 外部数据库、网络、进程或云资源变更不会被文件恢复假装“回滚”。集成方可调用 `service.recordExternalEffect(...)` 记录 adapter、操作、可逆性、补偿说明和失败语义；这些记录会持久化到 checkpoint，并在 fork 反思中生成警告，但核心不会未经用户批准执行补偿。
 

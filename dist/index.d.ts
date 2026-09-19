@@ -166,6 +166,10 @@ interface TimeMachineConfig {
     allowPartialSnapshots?: boolean;
     /** Record integration-supplied Agent writes for explicit hand-edit preservation. */
     enableAgentWriteLedger?: boolean;
+    /** Create a workspace checkpoint immediately before high-risk external tools. */
+    autoPreCommandSnapshot?: boolean;
+    /** Tool names treated as high-risk when autoPreCommandSnapshot is enabled. */
+    preCommandTools?: string[];
 }
 interface RestoreOptions {
     mode?: 'safe' | 'merge' | 'force';
@@ -480,6 +484,8 @@ declare class TimeMachineService {
         /** Current restore semantics; ledger mode is explicit and opt-in. */
         handEditPolicy: 'reject-drift' | 'ledger-opt-in';
         agentWriteLedger: boolean;
+        preCommandSnapshots: boolean;
+        preCommandTools: string[];
         unattributedMutationInventory: boolean;
         externalEffectLedger: true;
         externalEffectAdapters: string[];
@@ -498,6 +504,8 @@ declare class TimeMachineService {
             maxSnapshotBytes: number;
             allowPartialSnapshots: boolean;
             enableAgentWriteLedger: boolean;
+            autoPreCommandSnapshot: boolean;
+            preCommandTools: string[];
             maxQuarantineBytes: number;
             workspaceLockTimeoutMs: number;
         };
@@ -805,6 +813,7 @@ interface SessionLike {
 }
 interface AgentLike {
     readonly session: SessionLike;
+    readonly ctx?: Context;
 }
 interface SessionControllerLike {
     create(request: {
@@ -838,11 +847,20 @@ interface ToolEventExecutionLike {
 interface ToolEventResultLike {
     readonly isError?: boolean;
 }
+interface ToolExecutionLike {
+    readonly callId?: string;
+    readonly name?: string;
+    readonly arguments?: unknown;
+    readonly agent?: {
+        readonly session?: SessionLike;
+    };
+}
 declare module '@deepseek-ai/cordis' {
     interface Context {
         timeMachine: TimeMachineService;
         agents: unknown;
         sessions: unknown;
+        tools: unknown;
         commands: CommandRuntimeLike;
         sessionController: SessionControllerLike;
     }
@@ -856,6 +874,10 @@ declare module '@deepseek-ai/cordis' {
         'session/event'(session: SessionLike, event: SessionEventLike): void;
         'fs/observed'(target: FsObservedTargetLike, observation: FsObservedLike, actor: unknown): void;
         'tools/result'(execution: ToolEventExecutionLike, result: ToolEventResultLike): undefined;
+        'tools/execute'(execution: ToolExecutionLike, next: () => Promise<unknown>): Promise<unknown>;
+        'agent/created'(payload: {
+            readonly agent: AgentLike;
+        }): undefined | Promise<undefined>;
     }
 }
 declare function apply(ctx: Context, config?: Config): void;

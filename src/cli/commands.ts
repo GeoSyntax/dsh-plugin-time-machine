@@ -278,7 +278,7 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
     scope.commands.register({
       name: 'tm-rewind',
       description: 'Restore workspace and fork conversation at a checkpoint',
-      input: { hint: '<checkpoint> [--merge|--force] [--preserve-hand-edits|--no-preserve-hand-edits] [--delete-new-ignored] [--plan=<id>]' },
+      input: { hint: '<checkpoint> [--merge|--force] [--preserve-hand-edits|--no-preserve-hand-edits] [--require-effects-resolved] [--delete-new-ignored] [--plan=<id>]' },
       handler: async ({ agent, rawInput }: CommandInvocationLike): Promise<CommandResult> => {
         const args = rawInput.trim().split(/\s+/).filter(Boolean);
         const checkpointId = args.find(arg => !arg.startsWith('--'));
@@ -293,6 +293,7 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
             ? { preserveVerifiedHandEdits: true }
             : args.includes('--no-preserve-hand-edits') ? { preserveVerifiedHandEdits: false } : {}),
           deleteNewIgnoredPaths: args.includes('--delete-new-ignored'),
+          requireExternalEffectsResolved: args.includes('--require-effects-resolved'),
           restorePlanId: optionValue(args, '--plan'),
         });
         try {
@@ -313,7 +314,7 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
     scope.commands.register({
       name: 'tm-undo',
       description: 'Undo recent turns by restoring and forking from the active checkpoint lineage',
-      input: { hint: '[count] [--merge|--force] [--preserve-hand-edits|--no-preserve-hand-edits] [--delete-new-ignored]' },
+      input: { hint: '[count] [--merge|--force] [--preserve-hand-edits|--no-preserve-hand-edits] [--require-effects-resolved] [--delete-new-ignored]' },
       handler: async ({ agent, rawInput }: CommandInvocationLike): Promise<CommandResult> => {
         const args = rawInput.trim().split(/\s+/).filter(Boolean);
         const positionals = args.filter(arg => !arg.startsWith('--'));
@@ -331,6 +332,7 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
             ? { preserveVerifiedHandEdits: true }
             : args.includes('--no-preserve-hand-edits') ? { preserveVerifiedHandEdits: false } : {}),
           deleteNewIgnoredPaths: args.includes('--delete-new-ignored'),
+          requireExternalEffectsResolved: args.includes('--require-effects-resolved'),
         });
         try {
           const created = await restartConversation(controller, sessionId, result.targetNode, service.workDir);
@@ -350,7 +352,7 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
     scope.commands.register({
       name: 'tm-restore',
       description: 'Restore the full workspace to a checkpoint without forking the conversation',
-      input: { hint: '<checkpoint> [--merge|--force] [--delete-new-ignored] [--plan=<id>]' },
+      input: { hint: '<checkpoint> [--merge|--force] [--require-effects-resolved] [--delete-new-ignored] [--plan=<id>]' },
       handler: async ({ agent, rawInput }: CommandInvocationLike): Promise<CommandResult> => {
         const args = rawInput.trim().split(/\s+/).filter(Boolean);
         const checkpointId = args.find(arg => !arg.startsWith('--'));
@@ -358,6 +360,7 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
         const result = await service.restoreWorkspaceToCheckpoint(agent.session.id, checkpointId, {
           mode: args.includes('--force') ? 'force' : args.includes('--merge') ? 'merge' : undefined,
           deleteNewIgnoredPaths: args.includes('--delete-new-ignored'),
+          requireExternalEffectsResolved: args.includes('--require-effects-resolved'),
           restorePlanId: optionValue(args, '--plan'),
         });
         return { kind: 'success', text: `Restored workspace to ${checkpointId}; conversation unchanged. Rescue point: ${result.rescueCheckpointId ?? 'none'}.` };
@@ -383,9 +386,10 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
           ? ` INCOMPLETE checkpoint: omitted paths preserved live: ${preview.targetOmittedPaths.join(', ')}.`
           : '';
         const conflicts = preview.conflictingPaths.length ? ` Conflicting paths: ${preview.conflictingPaths.join(', ')}.` : '';
+        const effects = preview.requiresExternalEffectsReview ? ` Unresolved external effects: ${preview.unresolvedExternalEffectIds.join(', ')}; use --require-effects-resolved to fail closed until compensated.` : '';
         const preserved = preview.preservedHandEditPaths?.length ? ` Preserved hand-edits: ${preview.preservedHandEditPaths.join(', ')}.` : '';
         const plan = ` Restore plan: ${preview.restorePlanId}${preview.restorePlanExpiresAt ? ` (expires ${new Date(preview.restorePlanExpiresAt).toISOString()})` : ' (no expiry)'}.`;
-        return { kind: 'success', text: `Preview ${checkpointId}: ${drift}. Changes: ${files}.${ignored}${omitted}${conflicts}${preserved}${plan}` };
+        return { kind: 'success', text: `Preview ${checkpointId}: ${drift}. Changes: ${files}.${ignored}${omitted}${conflicts}${preserved}${effects}${plan}` };
       },
     });
 
@@ -408,7 +412,7 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
     scope.commands.register({
       name: 'tm-fork',
       description: 'Create a named exploration branch from a checkpoint',
-      input: { hint: '<checkpoint> <branch> [--merge|--force]' },
+      input: { hint: '<checkpoint> <branch> [--merge|--force] [--require-effects-resolved]' },
       handler: async ({ agent, rawInput }: CommandInvocationLike): Promise<CommandResult> => {
         const args = rawInput.trim().split(/\s+/).filter(Boolean);
         const positionals = args.filter(arg => !arg.startsWith('--'));
@@ -421,7 +425,7 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
           sessionId,
           fromCheckpointId: positionals[0],
           newBranchName: positionals[1],
-          restore: { mode: args.includes('--force') ? 'force' : args.includes('--merge') ? 'merge' : undefined },
+          restore: { mode: args.includes('--force') ? 'force' : args.includes('--merge') ? 'merge' : undefined, requireExternalEffectsResolved: args.includes('--require-effects-resolved') },
         });
         try {
           const created = await restartConversation(controller, sessionId, result.forkedNode, service.workDir);

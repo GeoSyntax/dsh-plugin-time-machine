@@ -54,6 +54,14 @@ export class RestorePlanError extends Error {
   }
 }
 
+export class ExternalEffectsUnresolvedError extends Error {
+  readonly code = 'EXTERNAL_EFFECTS_UNRESOLVED';
+  constructor(public readonly effectIds: string[]) {
+    super(`Restore requires explicit compensation for unresolved external effects: ${effectIds.join(', ')}`);
+    this.name = 'ExternalEffectsUnresolvedError';
+  }
+}
+
 interface RestorePlan {
   id: string;
   sessionId: string;
@@ -619,6 +627,7 @@ export class TimeMachineService {
       if (!target) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
       const reviewedPreserve = await this.consumeRestorePlan(sessionId, checkpointId, options.restorePlanId, dag);
       const effectiveOptions = this.applyReviewedRestorePolicy(options, reviewedPreserve);
+      this.assertExternalEffectsResolved(dag, checkpointId, effectiveOptions.requireExternalEffectsResolved);
       const restored = await this.restoreWithRescue(dag, target, effectiveOptions);
       try {
         await dag.rewindTo(checkpointId);
@@ -737,6 +746,7 @@ export class TimeMachineService {
       const baseNode = dag.validateFork(params.fromCheckpointId, params.newBranchName);
       const reviewedPreserve = await this.consumeRestorePlan(params.sessionId, params.fromCheckpointId, params.restore?.restorePlanId, dag);
       const effectiveRestore = this.applyReviewedRestorePolicy(params.restore ?? {}, reviewedPreserve);
+      this.assertExternalEffectsResolved(dag, params.fromCheckpointId, effectiveRestore.requireExternalEffectsResolved);
       const restored = await this.restoreWithRescue(dag, baseNode, effectiveRestore, 'fork');
       let forkedNode: CheckpointNode;
       try {
@@ -864,6 +874,9 @@ export class TimeMachineService {
         .slice(targetIndex >= 0 ? targetIndex + 1 : 0)
         .flatMap(node => node.externalEffects ?? [])
         .map(effect => cloneJson(effect));
+      const unresolvedExternalEffectIds = externalEffects
+        .filter(effect => effect.status !== 'compensated')
+        .map(effect => effect.id);
       const workspaceDrifted = Boolean(current && (
         currentState.treeOid !== expectedTree || !sameStrings(currentState.ignoredPaths, expectedIgnored)
       ));
@@ -899,6 +912,8 @@ export class TimeMachineService {
         conflictingPaths,
         preservedHandEditPaths,
         externalEffects,
+        unresolvedExternalEffectIds,
+        requiresExternalEffectsReview: unresolvedExternalEffectIds.length > 0,
         workspaceDrifted,
         requiresForce: conflictingPaths.length > 0,
         restorePlanId: planId,
@@ -1405,6 +1420,23 @@ export class TimeMachineService {
       }
       throw error;
     }
+  }
+
+  private unresolvedExternalEffects(dag: DAGStateManager, targetCheckpointId: string): ExternalEffectRecord[] {
+    const current = dag.getCurrentNode();
+    if (!current) return [];
+    const lineage = dag.getLineage(current.id);
+    const targetIndex = lineage.findIndex(node => node.id === targetCheckpointId);
+    return lineage
+      .slice(targetIndex >= 0 ? targetIndex + 1 : 0)
+      .flatMap(node => node.externalEffects ?? [])
+      .filter(effect => effect.status !== 'compensated');
+  }
+
+  private assertExternalEffectsResolved(dag: DAGStateManager, targetCheckpointId: string, required: boolean | undefined): void {
+    if (!required) return;
+    const unresolved = this.unresolvedExternalEffects(dag, targetCheckpointId);
+    if (unresolved.length) throw new ExternalEffectsUnresolvedError(unresolved.map(effect => effect.id));
   }
 
   private async restoreNode(

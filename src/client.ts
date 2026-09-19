@@ -36,6 +36,7 @@ export interface RewindRequest {
   force?: boolean;
   preserveVerifiedHandEdits?: boolean;
   deleteNewIgnoredPaths?: boolean;
+  requireExternalEffectsResolved?: boolean;
 }
 
 export interface ForkRequest extends RewindRequest {

@@ -63,6 +63,7 @@ UX, selective non-destructive restore, or durable branch exploration.
 | Session metadata at-rest protection | Optional AES-256-GCM envelope for DAG/session messages with key-aware discovery and fail-closed restart behavior | Product-specific | Varies | Varies |
 | Quarantine at-rest encryption | Opt-in AES-256-GCM via environment-backed key; missing/wrong key fails closed | Product-specific | Varies | Varies |
 | External side-effect ledger | Adapter declarations persist reversibility, compensation and failure semantics; named adapters support dry-run, explicit execution and idempotency fences; missing adapters are surfaced as `adapterAvailable: false`; fork reflection still warns | Product-specific | Varies | Usually absent |
+| External-effect restore gate | Preview exposes unresolved effect IDs; opt-in strict rewind/fork/restore rejects an abandoned lineage until every effect is explicitly compensated | Usually warning-only | Product-specific | Usually absent |
 | Selective file restore | `tm-restore-files`, Web API | Yes | Yes | Varies |
 | Full workspace restore without conversation fork | `tm-restore`, `POST /api/restore-workspace` | Product-specific | Product-specific | Often the default undo behavior |
 | Conversation/session alignment | DSH `sessionController` fork | Product-specific | Product-specific | Usually undo/redo or same window |

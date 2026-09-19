@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add an opt-in strict external-effect restore gate. Preview reports unresolved
+  effect IDs, and rewind/fork/restore can fail closed until explicit adapter
+  compensation marks them resolved.
+
 - Fail closed before restore when any workspace path traverses a symlink or
   non-directory ancestor, closing the workspace-escape gap identified in
   comparable rewind plugins.

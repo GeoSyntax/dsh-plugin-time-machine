@@ -233,6 +233,8 @@ export interface RestoreOptions {
   preserveVerifiedHandEdits?: boolean;
   /** Internal path list calculated from the active Agent-write ledger. */
   preservePaths?: string[];
+  /** Fail closed when the abandoned lineage contains uncompensated external effects. */
+  requireExternalEffectsResolved?: boolean;
 }
 
 export interface RestoreResult {
@@ -269,6 +271,10 @@ export interface RestorePreview {
   preservedHandEditPaths?: string[];
   /** External effects recorded on the active lineage after the target; file restore does not undo these. */
   externalEffects?: ExternalEffectRecord[];
+  /** IDs of effects that still need explicit compensation before a strict restore. */
+  unresolvedExternalEffectIds: string[];
+  /** True when the preview contains effects that file restore cannot undo. */
+  requiresExternalEffectsReview: boolean;
   workspaceDrifted: boolean;
   requiresForce: boolean;
   /** Short-lived session-bound plan used to bind a reviewed preview to mutation. */

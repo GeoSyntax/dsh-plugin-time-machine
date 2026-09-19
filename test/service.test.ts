@@ -251,6 +251,11 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
     const preview = await service.previewRestore(sessionId, first.id);
     expect(preview.externalEffects).toHaveLength(1);
     expect(preview.externalEffects?.[0]).toMatchObject({ adapter: 'database', operation: 'insert', status: 'unresolved' });
+    expect(preview.unresolvedExternalEffectIds).toHaveLength(1);
+    expect(preview.requiresExternalEffectsReview).toBe(true);
+    await expect(service.rewindToCheckpoint(sessionId, first.id, {
+      mode: 'force', requireExternalEffectsResolved: true,
+    })).rejects.toMatchObject({ code: 'EXTERNAL_EFFECTS_UNRESOLVED', effectIds: [preview.unresolvedExternalEffectIds[0]] });
   });
 
   it('binds a preview plan to the reviewed workspace and consumes it once', async () => {

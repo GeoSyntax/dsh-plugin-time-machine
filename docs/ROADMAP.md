@@ -190,6 +190,10 @@ reflection report; dry-run performs no remote call; repeated execution with the
 same key is replay-safe and a different key is rejected after an attempt. The
 core must never claim that a filesystem snapshot undoes an external mutation.
 
+An opt-in `requireExternalEffectsResolved` gate now makes that boundary
+enforceable: previews expose unresolved effect IDs, and strict rewind/fork/
+restore fails closed until explicit adapter compensation marks them resolved.
+
 ## Current non-goals
 
 - Silent partial snapshots in the default mode.

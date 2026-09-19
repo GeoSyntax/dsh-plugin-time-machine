@@ -1524,6 +1524,7 @@ __export(index_exports, {
   DAGStateKeyError: () => DAGStateKeyError,
   DAGStateManager: () => DAGStateManager,
   DAG_FORMAT_VERSION: () => DAG_FORMAT_VERSION,
+  ExternalEffectsUnresolvedError: () => ExternalEffectsUnresolvedError,
   FallbackSnapshotEngine: () => FallbackSnapshotEngine,
   GitPlumbingEngine: () => GitPlumbingEngine,
   QuarantineKeyError: () => QuarantineKeyError,
@@ -2558,6 +2559,15 @@ var RestorePlanError = class extends Error {
     this.name = "RestorePlanError";
   }
 };
+var ExternalEffectsUnresolvedError = class extends Error {
+  constructor(effectIds) {
+    super(`Restore requires explicit compensation for unresolved external effects: ${effectIds.join(", ")}`);
+    this.effectIds = effectIds;
+    this.name = "ExternalEffectsUnresolvedError";
+  }
+  effectIds;
+  code = "EXTERNAL_EFFECTS_UNRESOLVED";
+};
 var TimeMachineService = class {
   workDir;
   storageDir;
@@ -2995,6 +3005,7 @@ var TimeMachineService = class {
       if (!target) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
       const reviewedPreserve = await this.consumeRestorePlan(sessionId, checkpointId, options.restorePlanId, dag);
       const effectiveOptions = this.applyReviewedRestorePolicy(options, reviewedPreserve);
+      this.assertExternalEffectsResolved(dag, checkpointId, effectiveOptions.requireExternalEffectsResolved);
       const restored = await this.restoreWithRescue(dag, target, effectiveOptions);
       try {
         await dag.rewindTo(checkpointId);
@@ -3104,6 +3115,7 @@ var TimeMachineService = class {
       const baseNode = dag.validateFork(params.fromCheckpointId, params.newBranchName);
       const reviewedPreserve = await this.consumeRestorePlan(params.sessionId, params.fromCheckpointId, params.restore?.restorePlanId, dag);
       const effectiveRestore = this.applyReviewedRestorePolicy(params.restore ?? {}, reviewedPreserve);
+      this.assertExternalEffectsResolved(dag, params.fromCheckpointId, effectiveRestore.requireExternalEffectsResolved);
       const restored = await this.restoreWithRescue(dag, baseNode, effectiveRestore, "fork");
       let forkedNode;
       try {
@@ -3199,6 +3211,7 @@ var TimeMachineService = class {
       const currentLineage = current ? dag.getLineage(current.id) : [];
       const targetIndex = currentLineage.findIndex((node) => node.id === checkpointId);
       const externalEffects = currentLineage.slice(targetIndex >= 0 ? targetIndex + 1 : 0).flatMap((node) => node.externalEffects ?? []).map((effect) => cloneJson2(effect));
+      const unresolvedExternalEffectIds = externalEffects.filter((effect) => effect.status !== "compensated").map((effect) => effect.id);
       const workspaceDrifted = Boolean(current && (currentState.treeOid !== expectedTree || !sameStrings(currentState.ignoredPaths, expectedIgnored)));
       this.expireRestorePlans();
       const planId = `plan_${(0, import_node_crypto6.randomUUID)().replace(/-/g, "")}`;
@@ -3232,6 +3245,8 @@ var TimeMachineService = class {
         conflictingPaths,
         preservedHandEditPaths,
         externalEffects,
+        unresolvedExternalEffectIds,
+        requiresExternalEffectsReview: unresolvedExternalEffectIds.length > 0,
         workspaceDrifted,
         requiresForce: conflictingPaths.length > 0,
         restorePlanId: planId,
@@ -3605,6 +3620,18 @@ var TimeMachineService = class {
       throw error;
     }
   }
+  unresolvedExternalEffects(dag, targetCheckpointId) {
+    const current = dag.getCurrentNode();
+    if (!current) return [];
+    const lineage = dag.getLineage(current.id);
+    const targetIndex = lineage.findIndex((node) => node.id === targetCheckpointId);
+    return lineage.slice(targetIndex >= 0 ? targetIndex + 1 : 0).flatMap((node) => node.externalEffects ?? []).filter((effect) => effect.status !== "compensated");
+  }
+  assertExternalEffectsResolved(dag, targetCheckpointId, required) {
+    if (!required) return;
+    const unresolved = this.unresolvedExternalEffects(dag, targetCheckpointId);
+    if (unresolved.length) throw new ExternalEffectsUnresolvedError(unresolved.map((effect) => effect.id));
+  }
   async restoreNode(target, expected, options) {
     const isGit = await this.gitEngine.isGitRepo();
     if (isGit && target.gitCommitOid && !target.gitCommitOid.startsWith("fallback_")) {
@@ -3835,7 +3862,7 @@ var TimeMachineWebServer = class {
           }
           await this.handleStatic(res, pathname);
         } catch (err) {
-          const status = err?.code === "BAD_REQUEST" ? 400 : err?.code === "SESSION_NOT_FOUND" || err?.code === "UNDO_TARGET_NOT_FOUND" || err?.code === "CHECKPOINT_NOT_FOUND" ? 404 : err?.code === "RESTORE_PLAN_INVALID" || err?.code === "RESTORE_MERGE_CONFLICT" || err?.code === "QUARANTINE_KEY_INVALID" || err?.code === "EXTERNAL_COMPENSATION_UNKNOWN" || err?.code === "EXTERNAL_ADAPTER_UNAVAILABLE" || err?.code === "EXTERNAL_EFFECT_DUPLICATE" || err?.code === "WORKSPACE_ROUTE_MISMATCH" ? 409 : err?.code === "UNSUPPORTED_WORKSPACE_STATE" ? 422 : err?.code === "SNAPSHOT_SIZE_LIMIT" ? 413 : 500;
+          const status = err?.code === "BAD_REQUEST" ? 400 : err?.code === "SESSION_NOT_FOUND" || err?.code === "UNDO_TARGET_NOT_FOUND" || err?.code === "CHECKPOINT_NOT_FOUND" ? 404 : err?.code === "RESTORE_PLAN_INVALID" || err?.code === "RESTORE_MERGE_CONFLICT" || err?.code === "QUARANTINE_KEY_INVALID" || err?.code === "EXTERNAL_COMPENSATION_UNKNOWN" || err?.code === "EXTERNAL_ADAPTER_UNAVAILABLE" || err?.code === "EXTERNAL_EFFECT_DUPLICATE" || err?.code === "WORKSPACE_ROUTE_MISMATCH" || err?.code === "EXTERNAL_EFFECTS_UNRESOLVED" ? 409 : err?.code === "UNSUPPORTED_WORKSPACE_STATE" ? 422 : err?.code === "SNAPSHOT_SIZE_LIMIT" ? 413 : 500;
           res.writeHead(status, { "Content-Type": "application/json" });
           res.end(JSON.stringify({
             error: err.message || "Internal Server Error",
@@ -4016,6 +4043,7 @@ var TimeMachineWebServer = class {
       const result = await this.service.rewindToCheckpoint(sourceSessionId, checkpointId, {
         mode: body.force === true ? "force" : body.merge === true ? "merge" : void 0,
         ...typeof body.preserveVerifiedHandEdits === "boolean" ? { preserveVerifiedHandEdits: body.preserveVerifiedHandEdits } : {},
+        ...body.requireExternalEffectsResolved === true ? { requireExternalEffectsResolved: true } : {},
         deleteNewIgnoredPaths: body.deleteNewIgnoredPaths === true,
         restorePlanId: typeof body.restorePlanId === "string" ? body.restorePlanId : void 0
       });
@@ -4046,6 +4074,7 @@ var TimeMachineWebServer = class {
       const result = await this.service.rewindToCheckpoint(sourceSessionId, target.id, {
         mode: body.force === true ? "force" : body.merge === true ? "merge" : void 0,
         ...typeof body.preserveVerifiedHandEdits === "boolean" ? { preserveVerifiedHandEdits: body.preserveVerifiedHandEdits } : {},
+        ...body.requireExternalEffectsResolved === true ? { requireExternalEffectsResolved: true } : {},
         deleteNewIgnoredPaths: body.deleteNewIgnoredPaths === true
       });
       let conversation;
@@ -4071,6 +4100,7 @@ var TimeMachineWebServer = class {
       const result = await this.service.restoreWorkspaceToCheckpoint(sessionId, body.checkpointId, {
         mode: body.force === true ? "force" : body.merge === true ? "merge" : void 0,
         ...typeof body.preserveVerifiedHandEdits === "boolean" ? { preserveVerifiedHandEdits: body.preserveVerifiedHandEdits } : {},
+        ...body.requireExternalEffectsResolved === true ? { requireExternalEffectsResolved: true } : {},
         deleteNewIgnoredPaths: body.deleteNewIgnoredPaths === true,
         restorePlanId: typeof body.restorePlanId === "string" ? body.restorePlanId : void 0
       });
@@ -4622,7 +4652,7 @@ ${reflection.suggestedPromptPrefix}` };
     scope.commands.register({
       name: "tm-rewind",
       description: "Restore workspace and fork conversation at a checkpoint",
-      input: { hint: "<checkpoint> [--merge|--force] [--preserve-hand-edits|--no-preserve-hand-edits] [--delete-new-ignored] [--plan=<id>]" },
+      input: { hint: "<checkpoint> [--merge|--force] [--preserve-hand-edits|--no-preserve-hand-edits] [--require-effects-resolved] [--delete-new-ignored] [--plan=<id>]" },
       handler: async ({ agent, rawInput }) => {
         const args = rawInput.trim().split(/\s+/).filter(Boolean);
         const checkpointId = args.find((arg) => !arg.startsWith("--"));
@@ -4634,6 +4664,7 @@ ${reflection.suggestedPromptPrefix}` };
           mode: args.includes("--force") ? "force" : args.includes("--merge") ? "merge" : void 0,
           ...args.includes("--preserve-hand-edits") ? { preserveVerifiedHandEdits: true } : args.includes("--no-preserve-hand-edits") ? { preserveVerifiedHandEdits: false } : {},
           deleteNewIgnoredPaths: args.includes("--delete-new-ignored"),
+          requireExternalEffectsResolved: args.includes("--require-effects-resolved"),
           restorePlanId: optionValue(args, "--plan")
         });
         try {
@@ -4653,7 +4684,7 @@ ${reflection.suggestedPromptPrefix}` };
     scope.commands.register({
       name: "tm-undo",
       description: "Undo recent turns by restoring and forking from the active checkpoint lineage",
-      input: { hint: "[count] [--merge|--force] [--preserve-hand-edits|--no-preserve-hand-edits] [--delete-new-ignored]" },
+      input: { hint: "[count] [--merge|--force] [--preserve-hand-edits|--no-preserve-hand-edits] [--require-effects-resolved] [--delete-new-ignored]" },
       handler: async ({ agent, rawInput }) => {
         const args = rawInput.trim().split(/\s+/).filter(Boolean);
         const positionals = args.filter((arg) => !arg.startsWith("--"));
@@ -4667,7 +4698,8 @@ ${reflection.suggestedPromptPrefix}` };
         const result = await service.rewindToCheckpoint(sessionId, checkpointId, {
           mode: args.includes("--force") ? "force" : args.includes("--merge") ? "merge" : void 0,
           ...args.includes("--preserve-hand-edits") ? { preserveVerifiedHandEdits: true } : args.includes("--no-preserve-hand-edits") ? { preserveVerifiedHandEdits: false } : {},
-          deleteNewIgnoredPaths: args.includes("--delete-new-ignored")
+          deleteNewIgnoredPaths: args.includes("--delete-new-ignored"),
+          requireExternalEffectsResolved: args.includes("--require-effects-resolved")
         });
         try {
           const created = await restartConversation(controller, sessionId, result.targetNode, service.workDir);
@@ -4686,7 +4718,7 @@ ${reflection.suggestedPromptPrefix}` };
     scope.commands.register({
       name: "tm-restore",
       description: "Restore the full workspace to a checkpoint without forking the conversation",
-      input: { hint: "<checkpoint> [--merge|--force] [--delete-new-ignored] [--plan=<id>]" },
+      input: { hint: "<checkpoint> [--merge|--force] [--require-effects-resolved] [--delete-new-ignored] [--plan=<id>]" },
       handler: async ({ agent, rawInput }) => {
         const args = rawInput.trim().split(/\s+/).filter(Boolean);
         const checkpointId = args.find((arg) => !arg.startsWith("--"));
@@ -4694,6 +4726,7 @@ ${reflection.suggestedPromptPrefix}` };
         const result = await service.restoreWorkspaceToCheckpoint(agent.session.id, checkpointId, {
           mode: args.includes("--force") ? "force" : args.includes("--merge") ? "merge" : void 0,
           deleteNewIgnoredPaths: args.includes("--delete-new-ignored"),
+          requireExternalEffectsResolved: args.includes("--require-effects-resolved"),
           restorePlanId: optionValue(args, "--plan")
         });
         return { kind: "success", text: `Restored workspace to ${checkpointId}; conversation unchanged. Rescue point: ${result.rescueCheckpointId ?? "none"}.` };
@@ -4714,9 +4747,10 @@ ${reflection.suggestedPromptPrefix}` };
         const ignored = preview.ignoredPathsToDelete.length ? ` Ignored paths to delete: ${preview.ignoredPathsToDelete.join(", ")}.` : "";
         const omitted = preview.targetOmittedPaths?.length ? ` INCOMPLETE checkpoint: omitted paths preserved live: ${preview.targetOmittedPaths.join(", ")}.` : "";
         const conflicts = preview.conflictingPaths.length ? ` Conflicting paths: ${preview.conflictingPaths.join(", ")}.` : "";
+        const effects = preview.requiresExternalEffectsReview ? ` Unresolved external effects: ${preview.unresolvedExternalEffectIds.join(", ")}; use --require-effects-resolved to fail closed until compensated.` : "";
         const preserved = preview.preservedHandEditPaths?.length ? ` Preserved hand-edits: ${preview.preservedHandEditPaths.join(", ")}.` : "";
         const plan = ` Restore plan: ${preview.restorePlanId}${preview.restorePlanExpiresAt ? ` (expires ${new Date(preview.restorePlanExpiresAt).toISOString()})` : " (no expiry)"}.`;
-        return { kind: "success", text: `Preview ${checkpointId}: ${drift}. Changes: ${files}.${ignored}${omitted}${conflicts}${preserved}${plan}` };
+        return { kind: "success", text: `Preview ${checkpointId}: ${drift}. Changes: ${files}.${ignored}${omitted}${conflicts}${preserved}${effects}${plan}` };
       }
     });
     scope.commands.register({
@@ -4737,7 +4771,7 @@ ${reflection.suggestedPromptPrefix}` };
     scope.commands.register({
       name: "tm-fork",
       description: "Create a named exploration branch from a checkpoint",
-      input: { hint: "<checkpoint> <branch> [--merge|--force]" },
+      input: { hint: "<checkpoint> <branch> [--merge|--force] [--require-effects-resolved]" },
       handler: async ({ agent, rawInput }) => {
         const args = rawInput.trim().split(/\s+/).filter(Boolean);
         const positionals = args.filter((arg) => !arg.startsWith("--"));
@@ -4749,7 +4783,7 @@ ${reflection.suggestedPromptPrefix}` };
           sessionId,
           fromCheckpointId: positionals[0],
           newBranchName: positionals[1],
-          restore: { mode: args.includes("--force") ? "force" : args.includes("--merge") ? "merge" : void 0 }
+          restore: { mode: args.includes("--force") ? "force" : args.includes("--merge") ? "merge" : void 0, requireExternalEffectsResolved: args.includes("--require-effects-resolved") }
         });
         try {
           const created = await restartConversation(controller, sessionId, result.forkedNode, service.workDir);
@@ -5482,6 +5516,7 @@ var index_default = TimeMachinePlugin;
   DAGStateKeyError,
   DAGStateManager,
   DAG_FORMAT_VERSION,
+  ExternalEffectsUnresolvedError,
   FallbackSnapshotEngine,
   GitPlumbingEngine,
   QuarantineKeyError,

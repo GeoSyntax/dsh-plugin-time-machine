@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add an explicit host `workspaceIsolation()` capability seam; shared-lock
+  remains the default, while isolated worktree/container claims are only
+  surfaced when the host supplies and routes those workspaces.
 - Include active-lineage external-effect records in restore previews and the
   Dashboard confirmation text, making the non-transactional boundary visible
   before a user restores files or forks a conversation.

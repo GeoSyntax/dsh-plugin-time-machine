@@ -258,6 +258,8 @@ interface StorageStatus {
     gitObjectsEncrypted: boolean;
     quarantineEncrypted: boolean;
 }
+/** Host-reported workspace isolation mode; shared-lock is the honest fallback. */
+type WorkspaceIsolation = 'shared-lock' | 'isolated-worktree' | 'isolated-container';
 interface PruneResult {
     sessionId: string;
     /** True when this result is an audit-only plan and no checkpoints were removed. */
@@ -408,4 +410,4 @@ declare class TimeMachineClient {
 /** Pure timeline projection shared by browser clients and tests. */
 declare function buildCompanionTimeline(dag: DAGTree, limit?: number): CompanionTimelineEntry[];
 
-export { type AgentWriteRecord as A, type CheckpointNode as C, type DAGTree as D, type ExternalEffectRecord as E, type FileChange as F, type PruneResult as P, type RestoreOptions as R, type SessionState as S, type TimeMachineConfig as T, type UndoRequest as U, type ExternalEffectAdapter as a, type ExternalEffectCompensationResult as b, type RestoreResult as c, type SelectiveRestoreResult as d, type ReflectionSummary as e, type DiffResult as f, type RestorePreview as g, type StorageStatus as h, type SessionSummary as i, type CompanionTimelineEntry as j, type ExternalCompensationRequest as k, type ExternalEffectCompensationContext as l, type ExternalEffectRequest as m, type ForkRequest as n, type PreviewBoundAction as o, type PruneRequest as p, type RestoreFilesRequest as q, type RestoreWorkspaceRequest as r, type RewindRequest as s, type SessionMessage as t, TimeMachineClient as u, TimeMachineClientError as v, type TimeMachineClientOptions as w, buildCompanionTimeline as x };
+export { type AgentWriteRecord as A, type CheckpointNode as C, type DAGTree as D, type ExternalEffectRecord as E, type FileChange as F, type PruneResult as P, type RestoreOptions as R, type SessionState as S, type TimeMachineConfig as T, type UndoRequest as U, type WorkspaceIsolation as W, type ExternalEffectAdapter as a, type ExternalEffectCompensationResult as b, type RestoreResult as c, type SelectiveRestoreResult as d, type ReflectionSummary as e, type DiffResult as f, type RestorePreview as g, type StorageStatus as h, type SessionSummary as i, type CompanionTimelineEntry as j, type ExternalCompensationRequest as k, type ExternalEffectCompensationContext as l, type ExternalEffectRequest as m, type ForkRequest as n, type PreviewBoundAction as o, type PruneRequest as p, type RestoreFilesRequest as q, type RestoreWorkspaceRequest as r, type RewindRequest as s, type SessionMessage as t, TimeMachineClient as u, TimeMachineClientError as v, type TimeMachineClientOptions as w, buildCompanionTimeline as x };

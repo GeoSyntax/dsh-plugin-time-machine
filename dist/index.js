@@ -3269,7 +3269,11 @@ var TimeMachineWebServer = class {
     if (pathname === "/api/capabilities" && req.method === "GET") {
       const capabilities = await this.service.getCapabilities();
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ capabilities: { ...capabilities, rewindSessionMode: this.hooks.rewindSessionMode?.() ?? capabilities.rewindSessionMode } }));
+      res.end(JSON.stringify({ capabilities: {
+        ...capabilities,
+        rewindSessionMode: this.hooks.rewindSessionMode?.() ?? capabilities.rewindSessionMode,
+        workspaceIsolation: this.hooks.workspaceIsolation?.() ?? capabilities.workspaceIsolation
+      } }));
       return;
     }
     if (pathname === "/api/reflection" && req.method === "GET") {

@@ -3,12 +3,14 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { URL } from 'node:url';
 import type { TimeMachineService } from '../service.js';
-import type { CheckpointNode } from '../types.js';
+import type { CheckpointNode, WorkspaceIsolation } from '../types.js';
 
 export interface TimeMachineWebHooks {
   restartConversation?: (sourceSessionId: string, checkpoint: CheckpointNode) => Promise<{ sessionId: string }>;
   /** Host session mode advertised to native clients; defaults to fork. */
   rewindSessionMode?: () => 'fork' | 'in-place';
+  /** Optional host contract: only report an isolated mode when the host routes the child cwd. */
+  workspaceIsolation?: () => WorkspaceIsolation;
   /** Optional host-side session authority (for profiles exposing inspect()). */
   sessionExists?: (sessionId: string) => Promise<boolean>;
 }
@@ -147,7 +149,11 @@ export class TimeMachineWebServer {
     if (pathname === '/api/capabilities' && req.method === 'GET') {
       const capabilities = await this.service.getCapabilities();
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ capabilities: { ...capabilities, rewindSessionMode: this.hooks.rewindSessionMode?.() ?? capabilities.rewindSessionMode } }));
+      res.end(JSON.stringify({ capabilities: {
+        ...capabilities,
+        rewindSessionMode: this.hooks.rewindSessionMode?.() ?? capabilities.rewindSessionMode,
+        workspaceIsolation: this.hooks.workspaceIsolation?.() ?? capabilities.workspaceIsolation,
+      } }));
       return;
     }
 

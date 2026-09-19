@@ -1,7 +1,7 @@
 import { Context } from '@deepseek-ai/cordis';
 import Schema from '@deepseek-ai/schemastery';
-import { D as DAGTree, C as CheckpointNode, T as TimeMachineConfig, S as SessionState, A as AgentWriteRecord, F as FileChange, E as ExternalEffectRecord, a as ExternalEffectAdapter, b as ExternalEffectCompensationResult, R as RestoreOptions, c as RestoreResult, d as SelectiveRestoreResult, e as ReflectionSummary, f as DiffResult, g as RestorePreview, h as StorageStatus, i as SessionSummary, P as PruneResult } from './client-Dsx_9CMZ.cjs';
-export { j as CompanionTimelineEntry, k as ExternalCompensationRequest, l as ExternalEffectCompensationContext, m as ExternalEffectRequest, n as ForkRequest, o as PreviewBoundAction, p as PruneRequest, q as RestoreFilesRequest, r as RestoreWorkspaceRequest, s as RewindRequest, t as SessionMessage, u as TimeMachineClient, v as TimeMachineClientError, w as TimeMachineClientOptions, U as UndoRequest, x as buildCompanionTimeline } from './client-Dsx_9CMZ.cjs';
+import { D as DAGTree, C as CheckpointNode, T as TimeMachineConfig, S as SessionState, A as AgentWriteRecord, F as FileChange, E as ExternalEffectRecord, a as ExternalEffectAdapter, b as ExternalEffectCompensationResult, R as RestoreOptions, c as RestoreResult, d as SelectiveRestoreResult, e as ReflectionSummary, f as DiffResult, g as RestorePreview, h as StorageStatus, i as SessionSummary, W as WorkspaceIsolation, P as PruneResult } from './client-6vvlAnkW.cjs';
+export { j as CompanionTimelineEntry, k as ExternalCompensationRequest, l as ExternalEffectCompensationContext, m as ExternalEffectRequest, n as ForkRequest, o as PreviewBoundAction, p as PruneRequest, q as RestoreFilesRequest, r as RestoreWorkspaceRequest, s as RewindRequest, t as SessionMessage, u as TimeMachineClient, v as TimeMachineClientError, w as TimeMachineClientOptions, U as UndoRequest, x as buildCompanionTimeline } from './client-6vvlAnkW.cjs';
 
 interface DAGManagerOptions {
     sessionId: string;
@@ -255,7 +255,7 @@ declare class TimeMachineService {
         unattributedMutationInventory: boolean;
         externalEffectLedger: true;
         externalEffectAdapters: string[];
-        workspaceIsolation: 'shared-lock';
+        workspaceIsolation: WorkspaceIsolation;
         /** Rewind restores files and opens a new DSH session; it never rewrites the append-only log. */
         rewindSessionMode: 'fork';
         workspace: {
@@ -680,4 +680,4 @@ declare class TimeMachinePlugin {
     constructor(ctx: Context, config?: Config);
 }
 
-export { AgentWriteRecord, CheckpointNode, Config, type DAGManagerOptions, DAGStateManager, DAGTree, DiffResult, ExternalEffectAdapter, ExternalEffectCompensationResult, ExternalEffectRecord, type FallbackOptions, FallbackSnapshotEngine, FileChange, GitPlumbingEngine, type GitPlumbingOptions, type GitRestoreOptions, type GitSelectiveRestoreOptions, type GitSnapshot, PruneResult, QuarantineKeyError, type QuarantineMigrationResult, QuarantineQuotaError, ReflectionAdvisor, ReflectionSummary, RestoreOptions, RestorePlanError, RestorePreview, RestoreResult, SelectiveRestoreResult, SessionState, SessionSummary, type ShadowGcResult, type ShadowRepackResult, SnapshotSizeError, StorageQuotaError, StorageStatus, TimeMachineConfig, TimeMachinePlugin, TimeMachineService, type TimeMachineServiceOptions, UnsupportedWorkspaceStateError, type WorkspaceCapabilities, WorkspaceDriftError, WorkspaceMergeConflictError, WorkspaceRestoreConflictError, apply, collectFailedTools, TimeMachinePlugin as default, name };
+export { AgentWriteRecord, CheckpointNode, Config, type DAGManagerOptions, DAGStateManager, DAGTree, DiffResult, ExternalEffectAdapter, ExternalEffectCompensationResult, ExternalEffectRecord, type FallbackOptions, FallbackSnapshotEngine, FileChange, GitPlumbingEngine, type GitPlumbingOptions, type GitRestoreOptions, type GitSelectiveRestoreOptions, type GitSnapshot, PruneResult, QuarantineKeyError, type QuarantineMigrationResult, QuarantineQuotaError, ReflectionAdvisor, ReflectionSummary, RestoreOptions, RestorePlanError, RestorePreview, RestoreResult, SelectiveRestoreResult, SessionState, SessionSummary, type ShadowGcResult, type ShadowRepackResult, SnapshotSizeError, StorageQuotaError, StorageStatus, TimeMachineConfig, TimeMachinePlugin, TimeMachineService, type TimeMachineServiceOptions, UnsupportedWorkspaceStateError, type WorkspaceCapabilities, WorkspaceDriftError, WorkspaceIsolation, WorkspaceMergeConflictError, WorkspaceRestoreConflictError, apply, collectFailedTools, TimeMachinePlugin as default, name };

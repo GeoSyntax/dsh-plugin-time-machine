@@ -112,11 +112,13 @@ describe('TimeMachineWebServer', () => {
     await server.stop();
     server = new TimeMachineWebServer(service, testPort, '127.0.0.1', {
       rewindSessionMode: () => 'in-place',
+      workspaceIsolation: () => 'isolated-worktree',
     });
     await server.start();
     const response = await fetch(`http://localhost:${testPort}/api/capabilities`);
     expect(response.status).toBe(200);
     expect((await response.json()).capabilities.rewindSessionMode).toBe('in-place');
+    expect((await fetch(`http://localhost:${testPort}/api/capabilities`).then(value => value.json())).capabilities.workspaceIsolation).toBe('isolated-worktree');
   });
 
   it('discovers and switches between real persisted sessions without a default ghost', async () => {

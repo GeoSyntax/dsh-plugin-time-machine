@@ -272,6 +272,9 @@ export interface StorageStatus {
   quarantineEncrypted: boolean;
 }
 
+/** Host-reported workspace isolation mode; shared-lock is the honest fallback. */
+export type WorkspaceIsolation = 'shared-lock' | 'isolated-worktree' | 'isolated-container';
+
 export interface PruneResult {
   sessionId: string;
   /** True when this result is an audit-only plan and no checkpoints were removed. */

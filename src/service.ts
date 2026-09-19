@@ -26,6 +26,7 @@ import type {
   SessionSummary,
   SessionState,
   TimeMachineConfig,
+  WorkspaceIsolation,
 } from './types.js';
 
 export interface TimeMachineServiceOptions {
@@ -977,7 +978,7 @@ export class TimeMachineService {
     unattributedMutationInventory: boolean;
     externalEffectLedger: true;
     externalEffectAdapters: string[];
-    workspaceIsolation: 'shared-lock';
+    workspaceIsolation: WorkspaceIsolation;
     /** Rewind restores files and opens a new DSH session; it never rewrites the append-only log. */
     rewindSessionMode: 'fork';
     workspace: { sparseCheckout: boolean; submodulePaths: string[]; inProgressOperation: string | null };

@@ -76,6 +76,16 @@ external-effect adapter contract. PerryLink currently offers a simpler
 single-session rewind workflow; Time Machine deliberately keeps parallel branch
 history instead of pruning it into one linear cursor.
 
+The current peer documentation also exposes an important policy trade-off that
+should remain visible to adopters: PerryLink's restore is path-explicit and
+never deletes files created after a checkpoint, while Time Machine's full Git
+restore can remove ordinary orphan files only after an explicit reviewed plan
+(`git clean -fd` is never an implicit turn action). This is why the dashboard
+and CLI surface deleted/new paths before confirmation. PerryLink's guard
+checkpoint makes its rewind reversible; Time Machine provides the equivalent
+rescue checkpoint plus a persistent DAG, but callers must still choose the
+restore target deliberately.
+
 Hermes currently offers a different hand-edit contract: its agent-write ledger
 records content hashes for successful file writes and skips files whose current
 contents no longer match, while `/rollback --all` opts into a full overwrite.

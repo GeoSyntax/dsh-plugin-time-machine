@@ -57,7 +57,7 @@ describe('TimeMachineWebServer', () => {
     expect(capabilities.quarantineEncryption).toBe(false);
     expect(capabilities.quarantineMigration).toBe(false);
     expect(capabilities.externalEffectLedger).toBe(true);
-    expect(capabilities.unattributedMutationInventory).toBe(true);
+    expect(capabilities.unattributedMutationInventory).toBe(false);
     expect(capabilities.externalEffectAdapters).toEqual([]);
     expect(capabilities.workspaceIsolation).toBe('shared-lock');
     expect(capabilities.incrementalCapture).toBe(false);
@@ -270,6 +270,7 @@ describe('TimeMachineWebServer', () => {
     expect(capabilities.git).toBe(true);
     expect(capabilities.fallback).toBe(false);
     expect(capabilities.mergeRestore).toBe(true);
+    expect(capabilities.unattributedMutationInventory).toBe(true);
     expect(capabilities.workspaceIsolation).toBe('shared-lock');
     expect(capabilities.incrementalCapture).toBe(true);
     expect(capabilities.handEditPolicy).toBe('reject-drift');

@@ -83,7 +83,7 @@ dsh plugin --profile web list --depth 0
 - **崩溃恢复:** rewind/fork/选择性恢复会写入 durable restore journal；插件下次启动时如果发现未完成操作，会先恢复 rescue checkpoint，再清理 journal。
 - **可验证的人工修改保留（显式 opt-in）:** 开启 `enableAgentWriteLedger` 后，插件会从 DSH 原生 `fs/observed` + `tools/result` 事件自动登记 `write`、`edit`、`str_replace_editor` 的成功写入；删除事件也会登记为 `delete`，使用确定性的 absent tombstone 哈希。其他集成也可调用 `recordAgentWrite()` 登记路径和 SHA-256。`/tm-rewind --preserve-hand-edits` 只保留登记哈希已经变化的路径。未登记路径不会被猜测为人工修改，哈希缺失或账本损坏仍然 fail-closed。
 - **账本可审计:** 时间线检查点详情、CLI `/tm-agent-writes <checkpoint>` 与只读 `GET /api/agent-writes?sessionId=...&checkpoint=...` 暴露已验证的路径、操作、SHA-256 和时间戳，便于在回滚前解释哪些内容由 Agent 写入。
-- **未归因变更显式告警:** turn 结束时 Git 会对比 checkpoint 起点与 settled workspace；没有对应 Agent-write 证据的路径会记录为 `unattributedChanges`，并在时间线中标记。插件不会把这类 bash/PTC/人工修改猜成 Agent 写入。
+- **未归因变更显式告警（Git 后端）:** turn 结束时 Git 会对比 checkpoint 起点与 settled workspace；没有对应 Agent-write 证据的路径会记录为 `unattributedChanges`，并在时间线中标记。插件不会把这类 bash/PTC/人工修改猜成 Agent 写入；fallback 后端通过 capabilities 明确报告暂不提供该清单。
 - **未归因变更可查询:** CLI `/tm-unattributed <checkpoint>` 与 `GET /api/unattributed-changes?sessionId=...&checkpoint=...` 提供机器可读的只读清单。
 - **硬配额:** `maxSnapshots` 和 `maxStorageBytes` 默认关闭；启用后达到上限会安全拒绝新 checkpoint，不会静默删除历史。
 - **自动配额清理:** `autoPrune: true` 才会在普通 checkpoint 前尝试压缩旧节点；无法安全腾出空间时仍然拒绝 checkpoint，不会强行删除 current 或 branch head。

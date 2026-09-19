@@ -2579,7 +2579,7 @@ var TimeMachineService = class {
       incrementalCapture: usable && this.config.maxSnapshotFileBytes === 0 && this.config.maxSnapshotBytes === 0,
       handEditPolicy: this.config.enableAgentWriteLedger ? "ledger-opt-in" : "reject-drift",
       agentWriteLedger: this.config.enableAgentWriteLedger,
-      unattributedMutationInventory: true,
+      unattributedMutationInventory: git,
       externalEffectLedger: true,
       externalEffectAdapters: this.listExternalEffectAdapters(),
       workspaceIsolation: "shared-lock",

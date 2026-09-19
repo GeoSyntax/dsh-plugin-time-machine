@@ -1134,10 +1134,11 @@ export class TimeMachineService {
     const preserveHandEdits = options.preserveVerifiedHandEdits === true
       || (options.preserveVerifiedHandEdits === undefined && this.config.preserveVerifiedHandEditsByDefault);
     const preservedPaths = preserveHandEdits && current ? await this.findVerifiedHandEdits(current) : [];
-    if (await this.gitEngine.isGitRepo()) await this.gitEngine.assertSupportedWorkspace();
+    const isGit = await this.gitEngine.isGitRepo();
+    if (isGit) await this.gitEngine.assertSupportedWorkspace();
 
     if (mode === 'safe' && current) {
-      const actual = await this.gitEngine.isGitRepo()
+      const actual = isGit
         ? await this.gitEngine.inspectWorkspace({ omitPaths: current.omittedPaths ?? [] })
         : { treeOid: await this.fallbackEngine.inspectWorkspace(), ignoredPaths: [] };
       const expectedTree = current.settledGitTreeOid ?? current.gitTreeOid;
@@ -1146,7 +1147,11 @@ export class TimeMachineService {
         const { WorkspaceDriftError } = await import('./core/git-plumbing.js');
         const changed = actual.treeOid === expectedTree
           ? []
-          : (await this.gitEngine.getDiffBetween(expectedTree, actual.treeOid)).map(item => item.file)
+          : (isGit
+            ? (await this.gitEngine.getDiffBetween(expectedTree, actual.treeOid)).map(item => item.file)
+            : current
+              ? (await this.fallbackEngine.getChangedFiles(dag.tree.sessionId, current.id)).map(item => item.path)
+              : [])
             .filter(file => !preservedPaths.some(path => file === path || file.startsWith(`${path}/`)));
         const ignoredDrift = !sameStrings(actual.ignoredPaths, expectedIgnored);
         if (changed.length || ignoredDrift) {
@@ -1240,9 +1245,13 @@ export class TimeMachineService {
     if (options.mode === 'merge') {
       throw new Error('Merge restore is only supported for Git-backed checkpoints.');
     }
-    await this.fallbackEngine.restoreSnapshot(target.sessionState.sessionId, target.id);
-    const verified = await this.fallbackEngine.inspectWorkspace();
-    if (verified !== target.gitTreeOid) {
+    const preservePaths = options.preservePaths ?? [];
+    await this.fallbackEngine.restoreSnapshot(target.sessionState.sessionId, target.id, { preservePaths });
+    const verified = await this.fallbackEngine.inspectWorkspace({ omitPaths: preservePaths });
+    const expectedTree = preservePaths.length
+      ? await this.fallbackEngine.snapshotTreeOid(target.sessionState.sessionId, target.id, preservePaths)
+      : target.gitTreeOid;
+    if (verified !== expectedTree) {
       throw new Error(`Fallback workspace integrity check failed after restoring checkpoint '${target.id}'.`);
     }
     return { deletedIgnoredPaths: [] };

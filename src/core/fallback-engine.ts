@@ -76,9 +76,15 @@ export class FallbackSnapshotEngine {
     }
   }
 
-  async inspectWorkspace(): Promise<string> {
-    const entries = await this.scanTree(this.workDir);
+  async inspectWorkspace(options: { omitPaths?: string[] } = {}): Promise<string> {
+    const entries = await this.scanTree(this.workDir, options.omitPaths ?? []);
     return `fallback_${await hashSnapshot(this.workDir, entries)}`;
+  }
+
+  async snapshotTreeOid(sessionId: string, checkpointId: string, omitPaths: string[] = []): Promise<string> {
+    const snapshot = await this.readSnapshot(sessionId, checkpointId);
+    const entries = snapshot.manifest.entries.filter(entry => !isPathOmitted(entry.path, omitPaths));
+    return `fallback_${await hashSnapshot(snapshot.filesDir, entries)}`;
   }
 
   /** Compare a persisted fallback manifest with the current workspace. */
@@ -130,7 +136,7 @@ export class FallbackSnapshotEngine {
     return results;
   }
 
-  async restoreSnapshot(sessionId: string, checkpointId: string): Promise<void> {
+  async restoreSnapshot(sessionId: string, checkpointId: string, options: { preservePaths?: string[] } = {}): Promise<void> {
     const snapshotDir = this.getCheckpointDir(sessionId, checkpointId);
     const raw = await fs.readFile(path.join(snapshotDir, 'manifest.json'), 'utf8').catch((error: any) => {
       if (error?.code === 'ENOENT') throw new Error(`Fallback snapshot '${checkpointId}' is missing or uses an unsupported legacy format.`);
@@ -138,22 +144,24 @@ export class FallbackSnapshotEngine {
     });
     const manifest = parseManifest(raw);
     const filesDir = path.join(snapshotDir, 'files');
-    const targetPaths = new Set(manifest.entries.map(entry => entry.path));
+    const preservePaths = options.preservePaths ?? [];
+    const targetPaths = new Set(manifest.entries.filter(entry => !isPathOmitted(entry.path, preservePaths)).map(entry => entry.path));
     const currentEntries = await this.scanTree(this.workDir);
 
     for (const entry of currentEntries.sort(deepestFirst)) {
+      if (isPathOmitted(entry.path, preservePaths)) continue;
       if (targetPaths.has(entry.path)) continue;
       await fs.rm(this.resolveSafe(entry.path), { recursive: true, force: true });
     }
 
-    for (const entry of manifest.entries.filter(item => item.type === 'directory').sort(shallowestFirst)) {
+    for (const entry of manifest.entries.filter(item => item.type === 'directory' && !isPathOmitted(item.path, preservePaths)).sort(shallowestFirst)) {
       const destination = this.resolveSafe(entry.path);
       const stat = await fs.lstat(destination).catch(() => undefined);
       if (stat && !stat.isDirectory()) await fs.rm(destination, { recursive: true, force: true });
       await fs.mkdir(destination, { recursive: true, mode: entry.mode });
     }
 
-    for (const entry of manifest.entries.filter(item => item.type !== 'directory')) {
+    for (const entry of manifest.entries.filter(item => item.type !== 'directory' && !isPathOmitted(item.path, preservePaths))) {
       const destination = this.resolveSafe(entry.path);
       await fs.mkdir(path.dirname(destination), { recursive: true });
       await fs.rm(destination, { recursive: true, force: true });
@@ -271,7 +279,7 @@ export class FallbackSnapshotEngine {
     }
   }
 
-  private async scanTree(root: string): Promise<SnapshotEntry[]> {
+  private async scanTree(root: string, omitPaths: string[] = []): Promise<SnapshotEntry[]> {
     const entries: SnapshotEntry[] = [];
     const visit = async (directory: string, relative = ''): Promise<void> => {
       for (const dirent of await fs.readdir(directory, { withFileTypes: true })) {
@@ -279,6 +287,7 @@ export class FallbackSnapshotEngine {
         if (this.isPreserved(absolute)) continue;
         const childRelative = relative ? `${relative}/${dirent.name}` : dirent.name;
         validateRelativePath(childRelative);
+        if (isPathOmitted(childRelative, omitPaths)) continue;
         const stat = await fs.lstat(absolute);
         const mode = stat.mode & 0o777;
         if (stat.isSymbolicLink()) {
@@ -310,6 +319,10 @@ export class FallbackSnapshotEngine {
     if (this.isPreserved(absolute)) throw new Error(`Snapshot path overlaps protected storage: '${relative}'.`);
     return absolute;
   }
+}
+
+function isPathOmitted(value: string, omitPaths: string[]): boolean {
+  return omitPaths.some(item => value === item || value.startsWith(`${item}/`));
 }
 
 async function hashSnapshot(root: string, entries: SnapshotEntry[]): Promise<string> {

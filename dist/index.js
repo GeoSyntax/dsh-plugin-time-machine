@@ -1173,9 +1173,14 @@ var FallbackSnapshotEngine = class {
       throw error;
     }
   }
-  async inspectWorkspace() {
-    const entries = await this.scanTree(this.workDir);
+  async inspectWorkspace(options = {}) {
+    const entries = await this.scanTree(this.workDir, options.omitPaths ?? []);
     return `fallback_${await hashSnapshot(this.workDir, entries)}`;
+  }
+  async snapshotTreeOid(sessionId, checkpointId, omitPaths = []) {
+    const snapshot = await this.readSnapshot(sessionId, checkpointId);
+    const entries = snapshot.manifest.entries.filter((entry) => !isPathOmitted(entry.path, omitPaths));
+    return `fallback_${await hashSnapshot(snapshot.filesDir, entries)}`;
   }
   /** Compare a persisted fallback manifest with the current workspace. */
   async getChangedFiles(sessionId, checkpointId) {
@@ -1224,7 +1229,7 @@ var FallbackSnapshotEngine = class {
     }
     return results;
   }
-  async restoreSnapshot(sessionId, checkpointId) {
+  async restoreSnapshot(sessionId, checkpointId, options = {}) {
     const snapshotDir = this.getCheckpointDir(sessionId, checkpointId);
     const raw = await fs2.readFile(path3.join(snapshotDir, "manifest.json"), "utf8").catch((error) => {
       if (error?.code === "ENOENT") throw new Error(`Fallback snapshot '${checkpointId}' is missing or uses an unsupported legacy format.`);
@@ -1232,19 +1237,21 @@ var FallbackSnapshotEngine = class {
     });
     const manifest = parseManifest(raw);
     const filesDir = path3.join(snapshotDir, "files");
-    const targetPaths = new Set(manifest.entries.map((entry) => entry.path));
+    const preservePaths = options.preservePaths ?? [];
+    const targetPaths = new Set(manifest.entries.filter((entry) => !isPathOmitted(entry.path, preservePaths)).map((entry) => entry.path));
     const currentEntries = await this.scanTree(this.workDir);
     for (const entry of currentEntries.sort(deepestFirst)) {
+      if (isPathOmitted(entry.path, preservePaths)) continue;
       if (targetPaths.has(entry.path)) continue;
       await fs2.rm(this.resolveSafe(entry.path), { recursive: true, force: true });
     }
-    for (const entry of manifest.entries.filter((item) => item.type === "directory").sort(shallowestFirst)) {
+    for (const entry of manifest.entries.filter((item) => item.type === "directory" && !isPathOmitted(item.path, preservePaths)).sort(shallowestFirst)) {
       const destination = this.resolveSafe(entry.path);
       const stat = await fs2.lstat(destination).catch(() => void 0);
       if (stat && !stat.isDirectory()) await fs2.rm(destination, { recursive: true, force: true });
       await fs2.mkdir(destination, { recursive: true, mode: entry.mode });
     }
-    for (const entry of manifest.entries.filter((item) => item.type !== "directory")) {
+    for (const entry of manifest.entries.filter((item) => item.type !== "directory" && !isPathOmitted(item.path, preservePaths))) {
       const destination = this.resolveSafe(entry.path);
       await fs2.mkdir(path3.dirname(destination), { recursive: true });
       await fs2.rm(destination, { recursive: true, force: true });
@@ -1350,7 +1357,7 @@ var FallbackSnapshotEngine = class {
       }
     }
   }
-  async scanTree(root) {
+  async scanTree(root, omitPaths = []) {
     const entries = [];
     const visit = async (directory, relative = "") => {
       for (const dirent of await fs2.readdir(directory, { withFileTypes: true })) {
@@ -1358,6 +1365,7 @@ var FallbackSnapshotEngine = class {
         if (this.isPreserved(absolute)) continue;
         const childRelative = relative ? `${relative}/${dirent.name}` : dirent.name;
         validateRelativePath(childRelative);
+        if (isPathOmitted(childRelative, omitPaths)) continue;
         const stat = await fs2.lstat(absolute);
         const mode = stat.mode & 511;
         if (stat.isSymbolicLink()) {
@@ -1388,6 +1396,9 @@ var FallbackSnapshotEngine = class {
     return absolute;
   }
 };
+function isPathOmitted(value, omitPaths) {
+  return omitPaths.some((item) => value === item || value.startsWith(`${item}/`));
+}
 async function hashSnapshot(root, entries) {
   const hash = createHash2("sha256");
   for (const entry of entries) {
@@ -2862,14 +2873,15 @@ var TimeMachineService = class {
     const mode = options.mode ?? this.config.restoreMode;
     const preserveHandEdits = options.preserveVerifiedHandEdits === true || options.preserveVerifiedHandEdits === void 0 && this.config.preserveVerifiedHandEditsByDefault;
     const preservedPaths = preserveHandEdits && current ? await this.findVerifiedHandEdits(current) : [];
-    if (await this.gitEngine.isGitRepo()) await this.gitEngine.assertSupportedWorkspace();
+    const isGit = await this.gitEngine.isGitRepo();
+    if (isGit) await this.gitEngine.assertSupportedWorkspace();
     if (mode === "safe" && current) {
-      const actual = await this.gitEngine.isGitRepo() ? await this.gitEngine.inspectWorkspace({ omitPaths: current.omittedPaths ?? [] }) : { treeOid: await this.fallbackEngine.inspectWorkspace(), ignoredPaths: [] };
+      const actual = isGit ? await this.gitEngine.inspectWorkspace({ omitPaths: current.omittedPaths ?? [] }) : { treeOid: await this.fallbackEngine.inspectWorkspace(), ignoredPaths: [] };
       const expectedTree = current.settledGitTreeOid ?? current.gitTreeOid;
       const expectedIgnored = current.settledIgnoredPaths ?? current.ignoredPaths ?? [];
       if (actual.treeOid !== expectedTree || !sameStrings(actual.ignoredPaths, expectedIgnored)) {
         const { WorkspaceDriftError: WorkspaceDriftError2 } = await Promise.resolve().then(() => (init_git_plumbing(), git_plumbing_exports));
-        const changed = actual.treeOid === expectedTree ? [] : (await this.gitEngine.getDiffBetween(expectedTree, actual.treeOid)).map((item) => item.file).filter((file) => !preservedPaths.some((path9) => file === path9 || file.startsWith(`${path9}/`)));
+        const changed = actual.treeOid === expectedTree ? [] : (isGit ? (await this.gitEngine.getDiffBetween(expectedTree, actual.treeOid)).map((item) => item.file) : current ? (await this.fallbackEngine.getChangedFiles(dag.tree.sessionId, current.id)).map((item) => item.path) : []).filter((file) => !preservedPaths.some((path9) => file === path9 || file.startsWith(`${path9}/`)));
         const ignoredDrift = !sameStrings(actual.ignoredPaths, expectedIgnored);
         if (changed.length || ignoredDrift) {
           const details = actual.treeOid === expectedTree ? ["workspace no longer matches the active checkpoint"] : [`managed tree changed (expected ${expectedTree}, observed ${actual.treeOid})${changed.length ? `: ${changed.join(", ")}` : ""}`];
@@ -2939,11 +2951,11 @@ var TimeMachineService = class {
         preservePaths: options.preservePaths ?? []
       });
       if (target.ignoredBackupKey) await this.gitEngine.restoreIgnoredBackup(target.ignoredBackupKey);
-      const preservePaths = options.preservePaths ?? [];
-      const verified2 = await this.gitEngine.inspectWorkspace({ omitPaths: [...target.omittedPaths ?? [], ...preservePaths] });
-      const expectedTree = options.mode === "merge" ? result.restoredTreeOid : target.gitTreeOid;
-      const treeMismatch = verified2.treeOid !== expectedTree;
-      const allowedMismatch = treeMismatch && preservePaths.length ? (await this.gitEngine.getDiffBetween(expectedTree, verified2.treeOid)).every((item) => preservePaths.some((path9) => item.file === path9 || item.file.startsWith(`${path9}/`))) : false;
+      const preservePaths2 = options.preservePaths ?? [];
+      const verified2 = await this.gitEngine.inspectWorkspace({ omitPaths: [...target.omittedPaths ?? [], ...preservePaths2] });
+      const expectedTree2 = options.mode === "merge" ? result.restoredTreeOid : target.gitTreeOid;
+      const treeMismatch = verified2.treeOid !== expectedTree2;
+      const allowedMismatch = treeMismatch && preservePaths2.length ? (await this.gitEngine.getDiffBetween(expectedTree2, verified2.treeOid)).every((item) => preservePaths2.some((path9) => item.file === path9 || item.file.startsWith(`${path9}/`))) : false;
       if (treeMismatch && !allowedMismatch || !sameStrings(verified2.ignoredPaths, target.ignoredPaths ?? [])) {
         throw new Error(`Workspace integrity check failed after restoring checkpoint '${target.id}'.`);
       }
@@ -2952,9 +2964,11 @@ var TimeMachineService = class {
     if (options.mode === "merge") {
       throw new Error("Merge restore is only supported for Git-backed checkpoints.");
     }
-    await this.fallbackEngine.restoreSnapshot(target.sessionState.sessionId, target.id);
-    const verified = await this.fallbackEngine.inspectWorkspace();
-    if (verified !== target.gitTreeOid) {
+    const preservePaths = options.preservePaths ?? [];
+    await this.fallbackEngine.restoreSnapshot(target.sessionState.sessionId, target.id, { preservePaths });
+    const verified = await this.fallbackEngine.inspectWorkspace({ omitPaths: preservePaths });
+    const expectedTree = preservePaths.length ? await this.fallbackEngine.snapshotTreeOid(target.sessionState.sessionId, target.id, preservePaths) : target.gitTreeOid;
+    if (verified !== expectedTree) {
       throw new Error(`Fallback workspace integrity check failed after restoring checkpoint '${target.id}'.`);
     }
     return { deletedIgnoredPaths: [] };

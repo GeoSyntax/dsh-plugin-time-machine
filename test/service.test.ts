@@ -810,6 +810,29 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
       expect(diffs).toEqual(expect.arrayContaining([
         expect.objectContaining({ file: 'state.txt', status: 'modified', diffText: expect.stringContaining('-v1') }),
       ]));
+      await fs.writeFile(file, 'v4\n', 'utf8');
+      await expect(fallback.rewindToCheckpoint('fallback-session', checkpoint.id)).rejects.toMatchObject({ code: 'WORKSPACE_DRIFT' });
+
+      const ledgerFallback = new TimeMachineService({
+        workDir: fallbackRoot,
+        storageDir: path.join(fallbackRoot, '.dsh-tm-ledger'),
+        config: { preserveVerifiedHandEditsByDefault: true },
+      });
+      const ledgerFile = path.join(fallbackRoot, 'fallback-ledger.txt');
+      const ledgerSession = 'fallback-ledger-session';
+      await fs.writeFile(ledgerFile, 'base\n', 'utf8');
+      const ledgerBase = await ledgerFallback.createTurnCheckpoint({
+        sessionId: ledgerSession, turnIndex: 1, prompt: 'base', sessionState: { sessionId: ledgerSession, messages: [] },
+      });
+      await fs.writeFile(ledgerFile, 'agent\n', 'utf8');
+      const ledgerAgent = await ledgerFallback.createTurnCheckpoint({
+        sessionId: ledgerSession, turnIndex: 2, prompt: 'agent', sessionState: { sessionId: ledgerSession, messages: [] },
+      });
+      await ledgerFallback.recordAgentWrite(ledgerSession, ledgerAgent.id, { path: 'fallback-ledger.txt', operation: 'modify' });
+      await fs.writeFile(ledgerFile, 'human\n', 'utf8');
+      const fallbackPreserve = await ledgerFallback.rewindToCheckpoint(ledgerSession, ledgerBase.id);
+      expect(await fs.readFile(ledgerFile, 'utf8')).toBe('human\n');
+      expect(fallbackPreserve.preservedHandEditPaths).toEqual(['fallback-ledger.txt']);
     } finally {
       await fs.rm(fallbackRoot, { recursive: true, force: true });
     }

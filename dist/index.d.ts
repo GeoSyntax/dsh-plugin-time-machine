@@ -531,12 +531,17 @@ declare class FallbackSnapshotEngine {
         commitOid: string;
         changedFiles: FileChange[];
     }>;
-    inspectWorkspace(): Promise<string>;
+    inspectWorkspace(options?: {
+        omitPaths?: string[];
+    }): Promise<string>;
+    snapshotTreeOid(sessionId: string, checkpointId: string, omitPaths?: string[]): Promise<string>;
     /** Compare a persisted fallback manifest with the current workspace. */
     getChangedFiles(sessionId: string, checkpointId: string): Promise<FileChange[]>;
     /** Produce reviewable text diffs between two persisted fallback snapshots. */
     getDiffBetween(sessionId: string, baseCheckpointId: string, targetCheckpointId: string): Promise<DiffResult[]>;
-    restoreSnapshot(sessionId: string, checkpointId: string): Promise<void>;
+    restoreSnapshot(sessionId: string, checkpointId: string, options?: {
+        preservePaths?: string[];
+    }): Promise<void>;
     restoreSelectedPaths(sessionId: string, checkpointId: string, paths: string[], options?: {
         expectedCurrentTreeOid?: string;
         mode?: 'safe' | 'force';

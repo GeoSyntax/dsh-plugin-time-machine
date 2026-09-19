@@ -1001,6 +1001,8 @@ export class TimeMachineService {
     unattributedMutationInventory: boolean;
     externalEffectLedger: true;
     externalEffectAdapters: string[];
+    /** Session routing is intentionally single-root until DSH exposes a host router contract. */
+    workspaceRouting: 'single-root';
     workspaceIsolation: WorkspaceIsolation;
     /** Rewind restores files and opens a new DSH session; it never rewrites the append-only log. */
     rewindSessionMode: 'fork';
@@ -1056,6 +1058,7 @@ export class TimeMachineService {
       unattributedMutationInventory: true,
       externalEffectLedger: true,
       externalEffectAdapters: this.listExternalEffectAdapters(),
+      workspaceRouting: 'single-root',
       workspaceIsolation: 'shared-lock',
       rewindSessionMode: 'fork',
       workspace,

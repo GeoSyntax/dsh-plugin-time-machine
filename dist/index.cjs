@@ -2930,6 +2930,7 @@ var TimeMachineService = class {
       unattributedMutationInventory: true,
       externalEffectLedger: true,
       externalEffectAdapters: this.listExternalEffectAdapters(),
+      workspaceRouting: "single-root",
       workspaceIsolation: "shared-lock",
       rewindSessionMode: "fork",
       workspace,
@@ -3909,6 +3910,7 @@ Use /tm-undo N to restore and fork from the numbered active-lineage checkpoint.`
           `Workspace engine: ${capabilities.git ? "Git plumbing" : "fallback snapshots"}`,
           `Conversation fork/rewind: ${sessionController ? "available" : "unavailable (no sessionController)"}`,
           `Workspace isolation: ${capabilities.workspaceIsolation}`,
+          `Workspace routing: ${capabilities.workspaceRouting}`,
           `Shadow Git object encryption: ${capabilities.shadowStoreEncryption ? "enabled" : "not available (objects are plaintext at rest)"}`,
           `DAG/session metadata encryption: ${capabilities.dagStateEncryption ? "enabled" : "disabled (metadata is plaintext at rest)"}`,
           `DAG/session key rotation: ${capabilities.dagStateKeyRotation ? "ready (current + previous keys configured)" : "not configured"}`,
@@ -3921,6 +3923,7 @@ Use /tm-undo N to restore and fork from the numbered active-lineage checkpoint.`
         if (!capabilities.git) warnings.push("Git is unavailable; restores use fallback snapshots and textual diffs only.");
         if (!sessionController) warnings.push("Workspace restore can run, but the conversation cannot be switched automatically.");
         if (capabilities.workspaceIsolation === "shared-lock") warnings.push("Forked sessions share the configured workspace; this is not an isolated Git worktree or container.");
+        if (capabilities.workspaceRouting === "single-root") warnings.push("Sessions whose cwd differs from the configured workspace are skipped; run one plugin instance per workspace.");
         if (!capabilities.shadowStoreEncryption && capabilities.shadowStore) warnings.push("Shadow Git objects are plaintext at rest; protect the storage directory with OS-level encryption and permissions.");
         if (!capabilities.dagStateEncryption) warnings.push("DAG/session metadata is plaintext at rest; set stateEncryptionKeyEnv when prompts or tool inputs are sensitive.");
         if (!service.config.autoPreCommandSnapshot) warnings.push("High-risk tool boundaries are not captured; enable autoPreCommandSnapshot for stronger crash recovery.");

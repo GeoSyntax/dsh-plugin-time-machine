@@ -53,6 +53,11 @@ the host can create the isolated cwd and route the forked session there.
 **Acceptance:** shared-lock remains the honest fallback; unsupported host
 contracts are rejected before mutating the workspace.
 
+The current `workspaceRouting: "single-root"` capability is intentional: one
+plugin instance owns one configured `workDir` and skips sessions whose
+`header.cwd` differs. Multi-project routing remains a host-integration item;
+silently binding those sessions to the wrong root would be unsafe.
+
 ## P1 — scale and workflow parity
 
 ### Large-workspace incremental capture

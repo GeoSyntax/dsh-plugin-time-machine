@@ -212,7 +212,8 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
     expect(await fs.readFile(file, 'utf8')).toBe('human\n');
     expect(result.preservedHandEditPaths).toEqual(['ledger-default.txt']);
     expect((await defaultLedger.getCapabilities()).handEditPolicy).toBe('ledger-default');
-    expect((await defaultLedger.getCapabilities()).agentWriteLedger).toBe(true);
+      expect((await defaultLedger.getCapabilities()).agentWriteLedger).toBe(true);
+      expect((await defaultLedger.getCapabilities()).workspaceRouting).toBe('single-root');
   });
 
   it('previews rewind impact without mutating files or DAG state', async () => {

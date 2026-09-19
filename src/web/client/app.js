@@ -366,6 +366,9 @@ async function triggerRewind(nodeId, turnIndex) {
   const preserved = (preview.preservedHandEditPaths || []).length
     ? `\n\n✓ Verified hand-edits will be preserved:\n${preview.preservedHandEditPaths.join('\n')}`
     : '';
+  const externalEffects = (preview.externalEffects || []).length
+    ? `\n\n⚠ External effects are not undone by file restore:\n${preview.externalEffects.map(effect => `${effect.status} ${effect.adapter}:${effect.operation}`).join('\n')}`
+    : '';
   const warning = preview.requiresForce
     ? `\n\n⚠ Workspace drift detected; safe restore will refuse to overwrite it.\nConflicts:\n${conflicts || '(unavailable)'}${conflictMore}`
     : '';
@@ -375,7 +378,7 @@ async function triggerRewind(nodeId, turnIndex) {
     if (!merge) return;
   }
   const confirmed = confirm(
-    `Rewind to Turn #${turnIndex}${merge ? ' with three-way merge' : ''}?\n\nPlanned file changes:\n${files || '(none)'}${more}${warning}${omitted}${preserved}\n\nA rescue point is created first.`,
+    `Rewind to Turn #${turnIndex}${merge ? ' with three-way merge' : ''}?\n\nPlanned file changes:\n${files || '(none)'}${more}${warning}${omitted}${preserved}${externalEffects}\n\nA rescue point is created first.`,
   );
   if (!confirmed) return;
   try {

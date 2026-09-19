@@ -113,6 +113,7 @@ dsh plugin --profile web list --depth 0
 - **Companion contract 同步:** `TimeMachineClient` 同步提供 `restoreWorkspaceFromPreview()`，原生 companion 不必绕过一次性 restore-plan 绑定直接拼 HTTP 请求。
 - `TimeMachineClient` 也提供 `recordExternalEffect()` 与 `compensateExternalEffect()`，外部副作用默认仍是 dry-run，显式执行和幂等 key 由调用方控制。
 - **可诊断的社区安装:** `/tm-doctor` 会检查当前 profile 是否有 `sessionController`、Git/fallback 引擎、Web Dashboard、预命令边界和 Agent-write ledger，并给出可执行的配置警告。
+- **回滚前外部副作用提示:** restore preview/API 会列出目标之后当前活动链路上登记的数据库、网络或云资源副作用；文件恢复不会假装撤销这些远端变更，Dashboard 会在确认框中明确提示。
 
 ## Safety model
 

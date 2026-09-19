@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Include active-lineage external-effect records in restore previews and the
+  Dashboard confirmation text, making the non-transactional boundary visible
+  before a user restores files or forks a conversation.
 - Extend `/tm-doctor` to surface the shared-lock workspace boundary and the
   current plaintext-at-rest status of Shadow Git objects, with actionable
   warnings for community installations.

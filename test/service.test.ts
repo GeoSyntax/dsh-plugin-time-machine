@@ -237,6 +237,21 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
     expect((await service.getDAGManager(sessionId)).tree.currentCheckpointId).toBe(second.id);
   });
 
+  it('surfaces external effects that file restore cannot undo', async () => {
+    const sessionId = 'preview-external-effects';
+    const first = await service.createTurnCheckpoint({ sessionId, turnIndex: 1, prompt: 'base', sessionState: { sessionId, messages: [] } });
+    await service.finalizeTurnCheckpoint({ sessionId, checkpointId: first.id, status: 'success' });
+    const second = await service.createTurnCheckpoint({ sessionId, turnIndex: 2, prompt: 'remote mutation', sessionState: { sessionId, messages: [] } });
+    await service.recordExternalEffect(sessionId, second.id, {
+      adapter: 'database', operation: 'insert', reversible: true,
+      failureSemantics: 'manual verification required', status: 'unresolved',
+    });
+    await service.finalizeTurnCheckpoint({ sessionId, checkpointId: second.id, status: 'success' });
+    const preview = await service.previewRestore(sessionId, first.id);
+    expect(preview.externalEffects).toHaveLength(1);
+    expect(preview.externalEffects?.[0]).toMatchObject({ adapter: 'database', operation: 'insert', status: 'unresolved' });
+  });
+
   it('binds a preview plan to the reviewed workspace and consumes it once', async () => {
     const sessionId = 'preview-plan-session';
     const file = path.join(tmpDir, 'plan.txt');

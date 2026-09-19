@@ -2591,6 +2591,9 @@ var TimeMachineService = class {
         ...symmetricDifference2(expectedIgnored, currentState.ignoredPaths).map((item) => `(ignored) ${item}`)
       ])].sort();
       const conflictingPaths = allConflictingPaths.filter((file) => !preservedHandEditPaths.some((path9) => file === path9 || file.startsWith(`${path9}/`)));
+      const currentLineage = current ? dag.getLineage(current.id) : [];
+      const targetIndex = currentLineage.findIndex((node) => node.id === checkpointId);
+      const externalEffects = currentLineage.slice(targetIndex >= 0 ? targetIndex + 1 : 0).flatMap((node) => node.externalEffects ?? []).map((effect) => cloneJson2(effect));
       const workspaceDrifted = Boolean(current && (currentState.treeOid !== expectedTree || !sameStrings(currentState.ignoredPaths, expectedIgnored)));
       this.expireRestorePlans();
       const planId = `plan_${randomUUID5().replace(/-/g, "")}`;
@@ -2623,6 +2626,7 @@ var TimeMachineService = class {
         diffs,
         conflictingPaths,
         preservedHandEditPaths,
+        externalEffects,
         workspaceDrifted,
         requiresForce: conflictingPaths.length > 0,
         restorePlanId: planId,

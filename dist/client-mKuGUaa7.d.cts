@@ -231,6 +231,8 @@ interface RestorePreview {
     conflictingPaths: string[];
     /** Verified Agent-write paths whose later hand-edits are preserved by policy. */
     preservedHandEditPaths?: string[];
+    /** External effects recorded on the active lineage after the target; file restore does not undo these. */
+    externalEffects?: ExternalEffectRecord[];
     workspaceDrifted: boolean;
     requiresForce: boolean;
     /** Short-lived session-bound plan used to bind a reviewed preview to mutation. */

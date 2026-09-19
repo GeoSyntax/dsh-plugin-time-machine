@@ -768,6 +768,12 @@ export class TimeMachineService {
         ...symmetricDifference(expectedIgnored, currentState.ignoredPaths).map(item => `(ignored) ${item}`),
       ])].sort();
       const conflictingPaths = allConflictingPaths.filter(file => !preservedHandEditPaths.some(path => file === path || file.startsWith(`${path}/`)));
+      const currentLineage = current ? dag.getLineage(current.id) : [];
+      const targetIndex = currentLineage.findIndex(node => node.id === checkpointId);
+      const externalEffects = currentLineage
+        .slice(targetIndex >= 0 ? targetIndex + 1 : 0)
+        .flatMap(node => node.externalEffects ?? [])
+        .map(effect => cloneJson(effect));
       const workspaceDrifted = Boolean(current && (
         currentState.treeOid !== expectedTree || !sameStrings(currentState.ignoredPaths, expectedIgnored)
       ));
@@ -802,6 +808,7 @@ export class TimeMachineService {
         diffs,
         conflictingPaths,
         preservedHandEditPaths,
+        externalEffects,
         workspaceDrifted,
         requiresForce: conflictingPaths.length > 0,
         restorePlanId: planId,

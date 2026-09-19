@@ -95,7 +95,7 @@ dsh plugin --profile web list --depth 0
   dry-run 即使 adapter 尚未加载也会返回 `adapterAvailable: false` 的结构化告警；只有真正执行时才会因缺少 adapter 拒绝请求，并返回 `EXTERNAL_ADAPTER_UNAVAILABLE`（Web HTTP 409）。
 - **外部副作用登记 API:** companion 集成可通过 `POST /api/external-effects` 声明 adapter、操作、可逆性和失败语义；该接口只写入审计账本，不会调用远程系统，成功返回 HTTP 201。
 - **审计 ID 唯一性与输入边界:** 外部 effect 若显式提供已存在的 `id` 会以 `EXTERNAL_EFFECT_DUPLICATE` 拒绝（HTTP 409），避免补偿目标歧义；Web `/api/rewind` 与 `/api/fork` 缺少 `checkpointId`/`branchName` 时返回 HTTP 400，而不是把客户端输入错误伪装成服务端故障。
-- **高风险命令前置边界（可选）:** 设置 `autoPreCommandSnapshot: true` 后，插件会在 DSH `tools/pre-execute`（并以 `tools/execute` 作为后备）进入 `bash`、`shell`、`pwsh`、`terminal_bash`、`terminal_exec`、`run_code` 或 `python` 前创建带 `pre-command` 标签的 checkpoint；同一 callId 会去重。可通过 `preCommandTools` 收紧或扩展工具集合。该能力只覆盖经过 DSH waterfall 的工具，不会拦截宿主外部手工 shell。
+- **高风险工具前置边界（可选）:** 设置 `autoPreCommandSnapshot: true` 后，插件会在 DSH `tools/pre-execute`（并以 `tools/execute` 作为后备）进入原生文件工具 `write`、`edit`、`str_replace_editor`，以及 `bash`、`shell`、`pwsh`、`terminal_bash`、`terminal_exec`、`run_code`、`python` 前创建带 `pre-command` 标签的 checkpoint；同一 callId 会去重。可通过 `preCommandTools` 收紧或扩展工具集合。该能力只覆盖经过 DSH waterfall 的工具，不会拦截宿主外部手工 shell。
 - **无 callId 宿主兼容:** 若某个 DSH 适配器没有提供 `callId`，插件会按 execution 对象身份去重同一次调用跨越的两个 waterfall；不同的匿名 execution 不会因工具名相同而被错误合并。
 - **多 Session Dashboard:** `GET /api/sessions` 会列出已持久化的真实 DSH session；Dashboard 默认选择最近更新的 session，也支持 `?sessionId=...` 和下拉切换，不会因访问空页面制造 `default` 时间线。
 
@@ -143,6 +143,9 @@ dsh plugin --profile web list --depth 0
     # Optional Hermes-style boundary before high-risk DSH tools.
     autoPreCommandSnapshot: false
     preCommandTools:
+      - write
+      - edit
+      - str_replace_editor
       - bash
       - shell
       - pwsh

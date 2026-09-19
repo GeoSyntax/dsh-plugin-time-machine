@@ -2045,7 +2045,7 @@ var TimeMachineService = class {
       allowPartialSnapshots: options.config?.allowPartialSnapshots ?? false,
       enableAgentWriteLedger: options.config?.enableAgentWriteLedger ?? false,
       autoPreCommandSnapshot: options.config?.autoPreCommandSnapshot ?? false,
-      preCommandTools: [...options.config?.preCommandTools ?? ["bash", "shell", "pwsh", "powershell", "terminal_bash", "terminal_exec", "run_code", "python"]],
+      preCommandTools: [...options.config?.preCommandTools ?? ["write", "edit", "str_replace_editor", "bash", "shell", "pwsh", "powershell", "terminal_bash", "terminal_exec", "run_code", "python"]],
       preCommandMaxPerTurn: Math.max(0, Math.floor(options.config?.preCommandMaxPerTurn ?? 1))
     };
     this.gitEngine = new GitPlumbingEngine({
@@ -3811,7 +3811,7 @@ var Config = Schema.object({
   allowPartialSnapshots: Schema.boolean().default(false),
   enableAgentWriteLedger: Schema.boolean().default(false),
   autoPreCommandSnapshot: Schema.boolean().default(false),
-  preCommandTools: Schema.array(Schema.string()).default(["bash", "shell", "pwsh", "powershell", "terminal_bash", "terminal_exec", "run_code", "python"]),
+  preCommandTools: Schema.array(Schema.string()).default(["write", "edit", "str_replace_editor", "bash", "shell", "pwsh", "powershell", "terminal_bash", "terminal_exec", "run_code", "python"]),
   preCommandMaxPerTurn: Schema.number().step(1).min(0).default(1)
 });
 function apply(ctx, config = {}) {

@@ -131,3 +131,14 @@ unknown IDs without creating an empty DAG.
 Dashboard hid valid timelines and made post-fork sessions appear to disappear.
 
 **Impact:** session discovery is restart-safe and does not alter restore semantics.
+
+### 2026-09-19 — native file-tool safety boundary
+
+**Changes:** the opt-in pre-command default allowlist now includes DSH `write`,
+`edit`, and `str_replace_editor` in addition to shell/PTC tools.
+
+**Reason:** Hermes-like safety must cover file mutation tools as well as destructive
+commands; a failed native write should have a reviewed checkpoint before dispatch.
+
+**Evidence:** Cordis fixture tests and the live DSH source smoke both persist the
+pre-command boundary without preventing the tool turn from completing.

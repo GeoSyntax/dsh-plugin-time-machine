@@ -124,7 +124,7 @@ export class TimeMachineService {
       allowPartialSnapshots: options.config?.allowPartialSnapshots ?? false,
       enableAgentWriteLedger: options.config?.enableAgentWriteLedger ?? false,
       autoPreCommandSnapshot: options.config?.autoPreCommandSnapshot ?? false,
-      preCommandTools: [...(options.config?.preCommandTools ?? ['bash', 'shell', 'pwsh', 'powershell', 'terminal_bash', 'terminal_exec', 'run_code', 'python'])],
+      preCommandTools: [...(options.config?.preCommandTools ?? ['write', 'edit', 'str_replace_editor', 'bash', 'shell', 'pwsh', 'powershell', 'terminal_bash', 'terminal_exec', 'run_code', 'python'])],
       preCommandMaxPerTurn: Math.max(0, Math.floor(options.config?.preCommandMaxPerTurn ?? 1)),
     };
 

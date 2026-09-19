@@ -79,7 +79,8 @@ binary marker for binary content. Native slot rendering remains separate.
 
 `autoPreCommandSnapshot` now hooks each Agent's `tools/pre-execute` waterfall
 and keeps `tools/execute` as a compatibility fallback. Configured high-risk
-tools receive a `pre-command` checkpoint before dispatch or argument rejection;
+tools, including native `write`, `edit`, and `str_replace_editor`, receive a
+`pre-command` checkpoint before dispatch or argument rejection;
 call ids are deduplicated and `preCommandMaxPerTurn` defaults to one boundary,
 matching Hermes' per-turn anti-spam behavior. A value of zero permits one
 checkpoint per high-risk call. The source smoke can enable the live assertion

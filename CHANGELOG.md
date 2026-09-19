@@ -26,8 +26,9 @@
 - CLI, Web API, Dashboard, DSH source smoke tests, cross-platform CI, and
   machine-readable benchmark output.
 - Opt-in Hermes-style pre-command checkpoints on DSH `tools/pre-execute` with
-  `tools/execute` fallback, configurable mutation-tool allowlist, per-turn
-  limit, call-id deduplication, and a live source smoke assertion.
+  `tools/execute` fallback, native file/shell mutation-tool defaults,
+  configurable allowlist, per-turn limit, call-id deduplication, and a live
+  source smoke assertion.
 - Dependency-free `TimeMachineClient` companion contract for status,
   capabilities, storage, DAG, diff, preview-bound rewind/fork, selective
   restore, audit reads, and persisted `sessions()` discovery; Web fork now

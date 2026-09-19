@@ -19,8 +19,13 @@ From this directory:
 pnpm install
 pnpm typecheck
 pnpm build
+pnpm test:package
 pnpm pack --dry-run
 ```
+
+`test:package` verifies the consumer-facing `main`, `types`, and `exports` entries
+point at files included in the built package. This catches publish metadata errors
+that a source-only typecheck cannot detect.
 
 Install the published package alongside the core service and matching DSH Web
 client packages. The companion is opt-in; it does not change the service

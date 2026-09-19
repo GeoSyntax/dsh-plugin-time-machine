@@ -4,6 +4,7 @@
 
 - 收紧 companion API 的 session 边界：恢复、分叉、预览、diff、账本查询与存储裁剪不再隐式回落到 `default`，未知或未持久化 session 统一返回 `SESSION_NOT_FOUND`。
 - 新增 `/tm-doctor`，在社区 profile 中诊断双轨恢复所需能力并提示缺失配置。
+- 接入可选的 DSH `sessionController.inspect` 宿主核验，避免展示或操作已经从 DSH 会话目录删除的孤儿 session。
 
 ## 0.2.0 — 2026-09-19
 

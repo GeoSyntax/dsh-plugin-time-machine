@@ -63,6 +63,7 @@ interface AgentLike {
 interface SessionControllerLike {
   create(request: { readonly cwd?: string }): Promise<{ readonly sessionId: string }>;
   fork(request: { readonly sessionId: string; readonly atSeq?: number }): Promise<{ readonly sessionId: string }>;
+  inspect?(sessionId: string): Promise<unknown>;
 }
 
 interface CommandRuntimeLike {
@@ -134,6 +135,16 @@ export function apply(ctx: Context, config: Config = {}): void {
         return boundary === undefined
           ? controller.create({ cwd: service.workDir })
           : controller.fork({ sessionId: sourceSessionId, atSeq: boundary });
+      },
+      sessionExists: async (sessionId) => {
+        const controller = ctx.get('sessionController') as SessionControllerLike | undefined;
+        if (!controller?.inspect) return true;
+        try {
+          await controller.inspect(sessionId);
+          return true;
+        } catch {
+          return false;
+        }
       },
     }, config.webAllowedOrigins ?? []);
     ctx.effect(() => {

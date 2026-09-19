@@ -99,6 +99,7 @@ dsh plugin --profile web list --depth 0
 - **无 callId 宿主兼容:** 若某个 DSH 适配器没有提供 `callId`，插件会按 execution 对象身份去重同一次调用跨越的两个 waterfall；不同的匿名 execution 不会因工具名相同而被错误合并。
 - **多 Session Dashboard:** `GET /api/sessions` 会列出已持久化的真实 DSH session；Dashboard 默认选择最近更新的 session，也支持 `?sessionId=...` 和下拉切换，不会因访问空页面制造 `default` 时间线。
 - **Session 边界一致性:** `/api/preview`、`/api/diff`、`/api/rewind`、`/api/fork`、`/api/restore-files`、`/api/prune` 及账本查询都要求显式且已持久化的 `sessionId`；未知会话统一返回 `404 SESSION_NOT_FOUND`，不会隐式创建幽灵 `default` 会话。
+- **宿主会话核验:** 在 DSH profile 提供 `sessionController.inspect` 时，Dashboard 会过滤已被宿主删除的孤儿 checkpoint session，恢复类 API 也会在执行前再次核验宿主会话。
 - **可诊断的社区安装:** `/tm-doctor` 会检查当前 profile 是否有 `sessionController`、Git/fallback 引擎、Web Dashboard、预命令边界和 Agent-write ledger，并给出可执行的配置警告。
 
 ## Safety model

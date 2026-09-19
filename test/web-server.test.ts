@@ -118,6 +118,24 @@ describe('TimeMachineWebServer', () => {
     expect(unknown.status).toBe(404);
   });
 
+  it('filters plugin sessions through the host session authority when available', async () => {
+    const live = 'host-live-session';
+    const stale = 'host-stale-session';
+    await service.createTurnCheckpoint({ sessionId: live, turnIndex: 1, prompt: 'live', sessionState: { sessionId: live, messages: [] } });
+    await service.createTurnCheckpoint({ sessionId: stale, turnIndex: 1, prompt: 'stale', sessionState: { sessionId: stale, messages: [] } });
+    await server.stop();
+    server = new TimeMachineWebServer(service, testPort, '127.0.0.1', {
+      sessionExists: async sessionId => sessionId === live,
+    });
+    await server.start();
+
+    const sessions = await (await fetch(`http://localhost:${testPort}/api/sessions`)).json();
+    expect(sessions.sessions.map((item: { sessionId: string }) => item.sessionId)).toEqual([live]);
+    const staleDag = await fetch(`http://localhost:${testPort}/api/dag?sessionId=${stale}`);
+    expect(staleDag.status).toBe(404);
+    expect((await staleDag.json()).code).toBe('SESSION_NOT_FOUND');
+  });
+
   it('exposes a read-only Agent-write ledger endpoint', async () => {
     (service.config as any).enableAgentWriteLedger = true;
     const checkpoint = await service.createTurnCheckpoint({

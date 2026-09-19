@@ -3119,17 +3119,16 @@ var TimeMachineWebServer = class {
     if (pathname === "/api/dag" && req.method === "GET") {
       const sessionId = query.get("sessionId");
       if (!sessionId?.trim()) throw Object.assign(new Error("sessionId is required"), { code: "BAD_REQUEST" });
-      if (!(await this.service.listSessions()).some((item) => item.sessionId === sessionId)) {
-        throw Object.assign(new Error(`Session '${sessionId}' does not exist.`), { code: "SESSION_NOT_FOUND" });
-      }
+      await this.requirePersistedSession(sessionId);
       const dag = await this.service.getDAGManager(sessionId);
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(dag.tree));
       return;
     }
     if (pathname === "/api/sessions" && req.method === "GET") {
+      const sessions = await this.listAvailableSessions();
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ sessions: await this.service.listSessions() }));
+      res.end(JSON.stringify({ sessions }));
       return;
     }
     if (pathname === "/api/storage" && req.method === "GET") {
@@ -3364,6 +3363,15 @@ var TimeMachineWebServer = class {
       req.on("error", reject);
     });
   }
+  async listAvailableSessions() {
+    const sessions = await this.service.listSessions();
+    if (!this.hooks.sessionExists) return sessions;
+    const checks = await Promise.all(sessions.map(async (session) => ({
+      session,
+      exists: await this.hooks.sessionExists(session.sessionId).catch(() => false)
+    })));
+    return checks.filter((item) => item.exists).map((item) => item.session);
+  }
   requireSessionId(value) {
     if (typeof value !== "string" || !value.trim()) {
       throw Object.assign(new Error("sessionId is required"), { code: "BAD_REQUEST" });
@@ -3373,6 +3381,9 @@ var TimeMachineWebServer = class {
   async requirePersistedSession(sessionId) {
     if (!(await this.service.listSessions()).some((item) => item.sessionId === sessionId)) {
       throw Object.assign(new Error(`Session '${sessionId}' does not exist.`), { code: "SESSION_NOT_FOUND" });
+    }
+    if (this.hooks.sessionExists && !await this.hooks.sessionExists(sessionId).catch(() => false)) {
+      throw Object.assign(new Error(`Host session '${sessionId}' does not exist.`), { code: "SESSION_NOT_FOUND" });
     }
   }
   async handleStatic(res, pathname) {
@@ -3910,6 +3921,16 @@ function apply(ctx, config = {}) {
         if (!controller) throw new Error("This DSH profile has no sessionController.");
         const boundary = checkpoint.sessionState.boundarySeq;
         return boundary === void 0 ? controller.create({ cwd: service.workDir }) : controller.fork({ sessionId: sourceSessionId, atSeq: boundary });
+      },
+      sessionExists: async (sessionId) => {
+        const controller = ctx.get("sessionController");
+        if (!controller?.inspect) return true;
+        try {
+          await controller.inspect(sessionId);
+          return true;
+        } catch {
+          return false;
+        }
       }
     }, config.webAllowedOrigins ?? []);
     ctx.effect(() => {

@@ -515,6 +515,22 @@ describe('TimeMachineWebServer', () => {
     });
     expect(missingForkTarget.status).toBe(400);
     expect((await missingForkTarget.json()).error).toContain('checkpointId and branchName are required');
+
+    const missingSessionPreview = await fetch(`http://localhost:${testPort}/api/preview?checkpoint=ghost`);
+    expect(missingSessionPreview.status).toBe(400);
+    expect((await missingSessionPreview.json()).code).toBe('BAD_REQUEST');
+
+    const unknownSessionDiff = await fetch(`http://localhost:${testPort}/api/diff?sessionId=ghost&base=a&target=b`);
+    expect(unknownSessionDiff.status).toBe(404);
+    expect((await unknownSessionDiff.json()).code).toBe('SESSION_NOT_FOUND');
+
+    const unknownSessionPrune = await fetch(`http://localhost:${testPort}/api/prune`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: 'ghost', keepLatest: 1 }),
+    });
+    expect(unknownSessionPrune.status).toBe(404);
+    expect((await unknownSessionPrune.json()).code).toBe('SESSION_NOT_FOUND');
   });
 
   it('allows only explicitly configured trusted cross-origin companions', async () => {

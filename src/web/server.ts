@@ -134,9 +134,10 @@ export class TimeMachineWebServer {
     }
 
     if (pathname === '/api/agent-writes' && req.method === 'GET') {
-      const sessionId = query.get('sessionId') || 'default';
+      const sessionId = this.requireSessionId(query.get('sessionId'));
       const checkpointId = query.get('checkpoint') || '';
       if (!checkpointId) throw Object.assign(new Error('Missing checkpoint query parameter'), { code: 'BAD_REQUEST' });
+      await this.requirePersistedSession(sessionId);
       const writes = await this.service.getAgentWriteLedger(sessionId, checkpointId);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ sessionId, checkpointId, enabled: this.service.config.enableAgentWriteLedger === true, writes }));
@@ -144,9 +145,10 @@ export class TimeMachineWebServer {
     }
 
     if (pathname === '/api/unattributed-changes' && req.method === 'GET') {
-      const sessionId = query.get('sessionId') || 'default';
+      const sessionId = this.requireSessionId(query.get('sessionId'));
       const checkpointId = query.get('checkpoint') || '';
       if (!checkpointId) throw Object.assign(new Error('Missing checkpoint query parameter'), { code: 'BAD_REQUEST' });
+      await this.requirePersistedSession(sessionId);
       const changes = await this.service.getUnattributedChanges(sessionId, checkpointId);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ sessionId, checkpointId, changes }));
@@ -154,9 +156,10 @@ export class TimeMachineWebServer {
     }
 
     if (pathname === '/api/diff' && req.method === 'GET') {
-      const sessionId = query.get('sessionId') || 'default';
+      const sessionId = this.requireSessionId(query.get('sessionId'));
       const baseId = query.get('base') || '';
       const targetId = query.get('target') || '';
+      await this.requirePersistedSession(sessionId);
       const diffs = await this.service.getDiff(sessionId, baseId, targetId);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ diffs }));
@@ -164,9 +167,10 @@ export class TimeMachineWebServer {
     }
 
     if (pathname === '/api/preview' && req.method === 'GET') {
-      const sessionId = query.get('sessionId') || 'default';
+      const sessionId = this.requireSessionId(query.get('sessionId'));
       const checkpointId = query.get('checkpoint') || '';
       if (!checkpointId) throw Object.assign(new Error('Missing checkpoint query parameter'), { code: 'BAD_REQUEST' });
+      await this.requirePersistedSession(sessionId);
       const preview = await this.service.previewRestore(sessionId, checkpointId);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ preview }));
@@ -180,7 +184,8 @@ export class TimeMachineWebServer {
         throw Object.assign(new Error('checkpointId is required'), { code: 'BAD_REQUEST' });
       }
       if (!this.hooks.restartConversation) throw new Error('Conversation restart capability is unavailable; refusing workspace-only rewind.');
-      const sourceSessionId = sessionId || 'default';
+      const sourceSessionId = this.requireSessionId(sessionId);
+      await this.requirePersistedSession(sourceSessionId);
       const result = await this.service.rewindToCheckpoint(sourceSessionId, checkpointId, {
         mode: body.force === true ? 'force' : body.merge === true ? 'merge' : undefined,
         preserveVerifiedHandEdits: body.preserveVerifiedHandEdits === true,
@@ -203,9 +208,10 @@ export class TimeMachineWebServer {
 
     if (pathname === '/api/restore-files' && req.method === 'POST') {
       const body = await this.readJsonBody(req);
-      const sessionId = body.sessionId || 'default';
+      const sessionId = this.requireSessionId(body.sessionId);
       const paths = Array.isArray(body.paths) ? body.paths.filter((item: unknown): item is string => typeof item === 'string') : [];
       if (!body.checkpointId || paths.length === 0) throw Object.assign(new Error('checkpointId and non-empty paths are required'), { code: 'BAD_REQUEST' });
+      await this.requirePersistedSession(sessionId);
       const result = await this.service.restoreSelectedPaths(sessionId, body.checkpointId, paths, {
         mode: body.force === true ? 'force' : body.merge === true ? 'merge' : undefined,
         restorePlanId: typeof body.restorePlanId === 'string' ? body.restorePlanId : undefined,
@@ -276,7 +282,8 @@ export class TimeMachineWebServer {
 
     if (pathname === '/api/prune' && req.method === 'POST') {
       const body = await this.readJsonBody(req);
-      const sessionId = body.sessionId || 'default';
+      const sessionId = this.requireSessionId(body.sessionId);
+      await this.requirePersistedSession(sessionId);
       const keepLatest = body.keepLatest === undefined ? undefined : Number(body.keepLatest);
       const olderThanMs = body.olderThanMs === undefined ? undefined : Number(body.olderThanMs);
       if (keepLatest !== undefined && (!Number.isInteger(keepLatest) || keepLatest < 0)) {
@@ -304,7 +311,8 @@ export class TimeMachineWebServer {
         throw Object.assign(new Error('checkpointId and branchName are required'), { code: 'BAD_REQUEST' });
       }
       if (!this.hooks.restartConversation) throw new Error('Conversation restart capability is unavailable; refusing workspace-only fork.');
-      const sourceSessionId = sessionId || 'default';
+      const sourceSessionId = this.requireSessionId(sessionId);
+      await this.requirePersistedSession(sourceSessionId);
       const result = await this.service.forkNewBranch({
         sessionId: sourceSessionId,
         fromCheckpointId: checkpointId,
@@ -356,6 +364,19 @@ export class TimeMachineWebServer {
       });
       req.on('error', reject);
     });
+  }
+
+  private requireSessionId(value: unknown): string {
+    if (typeof value !== 'string' || !value.trim()) {
+      throw Object.assign(new Error('sessionId is required'), { code: 'BAD_REQUEST' });
+    }
+    return value.trim();
+  }
+
+  private async requirePersistedSession(sessionId: string): Promise<void> {
+    if (!(await this.service.listSessions()).some(item => item.sessionId === sessionId)) {
+      throw Object.assign(new Error(`Session '${sessionId}' does not exist.`), { code: 'SESSION_NOT_FOUND' });
+    }
   }
 
   private async handleStatic(res: http.ServerResponse, pathname: string) {

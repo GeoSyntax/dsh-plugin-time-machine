@@ -169,6 +169,8 @@ interface TimeMachineConfig {
     maxQuarantineBytes?: number;
     /** Optional environment variable containing a key used to encrypt quarantine backups. */
     quarantineEncryptionKeyEnv?: string;
+    /** Optional environment variable containing a key used to encrypt persisted DAG/session metadata. */
+    stateEncryptionKeyEnv?: string;
     /** Lifetime of a preview restore plan. Set to 0 to disable plan expiry. */
     restorePlanTtlMs?: number;
     /** Maximum size of one captured regular file; 0 disables the guard. */
@@ -258,6 +260,8 @@ interface StorageStatus {
     gitObjectsShared: boolean;
     /** Shadow Git objects are currently plaintext at rest; quarantine may differ. */
     gitObjectsEncrypted: boolean;
+    /** Persisted DAG/session metadata is encrypted at rest when configured. */
+    dagStateEncrypted: boolean;
     quarantineEncrypted: boolean;
 }
 /** Host-reported workspace isolation mode; shared-lock is the honest fallback. */

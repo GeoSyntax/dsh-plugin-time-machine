@@ -1,24 +1,40 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import { randomUUID } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'node:crypto';
 import pc from 'picocolors';
 import type { CheckpointNode, DAGTree } from '../types.js';
 
 /** Current on-disk DAG schema. Bump only with an explicit migration path. */
 export const DAG_FORMAT_VERSION = 1 as const;
+const DAG_ENVELOPE_VERSION = 1 as const;
+
+export class DAGStateKeyError extends Error {
+  readonly code = 'DAG_STATE_KEY_INVALID';
+
+  constructor(message = 'DAG state encryption key is missing or invalid.') {
+    super(message);
+    this.name = 'DAGStateKeyError';
+  }
+}
 
 export interface DAGManagerOptions {
   sessionId: string;
   storageDir: string;
   initialBranch?: string;
+  /** Optional operator-provided key for encrypting persisted session metadata. */
+  encryptionKey?: string;
 }
 
 export class DAGStateManager {
   public tree: DAGTree;
   private readonly storageFile: string;
+  private readonly encryptionKey?: Buffer;
 
   constructor(options: DAGManagerOptions) {
     const branch = options.initialBranch || 'main';
+    this.encryptionKey = options.encryptionKey?.trim()
+      ? createHash('sha256').update(options.encryptionKey).digest()
+      : undefined;
     this.tree = {
       formatVersion: DAG_FORMAT_VERSION,
       sessionId: options.sessionId,
@@ -45,14 +61,14 @@ export class DAGStateManager {
   async init(): Promise<void> {
     try {
       const content = await fs.readFile(this.storageFile, 'utf-8');
-      const parsed = JSON.parse(content) as DAGTree;
+      const parsed = this.decode(content);
       const { tree, migrated } = this.migrateTree(parsed);
       this.assertTree(tree);
       this.tree = tree;
       // Legacy files are upgraded only after they have passed full validation.
       // This keeps a corrupt/foreign file untouched for diagnosis and makes the
       // migration atomic through the normal temporary-file persistence path.
-      if (migrated) await this.persist();
+      if (migrated || this.isPlaintext(content)) await this.persist();
     } catch (error: any) {
       if (error?.code !== 'ENOENT') throw error;
     }
@@ -65,7 +81,7 @@ export class DAGStateManager {
     await fs.mkdir(path.dirname(this.storageFile), { recursive: true });
     const temporary = `${this.storageFile}.${randomUUID()}.tmp`;
     try {
-      await fs.writeFile(temporary, `${JSON.stringify(this.tree, null, 2)}\n`, { encoding: 'utf-8', flag: 'wx' });
+      await fs.writeFile(temporary, this.encode(this.tree), { encoding: 'utf-8', flag: 'wx' });
       await fs.rename(temporary, this.storageFile);
     } finally {
       await fs.rm(temporary, { force: true }).catch(() => undefined);
@@ -380,6 +396,47 @@ export class DAGStateManager {
     return { tree, migrated: false };
   }
 
+  private encode(tree: DAGTree): string {
+    const plaintext = Buffer.from(JSON.stringify(tree, null, 2), 'utf8');
+    if (!this.encryptionKey) return `${plaintext.toString('utf8')}\n`;
+    const nonce = randomBytes(12);
+    const cipher = createCipheriv('aes-256-gcm', this.encryptionKey, nonce);
+    const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+    const envelope = {
+      kind: 'dsh-time-machine-dag',
+      version: DAG_ENVELOPE_VERSION,
+      nonce: nonce.toString('base64url'),
+      ciphertext: ciphertext.toString('base64url'),
+      tag: cipher.getAuthTag().toString('base64url'),
+    };
+    return `${JSON.stringify(envelope, null, 2)}\n`;
+  }
+
+  private decode(content: string): DAGTree {
+    let parsed: unknown;
+    try { parsed = JSON.parse(content); } catch { throw new Error(`Invalid DAG state JSON in '${this.storageFile}'.`); }
+    if (isDagEnvelope(parsed)) {
+      if (!this.encryptionKey) throw new DAGStateKeyError('Encrypted DAG state requires the configured key.');
+      if (parsed.version !== DAG_ENVELOPE_VERSION) throw new DAGStateKeyError('Encrypted DAG state format is unsupported.');
+      try {
+        const decipher = createDecipheriv('aes-256-gcm', this.encryptionKey, Buffer.from(parsed.nonce, 'base64url'));
+        decipher.setAuthTag(Buffer.from(parsed.tag, 'base64url'));
+        const plaintext = Buffer.concat([
+          decipher.update(Buffer.from(parsed.ciphertext, 'base64url')),
+          decipher.final(),
+        ]);
+        return JSON.parse(plaintext.toString('utf8')) as DAGTree;
+      } catch {
+        throw new DAGStateKeyError('Encrypted DAG state cannot be authenticated with the configured key.');
+      }
+    }
+    return parsed as DAGTree;
+  }
+
+  private isPlaintext(content: string): boolean {
+    try { return !isDagEnvelope(JSON.parse(content)); } catch { return false; }
+  }
+
   private async commitMutation(mutate: () => void): Promise<void> {
     const previous = cloneJson(this.tree);
     try {
@@ -394,4 +451,20 @@ export class DAGStateManager {
 
 function cloneJson<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function isDagEnvelope(value: unknown): value is {
+  kind: 'dsh-time-machine-dag';
+  version: number;
+  nonce: string;
+  ciphertext: string;
+  tag: string;
+} {
+  if (!value || typeof value !== 'object') return false;
+  const item = value as Record<string, unknown>;
+  return item.kind === 'dsh-time-machine-dag'
+    && typeof item.version === 'number'
+    && typeof item.nonce === 'string'
+    && typeof item.ciphertext === 'string'
+    && typeof item.tag === 'string';
 }

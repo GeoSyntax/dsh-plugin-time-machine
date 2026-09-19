@@ -13,6 +13,7 @@ supported only when it is covered by the current implementation and tests.
 | Non-conflicting drift merge | Explicit `/tm-rewind --merge` for Git workspaces; path-level conflicts fail closed | Product-specific | Three-way / selective conflict handling | Varies |
 | Runtime capability discovery | Versioned `GET /api/capabilities` exposes Git/fallback, merge, incremental capture, explicit `handEditPolicy`, shadow-store and shadow-encryption status, quarantine encryption/migration, external-effect ledger, unsupported-state, shared-lock isolation, and active policy limits | Product-specific | Host/UI-dependent | Varies |
 | On-disk history compatibility | Versioned DAG JSON; legacy unversioned files are validated and atomically migrated, future versions fail closed without rewriting | Product-specific | Varies | Varies |
+| Session metadata at-rest protection | Optional AES-256-GCM envelope for DAG/session messages with key-aware discovery and fail-closed restart behavior | Product-specific | Varies | Varies |
 | Quarantine at-rest encryption | Opt-in AES-256-GCM via environment-backed key; missing/wrong key fails closed | Product-specific | Varies | Varies |
 | External side-effect ledger | Adapter declarations persist reversibility, compensation and failure semantics; named adapters support dry-run, explicit execution and idempotency fences; missing adapters are surfaced as `adapterAvailable: false`; fork reflection still warns | Product-specific | Varies | Usually absent |
 | Selective file restore | `tm-restore-files`, Web API | Yes | Yes | Varies |

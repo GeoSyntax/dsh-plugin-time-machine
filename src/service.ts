@@ -121,6 +121,7 @@ export class TimeMachineService {
       workspaceLockTimeoutMs: Math.max(0, Math.floor(options.config?.workspaceLockTimeoutMs ?? 30000)),
       maxQuarantineBytes: Math.max(0, Math.floor(options.config?.maxQuarantineBytes ?? 0)),
       quarantineEncryptionKeyEnv: options.config?.quarantineEncryptionKeyEnv ?? '',
+      stateEncryptionKeyEnv: options.config?.stateEncryptionKeyEnv ?? '',
       restorePlanTtlMs: Math.max(0, Math.floor(options.config?.restorePlanTtlMs ?? 900000)),
       maxSnapshotFileBytes: Math.max(0, Math.floor(options.config?.maxSnapshotFileBytes ?? 0)),
       maxSnapshotBytes: Math.max(0, Math.floor(options.config?.maxSnapshotBytes ?? 0)),
@@ -174,6 +175,7 @@ export class TimeMachineService {
       mgr = new DAGStateManager({
         sessionId,
         storageDir: this.storageDir,
+        encryptionKey: this.config.stateEncryptionKeyEnv ? process.env[this.config.stateEncryptionKeyEnv] : undefined,
       });
       await mgr.init();
       this.dagManagers.set(sessionId, mgr);
@@ -928,6 +930,7 @@ export class TimeMachineService {
       pruneCandidates: leaves,
       gitObjectsShared: await this.gitEngine.isGitRepo() && !this.config.shadowStore,
       gitObjectsEncrypted: false,
+      dagStateEncrypted: Boolean(this.config.stateEncryptionKeyEnv && process.env[this.config.stateEncryptionKeyEnv]),
       quarantineEncrypted: Boolean(this.config.quarantineEncryptionKeyEnv && process.env[this.config.quarantineEncryptionKeyEnv]),
     };
   }
@@ -939,8 +942,16 @@ export class TimeMachineService {
     for (const entry of entries) {
       if (!entry.isFile() || !entry.name.startsWith('dag_') || !entry.name.endsWith('.json')) continue;
       try {
-        const tree = JSON.parse(await fs.readFile(path.join(this.storageDir, entry.name), 'utf8')) as DAGTree;
-        if (typeof tree.sessionId !== 'string') continue;
+        const encodedSessionId = entry.name.slice('dag_'.length, -'.json'.length);
+        const sessionId = encodedSessionId === '_' ? '' : Buffer.from(encodedSessionId, 'base64url').toString('utf8');
+        if (!sessionId) continue;
+        const manager = new DAGStateManager({
+          sessionId,
+          storageDir: this.storageDir,
+          encryptionKey: this.config.stateEncryptionKeyEnv ? process.env[this.config.stateEncryptionKeyEnv] : undefined,
+        });
+        await manager.init();
+        const tree = manager.tree;
         const nodes = Object.values(tree.nodes ?? {}) as CheckpointNode[];
         summaries.push({
           sessionId: tree.sessionId,
@@ -949,7 +960,13 @@ export class TimeMachineService {
           currentCheckpointId: tree.currentCheckpointId,
           updatedAt: nodes.length ? Math.max(...nodes.map(node => node.timestamp)) : null,
         });
-      } catch { /* ignore corrupt/partial files in best-effort discovery */ }
+      } catch (error: any) {
+        // An encrypted store must never degrade to an empty dashboard when the
+        // operator forgot or mistyped the key; surface the key failure so the
+        // caller can fix configuration instead of creating a ghost session.
+        if (error?.code === 'DAG_STATE_KEY_INVALID') throw error;
+        /* ignore corrupt/partial files in best-effort discovery */
+      }
     }
     return summaries.sort((left, right) => (right.updatedAt ?? 0) - (left.updatedAt ?? 0) || left.sessionId.localeCompare(right.sessionId));
   }
@@ -965,6 +982,7 @@ export class TimeMachineService {
     selectiveRestore: boolean;
     shadowStore: boolean;
     shadowStoreEncryption: false;
+    dagStateEncryption: boolean;
     quarantineEncryption: boolean;
     quarantineMigration: boolean;
     partialSnapshots: boolean;
@@ -1015,6 +1033,7 @@ export class TimeMachineService {
       selectiveRestore: usable || !git,
       shadowStore: git && this.config.shadowStore,
       shadowStoreEncryption: false,
+      dagStateEncryption: Boolean(this.config.stateEncryptionKeyEnv && process.env[this.config.stateEncryptionKeyEnv]),
       quarantineEncryption: Boolean(this.config.quarantineEncryptionKeyEnv && process.env[this.config.quarantineEncryptionKeyEnv]),
       quarantineMigration: git && Boolean(this.config.quarantineEncryptionKeyEnv),
       partialSnapshots: git && this.config.allowPartialSnapshots && (this.config.maxSnapshotFileBytes > 0 || this.config.maxSnapshotBytes > 0),

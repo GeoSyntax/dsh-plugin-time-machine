@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import os from 'node:os';
-import { DAGStateManager } from '../src/core/dag-manager.js';
+import { DAGStateKeyError, DAGStateManager } from '../src/core/dag-manager.js';
 import type { CheckpointNode } from '../src/types.js';
 
 describe('DAGStateManager', () => {
@@ -143,5 +143,30 @@ describe('DAGStateManager', () => {
     const manager = new DAGStateManager({ sessionId, storageDir: tmpDir });
     await expect(manager.init()).rejects.toThrow('Unsupported DAG storage format 99');
     expect(JSON.parse(await fs.readFile(file, 'utf8')).formatVersion).toBe(99);
+  });
+
+  it('encrypts DAG metadata, reloads with the key, and fails closed with a wrong key', async () => {
+    const sessionId = 'encrypted-session';
+    const encrypted = new DAGStateManager({ sessionId, storageDir: tmpDir, encryptionKey: 'operator-secret' });
+    await encrypted.init();
+    encrypted.tree.nodes.note = {
+      id: 'note', parentId: null, branch: 'main', turnIndex: 1, timestamp: Date.now(),
+      prompt: 'sensitive prompt should not be plaintext', summary: 'secret', gitTreeOid: 'tree',
+      gitCommitOid: 'commit', sessionState: { sessionId, messages: [{ role: 'user', content: 'private' }] },
+      changedFiles: [], status: 'success',
+    };
+    await encrypted.persist();
+    const file = path.join(tmpDir, `dag_${Buffer.from(sessionId).toString('base64url')}.json`);
+    const raw = await fs.readFile(file, 'utf8');
+    expect(raw).toContain('dsh-time-machine-dag');
+    expect(raw).not.toContain('sensitive prompt should not be plaintext');
+
+    const reloaded = new DAGStateManager({ sessionId, storageDir: tmpDir, encryptionKey: 'operator-secret' });
+    await reloaded.init();
+    expect(reloaded.tree.nodes.note.prompt).toContain('sensitive prompt');
+    const wrong = new DAGStateManager({ sessionId, storageDir: tmpDir, encryptionKey: 'wrong-secret' });
+    await expect(wrong.init()).rejects.toBeInstanceOf(DAGStateKeyError);
+    const missing = new DAGStateManager({ sessionId, storageDir: tmpDir });
+    await expect(missing.init()).rejects.toMatchObject({ code: 'DAG_STATE_KEY_INVALID' });
   });
 });

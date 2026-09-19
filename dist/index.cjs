@@ -1137,6 +1137,7 @@ Reason: ${err || out || `exit ${code}`}`));
 var index_exports = {};
 __export(index_exports, {
   Config: () => Config,
+  DAGStateKeyError: () => DAGStateKeyError,
   DAGStateManager: () => DAGStateManager,
   DAG_FORMAT_VERSION: () => DAG_FORMAT_VERSION,
   FallbackSnapshotEngine: () => FallbackSnapshotEngine,
@@ -1547,11 +1548,21 @@ var import_promises3 = __toESM(require("fs/promises"), 1);
 var import_node_crypto3 = require("crypto");
 var import_picocolors = __toESM(require("picocolors"), 1);
 var DAG_FORMAT_VERSION = 1;
+var DAG_ENVELOPE_VERSION = 1;
+var DAGStateKeyError = class extends Error {
+  code = "DAG_STATE_KEY_INVALID";
+  constructor(message = "DAG state encryption key is missing or invalid.") {
+    super(message);
+    this.name = "DAGStateKeyError";
+  }
+};
 var DAGStateManager = class {
   tree;
   storageFile;
+  encryptionKey;
   constructor(options) {
     const branch = options.initialBranch || "main";
+    this.encryptionKey = options.encryptionKey?.trim() ? (0, import_node_crypto3.createHash)("sha256").update(options.encryptionKey).digest() : void 0;
     this.tree = {
       formatVersion: DAG_FORMAT_VERSION,
       sessionId: options.sessionId,
@@ -1577,11 +1588,11 @@ var DAGStateManager = class {
   async init() {
     try {
       const content = await import_promises3.default.readFile(this.storageFile, "utf-8");
-      const parsed = JSON.parse(content);
+      const parsed = this.decode(content);
       const { tree, migrated } = this.migrateTree(parsed);
       this.assertTree(tree);
       this.tree = tree;
-      if (migrated) await this.persist();
+      if (migrated || this.isPlaintext(content)) await this.persist();
     } catch (error) {
       if (error?.code !== "ENOENT") throw error;
     }
@@ -1593,8 +1604,7 @@ var DAGStateManager = class {
     await import_promises3.default.mkdir(import_node_path3.default.dirname(this.storageFile), { recursive: true });
     const temporary = `${this.storageFile}.${(0, import_node_crypto3.randomUUID)()}.tmp`;
     try {
-      await import_promises3.default.writeFile(temporary, `${JSON.stringify(this.tree, null, 2)}
-`, { encoding: "utf-8", flag: "wx" });
+      await import_promises3.default.writeFile(temporary, this.encode(this.tree), { encoding: "utf-8", flag: "wx" });
       await import_promises3.default.rename(temporary, this.storageFile);
     } finally {
       await import_promises3.default.rm(temporary, { force: true }).catch(() => void 0);
@@ -1876,6 +1886,54 @@ var DAGStateManager = class {
     }
     return { tree, migrated: false };
   }
+  encode(tree) {
+    const plaintext = Buffer.from(JSON.stringify(tree, null, 2), "utf8");
+    if (!this.encryptionKey) return `${plaintext.toString("utf8")}
+`;
+    const nonce = (0, import_node_crypto3.randomBytes)(12);
+    const cipher = (0, import_node_crypto3.createCipheriv)("aes-256-gcm", this.encryptionKey, nonce);
+    const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+    const envelope = {
+      kind: "dsh-time-machine-dag",
+      version: DAG_ENVELOPE_VERSION,
+      nonce: nonce.toString("base64url"),
+      ciphertext: ciphertext.toString("base64url"),
+      tag: cipher.getAuthTag().toString("base64url")
+    };
+    return `${JSON.stringify(envelope, null, 2)}
+`;
+  }
+  decode(content) {
+    let parsed;
+    try {
+      parsed = JSON.parse(content);
+    } catch {
+      throw new Error(`Invalid DAG state JSON in '${this.storageFile}'.`);
+    }
+    if (isDagEnvelope(parsed)) {
+      if (!this.encryptionKey) throw new DAGStateKeyError("Encrypted DAG state requires the configured key.");
+      if (parsed.version !== DAG_ENVELOPE_VERSION) throw new DAGStateKeyError("Encrypted DAG state format is unsupported.");
+      try {
+        const decipher = (0, import_node_crypto3.createDecipheriv)("aes-256-gcm", this.encryptionKey, Buffer.from(parsed.nonce, "base64url"));
+        decipher.setAuthTag(Buffer.from(parsed.tag, "base64url"));
+        const plaintext = Buffer.concat([
+          decipher.update(Buffer.from(parsed.ciphertext, "base64url")),
+          decipher.final()
+        ]);
+        return JSON.parse(plaintext.toString("utf8"));
+      } catch {
+        throw new DAGStateKeyError("Encrypted DAG state cannot be authenticated with the configured key.");
+      }
+    }
+    return parsed;
+  }
+  isPlaintext(content) {
+    try {
+      return !isDagEnvelope(JSON.parse(content));
+    } catch {
+      return false;
+    }
+  }
   async commitMutation(mutate) {
     const previous = cloneJson(this.tree);
     try {
@@ -1889,6 +1947,11 @@ var DAGStateManager = class {
 };
 function cloneJson(value) {
   return JSON.parse(JSON.stringify(value));
+}
+function isDagEnvelope(value) {
+  if (!value || typeof value !== "object") return false;
+  const item = value;
+  return item.kind === "dsh-time-machine-dag" && typeof item.version === "number" && typeof item.nonce === "string" && typeof item.ciphertext === "string" && typeof item.tag === "string";
 }
 
 // src/core/reflection-advisor.ts
@@ -2127,6 +2190,7 @@ var TimeMachineService = class {
       workspaceLockTimeoutMs: Math.max(0, Math.floor(options.config?.workspaceLockTimeoutMs ?? 3e4)),
       maxQuarantineBytes: Math.max(0, Math.floor(options.config?.maxQuarantineBytes ?? 0)),
       quarantineEncryptionKeyEnv: options.config?.quarantineEncryptionKeyEnv ?? "",
+      stateEncryptionKeyEnv: options.config?.stateEncryptionKeyEnv ?? "",
       restorePlanTtlMs: Math.max(0, Math.floor(options.config?.restorePlanTtlMs ?? 9e5)),
       maxSnapshotFileBytes: Math.max(0, Math.floor(options.config?.maxSnapshotFileBytes ?? 0)),
       maxSnapshotBytes: Math.max(0, Math.floor(options.config?.maxSnapshotBytes ?? 0)),
@@ -2171,7 +2235,8 @@ var TimeMachineService = class {
     if (!mgr) {
       mgr = new DAGStateManager({
         sessionId,
-        storageDir: this.storageDir
+        storageDir: this.storageDir,
+        encryptionKey: this.config.stateEncryptionKeyEnv ? process.env[this.config.stateEncryptionKeyEnv] : void 0
       });
       await mgr.init();
       this.dagManagers.set(sessionId, mgr);
@@ -2791,6 +2856,7 @@ var TimeMachineService = class {
       pruneCandidates: leaves,
       gitObjectsShared: await this.gitEngine.isGitRepo() && !this.config.shadowStore,
       gitObjectsEncrypted: false,
+      dagStateEncrypted: Boolean(this.config.stateEncryptionKeyEnv && process.env[this.config.stateEncryptionKeyEnv]),
       quarantineEncrypted: Boolean(this.config.quarantineEncryptionKeyEnv && process.env[this.config.quarantineEncryptionKeyEnv])
     };
   }
@@ -2801,8 +2867,16 @@ var TimeMachineService = class {
     for (const entry of entries) {
       if (!entry.isFile() || !entry.name.startsWith("dag_") || !entry.name.endsWith(".json")) continue;
       try {
-        const tree = JSON.parse(await import_promises5.default.readFile(import_node_path5.default.join(this.storageDir, entry.name), "utf8"));
-        if (typeof tree.sessionId !== "string") continue;
+        const encodedSessionId = entry.name.slice("dag_".length, -".json".length);
+        const sessionId = encodedSessionId === "_" ? "" : Buffer.from(encodedSessionId, "base64url").toString("utf8");
+        if (!sessionId) continue;
+        const manager = new DAGStateManager({
+          sessionId,
+          storageDir: this.storageDir,
+          encryptionKey: this.config.stateEncryptionKeyEnv ? process.env[this.config.stateEncryptionKeyEnv] : void 0
+        });
+        await manager.init();
+        const tree = manager.tree;
         const nodes = Object.values(tree.nodes ?? {});
         summaries.push({
           sessionId: tree.sessionId,
@@ -2811,7 +2885,8 @@ var TimeMachineService = class {
           currentCheckpointId: tree.currentCheckpointId,
           updatedAt: nodes.length ? Math.max(...nodes.map((node) => node.timestamp)) : null
         });
-      } catch {
+      } catch (error) {
+        if (error?.code === "DAG_STATE_KEY_INVALID") throw error;
       }
     }
     return summaries.sort((left, right) => (right.updatedAt ?? 0) - (left.updatedAt ?? 0) || left.sessionId.localeCompare(right.sessionId));
@@ -2831,6 +2906,7 @@ var TimeMachineService = class {
       selectiveRestore: usable || !git,
       shadowStore: git && this.config.shadowStore,
       shadowStoreEncryption: false,
+      dagStateEncryption: Boolean(this.config.stateEncryptionKeyEnv && process.env[this.config.stateEncryptionKeyEnv]),
       quarantineEncryption: Boolean(this.config.quarantineEncryptionKeyEnv && process.env[this.config.quarantineEncryptionKeyEnv]),
       quarantineMigration: git && Boolean(this.config.quarantineEncryptionKeyEnv),
       partialSnapshots: git && this.config.allowPartialSnapshots && (this.config.maxSnapshotFileBytes > 0 || this.config.maxSnapshotBytes > 0),
@@ -3823,6 +3899,7 @@ Use /tm-undo N to restore and fork from the numbered active-lineage checkpoint.`
           `Conversation fork/rewind: ${sessionController ? "available" : "unavailable (no sessionController)"}`,
           `Workspace isolation: ${capabilities.workspaceIsolation}`,
           `Shadow Git object encryption: ${capabilities.shadowStoreEncryption ? "enabled" : "not available (objects are plaintext at rest)"}`,
+          `DAG/session metadata encryption: ${capabilities.dagStateEncryption ? "enabled" : "disabled (metadata is plaintext at rest)"}`,
           `Web dashboard: ${service.config.enableWebUI === false ? "disabled" : `available on ${service.config.webHost ?? "127.0.0.1"}:${service.config.webPort ?? 3088}`}`,
           `Pre-command checkpoints: ${service.config.autoPreCommandSnapshot ? "enabled" : "disabled"}`,
           `Agent-write ledger: ${service.config.enableAgentWriteLedger ? service.config.preserveVerifiedHandEditsByDefault ? "enabled (preserve hand-edits by default)" : "enabled" : "disabled"}`,
@@ -3833,6 +3910,7 @@ Use /tm-undo N to restore and fork from the numbered active-lineage checkpoint.`
         if (!sessionController) warnings.push("Workspace restore can run, but the conversation cannot be switched automatically.");
         if (capabilities.workspaceIsolation === "shared-lock") warnings.push("Forked sessions share the configured workspace; this is not an isolated Git worktree or container.");
         if (!capabilities.shadowStoreEncryption && capabilities.shadowStore) warnings.push("Shadow Git objects are plaintext at rest; protect the storage directory with OS-level encryption and permissions.");
+        if (!capabilities.dagStateEncryption) warnings.push("DAG/session metadata is plaintext at rest; set stateEncryptionKeyEnv when prompts or tool inputs are sensitive.");
         if (!service.config.autoPreCommandSnapshot) warnings.push("High-risk tool boundaries are not captured; enable autoPreCommandSnapshot for stronger crash recovery.");
         if (warnings.length > 0) lines.push(`Warnings:
 - ${warnings.join("\n- ")}`);
@@ -4401,6 +4479,7 @@ var Config = import_schemastery.default.object({
   workspaceLockTimeoutMs: import_schemastery.default.number().default(3e4),
   maxQuarantineBytes: import_schemastery.default.number().default(0),
   quarantineEncryptionKeyEnv: import_schemastery.default.string().default(""),
+  stateEncryptionKeyEnv: import_schemastery.default.string().default(""),
   restorePlanTtlMs: import_schemastery.default.number().default(9e5),
   maxSnapshotFileBytes: import_schemastery.default.number().default(0),
   maxSnapshotBytes: import_schemastery.default.number().default(0),
@@ -4734,6 +4813,7 @@ var index_default = TimeMachinePlugin;
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   Config,
+  DAGStateKeyError,
   DAGStateManager,
   DAG_FORMAT_VERSION,
   FallbackSnapshotEngine,

@@ -1,18 +1,25 @@
 import { Context } from '@deepseek-ai/cordis';
 import Schema from '@deepseek-ai/schemastery';
-import { D as DAGTree, C as CheckpointNode, T as TimeMachineConfig, S as SessionState, A as AgentWriteRecord, F as FileChange, E as ExternalEffectRecord, a as ExternalEffectAdapter, b as ExternalEffectCompensationResult, R as RestoreOptions, c as RestoreResult, d as SelectiveRestoreResult, e as ReflectionSummary, f as DiffResult, g as RestorePreview, h as StorageStatus, i as SessionSummary, W as WorkspaceIsolation, P as PruneResult } from './client-DrvY-cXe.js';
-export { j as CompanionTimelineEntry, k as ExternalCompensationRequest, l as ExternalEffectCompensationContext, m as ExternalEffectRequest, n as ForkRequest, o as PreviewBoundAction, p as PruneRequest, q as RestoreFilesRequest, r as RestoreWorkspaceRequest, s as RewindRequest, t as SessionMessage, u as TimeMachineClient, v as TimeMachineClientError, w as TimeMachineClientOptions, U as UndoRequest, x as buildCompanionTimeline } from './client-DrvY-cXe.js';
+import { D as DAGTree, C as CheckpointNode, T as TimeMachineConfig, S as SessionState, A as AgentWriteRecord, F as FileChange, E as ExternalEffectRecord, a as ExternalEffectAdapter, b as ExternalEffectCompensationResult, R as RestoreOptions, c as RestoreResult, d as SelectiveRestoreResult, e as ReflectionSummary, f as DiffResult, g as RestorePreview, h as StorageStatus, i as SessionSummary, W as WorkspaceIsolation, P as PruneResult } from './client-BwHpOjE0.js';
+export { j as CompanionTimelineEntry, k as ExternalCompensationRequest, l as ExternalEffectCompensationContext, m as ExternalEffectRequest, n as ForkRequest, o as PreviewBoundAction, p as PruneRequest, q as RestoreFilesRequest, r as RestoreWorkspaceRequest, s as RewindRequest, t as SessionMessage, u as TimeMachineClient, v as TimeMachineClientError, w as TimeMachineClientOptions, U as UndoRequest, x as buildCompanionTimeline } from './client-BwHpOjE0.js';
 
 /** Current on-disk DAG schema. Bump only with an explicit migration path. */
 declare const DAG_FORMAT_VERSION: 1;
+declare class DAGStateKeyError extends Error {
+    readonly code = "DAG_STATE_KEY_INVALID";
+    constructor(message?: string);
+}
 interface DAGManagerOptions {
     sessionId: string;
     storageDir: string;
     initialBranch?: string;
+    /** Optional operator-provided key for encrypting persisted session metadata. */
+    encryptionKey?: string;
 }
 declare class DAGStateManager {
     tree: DAGTree;
     private readonly storageFile;
+    private readonly encryptionKey?;
     constructor(options: DAGManagerOptions);
     /**
      * 初始化并尝试从本地恢复树结构
@@ -69,6 +76,9 @@ declare class DAGStateManager {
     renderAsciiTree(): string;
     private assertTree;
     private migrateTree;
+    private encode;
+    private decode;
+    private isPlaintext;
     private commitMutation;
 }
 
@@ -245,6 +255,7 @@ declare class TimeMachineService {
         selectiveRestore: boolean;
         shadowStore: boolean;
         shadowStoreEncryption: false;
+        dagStateEncryption: boolean;
         quarantineEncryption: boolean;
         quarantineMigration: boolean;
         partialSnapshots: boolean;
@@ -684,4 +695,4 @@ declare class TimeMachinePlugin {
     constructor(ctx: Context, config?: Config);
 }
 
-export { AgentWriteRecord, CheckpointNode, Config, type DAGManagerOptions, DAGStateManager, DAGTree, DAG_FORMAT_VERSION, DiffResult, ExternalEffectAdapter, ExternalEffectCompensationResult, ExternalEffectRecord, type FallbackOptions, FallbackSnapshotEngine, FileChange, GitPlumbingEngine, type GitPlumbingOptions, type GitRestoreOptions, type GitSelectiveRestoreOptions, type GitSnapshot, PruneResult, QuarantineKeyError, type QuarantineMigrationResult, QuarantineQuotaError, ReflectionAdvisor, ReflectionSummary, RestoreOptions, RestorePlanError, RestorePreview, RestoreResult, SelectiveRestoreResult, SessionState, SessionSummary, type ShadowGcResult, type ShadowRepackResult, SnapshotSizeError, StorageQuotaError, StorageStatus, TimeMachineConfig, TimeMachinePlugin, TimeMachineService, type TimeMachineServiceOptions, UnsupportedWorkspaceStateError, type WorkspaceCapabilities, WorkspaceDriftError, WorkspaceIsolation, WorkspaceMergeConflictError, WorkspaceRestoreConflictError, apply, collectFailedTools, TimeMachinePlugin as default, name };
+export { AgentWriteRecord, CheckpointNode, Config, type DAGManagerOptions, DAGStateKeyError, DAGStateManager, DAGTree, DAG_FORMAT_VERSION, DiffResult, ExternalEffectAdapter, ExternalEffectCompensationResult, ExternalEffectRecord, type FallbackOptions, FallbackSnapshotEngine, FileChange, GitPlumbingEngine, type GitPlumbingOptions, type GitRestoreOptions, type GitSelectiveRestoreOptions, type GitSnapshot, PruneResult, QuarantineKeyError, type QuarantineMigrationResult, QuarantineQuotaError, ReflectionAdvisor, ReflectionSummary, RestoreOptions, RestorePlanError, RestorePreview, RestoreResult, SelectiveRestoreResult, SessionState, SessionSummary, type ShadowGcResult, type ShadowRepackResult, SnapshotSizeError, StorageQuotaError, StorageStatus, TimeMachineConfig, TimeMachinePlugin, TimeMachineService, type TimeMachineServiceOptions, UnsupportedWorkspaceStateError, type WorkspaceCapabilities, WorkspaceDriftError, WorkspaceIsolation, WorkspaceMergeConflictError, WorkspaceRestoreConflictError, apply, collectFailedTools, TimeMachinePlugin as default, name };

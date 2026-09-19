@@ -1,7 +1,8 @@
 # Encrypted shadow object store design
 
-This is a design boundary, not an implemented capability. Until its
-acceptance checks pass, `shadowStoreEncryption` must remain `false`.
+This is a design boundary, not an implemented capability. DAG/session metadata
+encryption is implemented separately through `stateEncryptionKeyEnv`; until
+the acceptance checks below pass, `shadowStoreEncryption` must remain `false`.
 
 ## Why Git objects cannot simply be encrypted
 

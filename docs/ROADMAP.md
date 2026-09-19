@@ -20,16 +20,20 @@ files remain rejected.
 
 ### Encrypted sensitive-state storage
 
-Protect optional shadow objects and the remaining sensitive metadata at rest.
-Ignored-file quarantine is now covered by `quarantineEncryptionKeyEnv`; an
-explicit `/tm-quarantine-migrate` path converts legacy plaintext backups while
-preserving fail-closed behavior. Shadow object encryption remains.
+Protect optional shadow objects and sensitive metadata at rest. DAG/session
+metadata is now covered by `stateEncryptionKeyEnv`: it uses an authenticated
+AES-256-GCM envelope, migrates validated legacy plaintext on first open, and
+fails closed when the key is missing or wrong. Ignored-file quarantine is now
+covered by `quarantineEncryptionKeyEnv`; an explicit `/tm-quarantine-migrate`
+path converts legacy plaintext backups while preserving fail-closed behavior.
+Shadow object encryption remains the outstanding part of this item.
 Use an operator-provided key (prefer an environment-backed key reference; never
 write the secret into the DAG). Migration must be explicit, and a missing/invalid
 key must fail closed without deleting plaintext backups.
 
-**Acceptance:** restore works after restart with the key; wrong keys cannot
-read content; explicit migration preserves the legacy backup on failure;
+**Acceptance:** restore and session discovery work after restart with the key;
+wrong keys cannot read content; explicit quarantine migration preserves the
+legacy backup on failure;
 quota/prune accounting remains correct; no key material appears in logs,
 manifests, or Git refs.
 

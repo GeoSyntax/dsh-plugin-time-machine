@@ -154,6 +154,23 @@ future schema risks silent data loss.
 features on the advertised version; corrupt and future files remain available
 for diagnosis and are never overwritten.
 
+### 2026-09-19 — encrypted DAG/session metadata
+
+**Changes:** `stateEncryptionKeyEnv` optionally encrypts persisted DAG JSON with
+an AES-256-GCM envelope. Validated legacy plaintext is migrated atomically on
+first open; missing, wrong, or unsupported keys fail closed, including during
+session discovery. Capabilities and storage status expose only an enabled
+boolean, never key material.
+
+**Reason:** prompts, message history, variables, and failed tool inputs can
+contain credentials or proprietary code. A plaintext dashboard fallback would
+be more dangerous than a startup error, so key failures are surfaced rather
+than treated as an empty session list.
+
+**Remaining boundary:** Git Shadow objects are still plaintext at rest; their
+runtime/archive design remains separate and is not implied by this metadata
+encryption switch.
+
 ### 2026-09-19 — API boundary and external-effect identity hardening
 
 **Changes:** explicit external-effect IDs are now unique within a checkpoint and

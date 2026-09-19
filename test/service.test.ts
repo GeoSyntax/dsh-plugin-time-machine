@@ -902,4 +902,38 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
     const restarted = new TimeMachineService({ workDir: tmpDir, storageDir: path.join(tmpDir, '.dsh-tm') });
     expect((await restarted.listSessions()).map(item => item.sessionId).sort()).toEqual(['session-alpha', 'session-beta']);
   });
+
+  it('encrypts persisted session metadata and keeps discovery key-aware', async () => {
+    const envName = 'TM_TEST_STATE_ENCRYPTION_KEY';
+    const previous = process.env[envName];
+    process.env[envName] = 'session-state-secret';
+    const encryptedRoot = path.join(tmpDir, '.dsh-tm-encrypted');
+    try {
+      const encrypted = new TimeMachineService({
+        workDir: tmpDir,
+        storageDir: encryptedRoot,
+        config: { stateEncryptionKeyEnv: envName },
+      });
+      const checkpoint = await encrypted.createTurnCheckpoint({
+        sessionId: 'encrypted-service-session', turnIndex: 1, prompt: 'do not persist this plaintext',
+        sessionState: { sessionId: 'encrypted-service-session', messages: [{ role: 'user', content: 'private' }] },
+      });
+      const capabilities = await encrypted.getCapabilities();
+      expect(capabilities.dagStateEncryption).toBe(true);
+      expect((await encrypted.getStorageStatus()).dagStateEncrypted).toBe(true);
+      const dagFile = path.join(encryptedRoot, `dag_${Buffer.from('encrypted-service-session').toString('base64url')}.json`);
+      const raw = await fs.readFile(dagFile, 'utf8');
+      expect(raw).not.toContain('do not persist this plaintext');
+      const restarted = new TimeMachineService({ workDir: tmpDir, storageDir: encryptedRoot, config: { stateEncryptionKeyEnv: envName } });
+      expect((await restarted.listSessions()).map(item => item.sessionId)).toEqual(['encrypted-service-session']);
+      expect((await restarted.getDAGManager('encrypted-service-session')).getNode(checkpoint.id)?.prompt).toContain('do not persist');
+      const wrong = new TimeMachineService({ workDir: tmpDir, storageDir: encryptedRoot, config: { stateEncryptionKeyEnv: envName } });
+      process.env[envName] = 'wrong-key';
+      await expect(wrong.listSessions()).rejects.toMatchObject({ code: 'DAG_STATE_KEY_INVALID' });
+      await expect(wrong.getDAGManager('encrypted-service-session')).rejects.toMatchObject({ code: 'DAG_STATE_KEY_INVALID' });
+    } finally {
+      if (previous === undefined) delete process.env[envName];
+      else process.env[envName] = previous;
+    }
+  });
 });

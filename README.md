@@ -187,7 +187,7 @@ dsh plugin --profile web list --depth 0
 ```
 
 Web dashboard 只绑定 loopback，并拒绝非本机 Host 和跨 origin 请求。若要让独立的 DSH client companion 跨端口调用 API，必须显式配置 `webAllowedOrigins`；该列表只允许精确的 `http(s)` Origin，默认为空。Dashboard 顶部提供 `Undo latest turn` 快捷操作，它调用与 CLI 相同的 `/api/undo` contract；需要查看冲突和 partial 路径时仍应使用时间线中的 preview/rewind。`/tm-rewind` 与 `/tm-fork` 需要宿主提供 `sessionController`，否则插件会拒绝只恢复文件的危险降级行为。
-集成方可读取带有 `version: 1` 的 `GET /api/capabilities`，提前判断当前工作区是否支持 Git 三方 merge、fallback 文本 diff、selective restore、shadow store、shadow 加密、quarantine 加密/迁移、外部副作用账本、增量捕获、Agent-write ledger、pre-command snapshots 和已注册的 compensation adapters，以及 sparse checkout/submodule/进行中操作限制；`dagStorageFormatVersion` 标明持久化 DAG 的当前格式，旧的无版本历史会在完整校验后原子迁移，未来格式则 fail-closed 且不改写；`handEditPolicy: reject-drift` 表示默认不会猜测文件作者，`ledger-opt-in` 表示已开启显式 Agent-write 账本但仍需传入 `--preserve-hand-edits`，`ledger-default` 表示已启用经账本验证的人工修改默认保留；返回的 `policies` 还公开 restore 模式、快照/存储/quarantine 配额、自动保留年龄、锁等待上限和前置高风险工具集合，便于 UI 在操作前解释边界；`workspaceIsolation: shared-lock` 明确表示当前是共享工作区加锁，不是独立 worktree/container；宿主只有在真正创建并路由独立 cwd 时，才应通过 Web hook 报告 `isolated-worktree` 或 `isolated-container`；公开 DSH alpha 返回 `rewindSessionMode: fork`，但支持可选宿主扩展 `sessionController.rewind()` 的环境会报告 `in-place`，并使用原地会话回退。
+集成方可读取带有 `version: 1` 的 `GET /api/capabilities`，提前判断当前工作区是否支持 Git 三方 merge、fallback 文本 diff、selective restore、shadow store、shadow 加密、DAG/session metadata 加密、quarantine 加密/迁移、外部副作用账本、增量捕获、Agent-write ledger、pre-command snapshots 和已注册的 compensation adapters，以及 sparse checkout/submodule/进行中操作限制；`dagStorageFormatVersion` 标明持久化 DAG 的当前格式，旧的无版本历史会在完整校验后原子迁移，未来格式则 fail-closed 且不改写；`dagStateEncryption: true` 只表示配置的环境变量当前有非空值，不会暴露密钥内容；真正打开已加密历史时仍会验证认证标签，错误密钥会 fail-closed；`handEditPolicy: reject-drift` 表示默认不会猜测文件作者，`ledger-opt-in` 表示已开启显式 Agent-write 账本但仍需传入 `--preserve-hand-edits`，`ledger-default` 表示已启用经账本验证的人工修改默认保留；返回的 `policies` 还公开 restore 模式、快照/存储/quarantine 配额、自动保留年龄、锁等待上限和前置高风险工具集合，便于 UI 在操作前解释边界；`workspaceIsolation: shared-lock` 明确表示当前是共享工作区加锁，不是独立 worktree/container；宿主只有在真正创建并路由独立 cwd 时，才应通过 Web hook 报告 `isolated-worktree` 或 `isolated-container`；公开 DSH alpha 返回 `rewindSessionMode: fork`，但支持可选宿主扩展 `sessionController.rewind()` 的环境会报告 `in-place`，并使用原地会话回退。
 
 ## Verification
 
@@ -215,6 +215,7 @@ TM_DSH_SOURCE=/path/to/deepseek-harness pnpm smoke:dsh:source
 - 默认模式下 Git 快照复用用户仓库的 object database 和私有 refs；需要独立对象目录时开启 `shadowStore`。
 - `shadowStore: true` 会把插件新写入的 Git objects 放到 `storageDir/git-shadow/objects`，主仓库 objects 仅作为只读 alternate；这是 opt-in。删除插件 refs 时会清理 shadow loose objects；显式 `--repack-shadow` 会按私有 refs 重建 pack，但不会改写或执行用户仓库的全局 Git GC。
 - Shadow Git objects 当前仍是明文 at rest；`GET /api/storage` 会明确返回 `gitObjectsEncrypted: false`。只有 ignored-file quarantine 可通过 `quarantineEncryptionKeyEnv` 加密，不能把 shadow store 当作加密备份。
+- DAG/session metadata 默认仍是明文；设置 `stateEncryptionKeyEnv` 指向环境变量后，prompt、消息、变量和失败工具输入会使用 AES-256-GCM 加密保存。缺少或错误的密钥会 fail-closed，不会生成空白 session 或覆盖原文件。
 - Shadow object 加密仍未实现；安全设计、迁移和崩溃恢复验收边界见 [`docs/ENCRYPTED_SHADOW_DESIGN.md`](docs/ENCRYPTED_SHADOW_DESIGN.md)。插件不会直接改写 Git loose object/pack 字节来伪装加密。
 - 工作区变更操作带有跨进程文件锁；`workspaceLockTimeoutMs` 控制等待其他 DSH 实例的最长时间。它能避免并发覆盖，但不会替代为多个 Agent 创建独立 worktree。
 - `maxQuarantineBytes` 可选限制 ignored 文件 quarantine 的总容量；超过上限时返回 `QUARANTINE_QUOTA_EXCEEDED`，不会丢弃备份。

@@ -18,6 +18,14 @@ unattributed, or unresolved external-effect warnings. It intentionally does not
 register a React slot by itself; the optional browser package remains a separate
 compatibility surface.
 
+Relative undo is implemented once in `TimeMachineService.listRelativeTurnCheckpoints()`.
+CLI `/tm-undo`, REST `POST /api/undo`, and `TimeMachineClient.undo()` all resolve
+the same newest-first completed-turn list. Internal `pre-command`, rescue,
+selective-restore, and `running` nodes are ignored, so an automatic safety
+checkpoint cannot change the user's undo distance. Confirmation-oriented UIs
+should still use `timeline()` and a one-shot preview plan before calling the
+mutating `/api/rewind` route.
+
 ## State model
 
 Each `CheckpointNode` records a parent, logical branch, pre-turn workspace object, Session boundary, turn outcome, and optional settled workspace signature. A pre-turn node therefore has two relevant signatures:

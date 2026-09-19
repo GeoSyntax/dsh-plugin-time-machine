@@ -1146,6 +1146,8 @@ __export(index_exports, {
   RestorePlanError: () => RestorePlanError,
   SnapshotSizeError: () => SnapshotSizeError,
   StorageQuotaError: () => StorageQuotaError,
+  TimeMachineClient: () => TimeMachineClient,
+  TimeMachineClientError: () => TimeMachineClientError,
   TimeMachinePlugin: () => TimeMachinePlugin,
   TimeMachineService: () => TimeMachineService,
   UnsupportedWorkspaceStateError: () => UnsupportedWorkspaceStateError,
@@ -3630,6 +3632,87 @@ init_cjs_shims();
 
 // src/index.ts
 init_git_plumbing();
+
+// src/client.ts
+init_cjs_shims();
+var TimeMachineClientError = class extends Error {
+  status;
+  code;
+  body;
+  constructor(message, status, body) {
+    super(message);
+    this.name = "TimeMachineClientError";
+    this.status = status;
+    this.body = body;
+    this.code = body && typeof body === "object" && "code" in body && typeof body.code === "string" ? body.code : body && typeof body === "object" && "error" in body && typeof body.error === "object" && body.error && "code" in body.error && typeof body.error.code === "string" ? body.error.code : void 0;
+  }
+};
+var TimeMachineClient = class {
+  baseUrl;
+  http;
+  constructor(options) {
+    if (!options.baseUrl.trim()) throw new Error("TimeMachineClient requires a non-empty baseUrl.");
+    this.baseUrl = options.baseUrl.replace(/\/+$/, "");
+    this.http = options.fetch ?? globalThis.fetch;
+    if (typeof this.http !== "function") throw new Error("TimeMachineClient requires fetch in this runtime.");
+  }
+  async capabilities() {
+    return this.get("/api/capabilities").then((body) => objectField(body, "capabilities"));
+  }
+  async dag(sessionId) {
+    return this.get(`/api/dag?sessionId=${encodeURIComponent(sessionId)}`);
+  }
+  async preview(sessionId, checkpointId) {
+    const body = await this.get(`/api/preview?sessionId=${encodeURIComponent(sessionId)}&checkpoint=${encodeURIComponent(checkpointId)}`);
+    const preview = objectField(body, "preview");
+    if (preview.sessionId !== sessionId || preview.checkpointId !== checkpointId || typeof preview.restorePlanId !== "string" || !preview.restorePlanId) {
+      throw new Error("Time Machine returned an invalid restore preview binding.");
+    }
+    return { sessionId, checkpointId, restorePlanId: preview.restorePlanId, preview };
+  }
+  async rewind(action, options = {}) {
+    this.assertBinding(action);
+    return this.post("/api/rewind", { ...options, sessionId: action.sessionId, checkpointId: action.checkpointId, restorePlanId: action.restorePlanId });
+  }
+  async fork(action, branchName, options = {}) {
+    this.assertBinding(action);
+    if (!branchName.trim()) throw new Error("branchName must be non-empty.");
+    return this.post("/api/fork", { ...options, sessionId: action.sessionId, checkpointId: action.checkpointId, restorePlanId: action.restorePlanId, branchName });
+  }
+  async restoreFiles(request) {
+    if (!request.sessionId || !request.checkpointId || request.paths.length === 0) throw new Error("restoreFiles requires sessionId, checkpointId, and paths.");
+    return this.post("/api/restore-files", request);
+  }
+  async agentWrites(sessionId, checkpointId) {
+    return this.get(`/api/agent-writes?sessionId=${encodeURIComponent(sessionId)}&checkpoint=${encodeURIComponent(checkpointId)}`);
+  }
+  async unattributedChanges(sessionId, checkpointId) {
+    return this.get(`/api/unattributed-changes?sessionId=${encodeURIComponent(sessionId)}&checkpoint=${encodeURIComponent(checkpointId)}`);
+  }
+  assertBinding(action) {
+    if (!action || action.preview.sessionId !== action.sessionId || action.preview.checkpointId !== action.checkpointId || action.preview.restorePlanId !== action.restorePlanId) {
+      throw new Error("Restore action is not bound to its preview session/checkpoint.");
+    }
+  }
+  async get(pathname) {
+    return this.request(pathname, { method: "GET" });
+  }
+  async post(pathname, body) {
+    return this.request(pathname, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  }
+  async request(pathname, init) {
+    const response = await this.http(`${this.baseUrl}${pathname}`, init);
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new TimeMachineClientError(`Time Machine request failed (${response.status}).`, response.status, body);
+    return body;
+  }
+};
+function objectField(value, field) {
+  if (!value || typeof value !== "object" || !(field in value)) throw new Error(`Time Machine response is missing '${field}'.`);
+  return value[field];
+}
+
+// src/index.ts
 var name = "dsh-plugin-time-machine";
 var Config = import_schemastery.default.object({
   autoSnapshot: import_schemastery.default.boolean().default(true),
@@ -3936,6 +4019,8 @@ var index_default = TimeMachinePlugin;
   RestorePlanError,
   SnapshotSizeError,
   StorageQuotaError,
+  TimeMachineClient,
+  TimeMachineClientError,
   TimeMachinePlugin,
   TimeMachineService,
   UnsupportedWorkspaceStateError,

@@ -797,6 +797,66 @@ declare class ReflectionAdvisor {
     generateReflectionNote(abandonedNodes: CheckpointNode[]): ReflectionSummary;
 }
 
+/**
+ * Small, dependency-free companion client for native DSH/Web integrations.
+ * It deliberately knows the restore-plan fence, but does not render UI.
+ */
+
+interface TimeMachineClientOptions {
+    baseUrl: string;
+    fetch?: typeof globalThis.fetch;
+}
+declare class TimeMachineClientError extends Error {
+    readonly status: number;
+    readonly code?: string;
+    readonly body: unknown;
+    constructor(message: string, status: number, body: unknown);
+}
+interface RewindRequest {
+    sessionId: string;
+    checkpointId: string;
+    restorePlanId?: string;
+    merge?: boolean;
+    force?: boolean;
+    preserveVerifiedHandEdits?: boolean;
+    deleteNewIgnoredPaths?: boolean;
+}
+interface ForkRequest extends RewindRequest {
+    branchName: string;
+    description?: string;
+}
+interface RestoreFilesRequest {
+    sessionId: string;
+    checkpointId: string;
+    paths: string[];
+    restorePlanId?: string;
+    merge?: boolean;
+    force?: boolean;
+}
+interface PreviewBoundAction {
+    readonly sessionId: string;
+    readonly checkpointId: string;
+    readonly restorePlanId: string;
+    readonly preview: RestorePreview;
+}
+declare class TimeMachineClient {
+    private readonly baseUrl;
+    private readonly http;
+    constructor(options: TimeMachineClientOptions);
+    capabilities(): Promise<Record<string, unknown>>;
+    dag(sessionId: string): Promise<DAGTree>;
+    preview(sessionId: string, checkpointId: string): Promise<PreviewBoundAction>;
+    rewind(action: PreviewBoundAction, options?: Omit<RewindRequest, 'sessionId' | 'checkpointId' | 'restorePlanId'>): Promise<unknown>;
+    fork(action: PreviewBoundAction, branchName: string, options?: Omit<ForkRequest, 'sessionId' | 'checkpointId' | 'restorePlanId' | 'branchName'>): Promise<unknown>;
+    restoreFiles(request: RestoreFilesRequest): Promise<unknown>;
+    agentWrites(sessionId: string, checkpointId: string): Promise<unknown>;
+    unattributedChanges(sessionId: string, checkpointId: string): Promise<unknown>;
+    private assertBinding;
+    private get;
+    private post;
+    private request;
+}
+
 declare const name = "dsh-plugin-time-machine";
 interface Config extends TimeMachineConfig {
 }
@@ -897,4 +957,4 @@ declare class TimeMachinePlugin {
     constructor(ctx: Context, config?: Config);
 }
 
-export { type AgentWriteRecord, type CheckpointNode, Config, type DAGManagerOptions, DAGStateManager, type DAGTree, type DiffResult, type ExternalEffectAdapter, type ExternalEffectCompensationContext, type ExternalEffectCompensationResult, type ExternalEffectRecord, type FallbackOptions, FallbackSnapshotEngine, type FileChange, GitPlumbingEngine, type GitPlumbingOptions, type GitRestoreOptions, type GitSelectiveRestoreOptions, type GitSnapshot, type PruneResult, QuarantineKeyError, type QuarantineMigrationResult, QuarantineQuotaError, ReflectionAdvisor, type ReflectionSummary, type RestoreOptions, RestorePlanError, type RestorePreview, type RestoreResult, type SelectiveRestoreResult, type SessionMessage, type SessionState, type ShadowGcResult, type ShadowRepackResult, SnapshotSizeError, StorageQuotaError, type StorageStatus, type TimeMachineConfig, TimeMachinePlugin, TimeMachineService, type TimeMachineServiceOptions, UnsupportedWorkspaceStateError, type WorkspaceCapabilities, WorkspaceDriftError, WorkspaceMergeConflictError, WorkspaceRestoreConflictError, apply, collectFailedTools, TimeMachinePlugin as default, name };
+export { type AgentWriteRecord, type CheckpointNode, Config, type DAGManagerOptions, DAGStateManager, type DAGTree, type DiffResult, type ExternalEffectAdapter, type ExternalEffectCompensationContext, type ExternalEffectCompensationResult, type ExternalEffectRecord, type FallbackOptions, FallbackSnapshotEngine, type FileChange, type ForkRequest, GitPlumbingEngine, type GitPlumbingOptions, type GitRestoreOptions, type GitSelectiveRestoreOptions, type GitSnapshot, type PreviewBoundAction, type PruneResult, QuarantineKeyError, type QuarantineMigrationResult, QuarantineQuotaError, ReflectionAdvisor, type ReflectionSummary, type RestoreFilesRequest, type RestoreOptions, RestorePlanError, type RestorePreview, type RestoreResult, type RewindRequest, type SelectiveRestoreResult, type SessionMessage, type SessionState, type ShadowGcResult, type ShadowRepackResult, SnapshotSizeError, StorageQuotaError, type StorageStatus, TimeMachineClient, TimeMachineClientError, type TimeMachineClientOptions, type TimeMachineConfig, TimeMachinePlugin, TimeMachineService, type TimeMachineServiceOptions, UnsupportedWorkspaceStateError, type WorkspaceCapabilities, WorkspaceDriftError, WorkspaceMergeConflictError, WorkspaceRestoreConflictError, apply, collectFailedTools, TimeMachinePlugin as default, name };

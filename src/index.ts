@@ -440,3 +440,4 @@ export * from './core/git-plumbing.js';
 export * from './core/fallback-engine.js';
 export * from './core/dag-manager.js';
 export * from './core/reflection-advisor.js';
+export * from './client.js';

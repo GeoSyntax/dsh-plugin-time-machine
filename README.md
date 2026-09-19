@@ -218,6 +218,12 @@ DSH 原生消息操作的扩展边界和 companion package 验收条件见
 [docs/DSH_NATIVE_UI.md](docs/DSH_NATIVE_UI.md)。当前版本不会把未实现的 React
 client slot 集成伪装成已支持能力。
 
+如果要开发自己的原生 UI companion，可直接复用无依赖的
+`TimeMachineClient`（`import { TimeMachineClient } from 'dsh-plugin-time-machine'`）。
+它提供 capabilities、DAG、preview、rewind、fork、选择性恢复和审计读取方法，
+并强制把 `restorePlanId` 绑定到 preview 返回的 session/checkpoint；服务端返回
+409 时会抛出带 `status`/`code`/`body` 的 `TimeMachineClientError`。
+
 ## License
 
 MIT

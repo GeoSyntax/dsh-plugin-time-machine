@@ -13,6 +13,9 @@ assistant 的 `messageId`，并且按 session 注入；它不是一个可以从�
 - 已支持：CLI `/tm-preview`、`/tm-rewind`、`/tm-fork`。
 - 未承诺：在 DSH transcript 的 assistant action strip 中自动出现按钮。
 - 兼容回退：用户可以从 DSH 打开独立 Dashboard，或执行 CLI 命令。
+- 已提供：无 React/浏览器依赖的 `TimeMachineClient` companion contract；它封装
+  capabilities、DAG、preview、rewind、fork、选择性恢复和审计读取，并在客户端
+  强制校验一次性 restore-plan 绑定。它不是原生 slot UI，也不会自动注入按钮。
 
 ## 推荐的 client companion 设计
 
@@ -37,7 +40,7 @@ client SlotRegistry 或 UI locale 的运行时依赖。直接把按钮代码放�
 
 ## 验收标准
 
-该 companion 可以独立发布后，至少需要覆盖：
+基于 `TimeMachineClient` 的 companion 可以独立发布后，至少需要覆盖：
 
 - assistant action 在无 checkpoint、fallback 和 unsupported Git 状态下正确隐藏或禁用；
 - 预览后工作区漂移会阻止提交并要求重新预览；

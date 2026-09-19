@@ -6,6 +6,7 @@ import pc from 'picocolors';
 import { TimeMachineService } from './service.js';
 import { TimeMachineWebServer } from './web/server.js';
 import { registerCliCommands } from './cli/commands.js';
+import { validateWorkspaceRoute } from './core/workspace-route.js';
 import type { SessionMessage, TimeMachineConfig, TimeMachineWorkspaceHost, WorkspaceRoute } from './types.js';
 
 export { TimeMachineService } from './service.js';
@@ -155,6 +156,17 @@ export function apply(ctx: Context, config: Config = {}): void {
   if (config.enableWebUI !== false) {
     const webServer = new TimeMachineWebServer(service, config.webPort ?? 3088, config.webHost ?? '127.0.0.1', {
       restartConversation: async (sourceSessionId, checkpoint) => {
+        if (workspaceHost) {
+          const route = await validateWorkspaceRoute(await workspaceHost.resolveSessionWorkspace(sourceSessionId));
+          const boundary = checkpoint.sessionState.boundarySeq;
+          const forked = await workspaceHost.forkSession({
+            sourceSessionId,
+            ...(boundary !== undefined ? { atSeq: boundary } : {}),
+            workspaceId: route.workspaceId,
+            cwd: route.cwd,
+          });
+          return { sessionId: forked.sessionId };
+        }
         const controller = ctx.get('sessionController') as SessionControllerLike | undefined;
         if (!controller) throw new Error('This DSH profile has no sessionController.');
         const boundary = checkpoint.sessionState.boundarySeq;

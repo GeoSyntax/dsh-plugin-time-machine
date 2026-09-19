@@ -617,7 +617,7 @@ Reason: ${errorMsg}`);
         const current = await this.inspectWorkspace();
         const preservePaths = [...new Set((options.preservePaths ?? []).map(normalizeGitPath).filter(Boolean))];
         if (mode === "safe" && options.expectedCurrentTreeOid && current.treeOid !== options.expectedCurrentTreeOid) {
-          const details = (await this.diffNameOnly(options.expectedCurrentTreeOid, current.treeOid)).filter((item) => !preservePaths.some((path10) => item === path10 || item.startsWith(`${path10}/`)));
+          const details = (await this.diffNameOnly(options.expectedCurrentTreeOid, current.treeOid)).filter((item) => !preservePaths.some((path11) => item === path11 || item.startsWith(`${path11}/`)));
           if (details.length) throw new WorkspaceDriftError(details);
         }
         if (mode === "safe" && options.expectedCurrentIgnoredPaths) {
@@ -730,19 +730,19 @@ Reason: ${errorMsg}`);
         for (const relative of normalized) await this.safeWorkspacePath(relative);
         const mode = options.mode ?? "safe";
         const current = await this.inspectWorkspace();
-        const ignoredSelection = current.ignoredPaths.filter((file) => normalized.some((path10) => file === path10 || file.startsWith(`${path10}/`)));
+        const ignoredSelection = current.ignoredPaths.filter((file) => normalized.some((path11) => file === path11 || file.startsWith(`${path11}/`)));
         if (ignoredSelection.length) throw new WorkspaceRestoreConflictError(ignoredSelection);
         if (mode === "safe" && options.expectedCurrentTreeOid && current.treeOid !== options.expectedCurrentTreeOid) {
           const changed = await this.diffNameOnly(options.expectedCurrentTreeOid, current.treeOid);
-          const selectedDrift = changed.filter((file) => normalized.some((path10) => file === path10 || file.startsWith(`${path10}/`)));
+          const selectedDrift = changed.filter((file) => normalized.some((path11) => file === path11 || file.startsWith(`${path11}/`)));
           if (selectedDrift.length) throw new WorkspaceDriftError(selectedDrift);
         }
         const { stdout: treeStdout } = await this.runGit(["rev-parse", `${commitOrTreeOid}^{tree}`]);
         const targetTree = treeStdout.trim();
         const targetFiles = await this.listTreeFileNames(targetTree);
         const currentFiles = await this.listTreeFileNames(current.treeOid);
-        const selectedTargetFiles = targetFiles.filter((file) => normalized.some((path10) => file === path10 || file.startsWith(`${path10}/`)));
-        const selectedCurrentFiles = currentFiles.filter((file) => normalized.some((path10) => file === path10 || file.startsWith(`${path10}/`)));
+        const selectedTargetFiles = targetFiles.filter((file) => normalized.some((path11) => file === path11 || file.startsWith(`${path11}/`)));
+        const selectedCurrentFiles = currentFiles.filter((file) => normalized.some((path11) => file === path11 || file.startsWith(`${path11}/`)));
         if (selectedTargetFiles.length === 0 && selectedCurrentFiles.length === 0) {
           throw new Error(`None of the selected paths exist in the current or target snapshot: ${normalized.join(", ")}`);
         }
@@ -1429,7 +1429,7 @@ Reason: ${err || out || `exit ${code}`}`));
 
 // src/index.ts
 init_esm_shims();
-import path9 from "path";
+import path10 from "path";
 import { createHash as createHash6 } from "crypto";
 import Schema from "@deepseek-ai/schemastery";
 import pc2 from "picocolors";
@@ -3066,7 +3066,7 @@ var TimeMachineService = class {
         ...driftDiffs.map((diff) => diff.file),
         ...symmetricDifference2(expectedIgnored, currentState.ignoredPaths).map((item) => `(ignored) ${item}`)
       ])].sort();
-      const conflictingPaths = allConflictingPaths.filter((file) => !preservedHandEditPaths.some((path10) => file === path10 || file.startsWith(`${path10}/`)));
+      const conflictingPaths = allConflictingPaths.filter((file) => !preservedHandEditPaths.some((path11) => file === path11 || file.startsWith(`${path11}/`)));
       const currentLineage = current ? dag.getLineage(current.id) : [];
       const targetIndex = currentLineage.findIndex((node) => node.id === checkpointId);
       const externalEffects = currentLineage.slice(targetIndex >= 0 ? targetIndex + 1 : 0).flatMap((node) => node.externalEffects ?? []).map((effect) => cloneJson2(effect));
@@ -3422,7 +3422,7 @@ var TimeMachineService = class {
       const expectedIgnored = current.settledIgnoredPaths ?? current.ignoredPaths ?? [];
       if (actual.treeOid !== expectedTree || !sameStrings(actual.ignoredPaths, expectedIgnored)) {
         const { WorkspaceDriftError: WorkspaceDriftError2 } = await Promise.resolve().then(() => (init_git_plumbing(), git_plumbing_exports));
-        const changed = actual.treeOid === expectedTree ? [] : (isGit ? (await this.gitEngine.getDiffBetween(expectedTree, actual.treeOid)).map((item) => item.file) : current ? (await this.fallbackEngine.getChangedFiles(dag.tree.sessionId, current.id)).map((item) => item.path) : []).filter((file) => !preservedPaths.some((path10) => file === path10 || file.startsWith(`${path10}/`)));
+        const changed = actual.treeOid === expectedTree ? [] : (isGit ? (await this.gitEngine.getDiffBetween(expectedTree, actual.treeOid)).map((item) => item.file) : current ? (await this.fallbackEngine.getChangedFiles(dag.tree.sessionId, current.id)).map((item) => item.path) : []).filter((file) => !preservedPaths.some((path11) => file === path11 || file.startsWith(`${path11}/`)));
         const ignoredDrift = !sameStrings(actual.ignoredPaths, expectedIgnored);
         if (changed.length || ignoredDrift) {
           const details = actual.treeOid === expectedTree ? ["workspace no longer matches the active checkpoint"] : [`managed tree changed (expected ${expectedTree}, observed ${actual.treeOid})${changed.length ? `: ${changed.join(", ")}` : ""}`];
@@ -3496,7 +3496,7 @@ var TimeMachineService = class {
       const verified2 = await this.gitEngine.inspectWorkspace({ omitPaths: [...target.omittedPaths ?? [], ...preservePaths2] });
       const expectedTree2 = options.mode === "merge" ? result.restoredTreeOid : target.gitTreeOid;
       const treeMismatch = verified2.treeOid !== expectedTree2;
-      const allowedMismatch = treeMismatch && preservePaths2.length ? (await this.gitEngine.getDiffBetween(expectedTree2, verified2.treeOid)).every((item) => preservePaths2.some((path10) => item.file === path10 || item.file.startsWith(`${path10}/`))) : false;
+      const allowedMismatch = treeMismatch && preservePaths2.length ? (await this.gitEngine.getDiffBetween(expectedTree2, verified2.treeOid)).every((item) => preservePaths2.some((path11) => item.file === path11 || item.file.startsWith(`${path11}/`))) : false;
       if (treeMismatch && !allowedMismatch || !sameStrings(verified2.ignoredPaths, target.ignoredPaths ?? [])) {
         throw new Error(`Workspace integrity check failed after restoring checkpoint '${target.id}'.`);
       }
@@ -3634,9 +3634,38 @@ async function countFiles(root) {
 // src/web/server.ts
 init_esm_shims();
 import http from "http";
-import path8 from "path";
-import fs7 from "fs/promises";
+import path9 from "path";
+import fs8 from "fs/promises";
 import { URL } from "url";
+
+// src/core/workspace-route.ts
+init_esm_shims();
+import fs7 from "fs/promises";
+import path8 from "path";
+async function validateWorkspaceRoute(route) {
+  if (!route || typeof route.workspaceId !== "string" || !route.workspaceId.trim() || /[\0\r\n]/.test(route.workspaceId)) {
+    throw Object.assign(new Error("Workspace route workspaceId is invalid."), { code: "BAD_REQUEST" });
+  }
+  if (typeof route.cwd !== "string" || !path8.isAbsolute(route.cwd) || /[\0\r\n]/.test(route.cwd)) {
+    throw Object.assign(new Error("Workspace route cwd must be an absolute path."), { code: "BAD_REQUEST" });
+  }
+  try {
+    const canonical = await fs7.realpath(route.cwd);
+    const canonicalPath = path8.resolve(canonical);
+    const requestedPath = path8.resolve(route.cwd);
+    const samePath = process.platform === "win32" ? canonicalPath.toLowerCase() === requestedPath.toLowerCase() : canonicalPath === requestedPath;
+    if (!samePath) throw Object.assign(new Error("Workspace route cwd must be a canonical real path."), { code: "BAD_REQUEST" });
+  } catch (error) {
+    if (error?.code === "BAD_REQUEST") throw error;
+    throw Object.assign(new Error("Workspace route cwd does not exist."), { code: "BAD_REQUEST" });
+  }
+  if (!["shared-lock", "isolated-worktree", "isolated-container"].includes(route.isolation)) {
+    throw Object.assign(new Error("Workspace route isolation is invalid."), { code: "BAD_REQUEST" });
+  }
+  return route;
+}
+
+// src/web/server.ts
 var TimeMachineWebServer = class {
   server = null;
   port;
@@ -4109,21 +4138,21 @@ var TimeMachineWebServer = class {
       res.end("Not found");
       return;
     }
-    const currentFileDir = path8.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
+    const currentFileDir = path9.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
     const candidateDirs = [
-      path8.join(currentFileDir, "client"),
-      path8.join(currentFileDir, "../src/web/client"),
-      path8.join(currentFileDir, "web/client"),
-      path8.join(process.cwd(), "src/web/client"),
-      path8.join(process.cwd(), "dist/client")
+      path9.join(currentFileDir, "client"),
+      path9.join(currentFileDir, "../src/web/client"),
+      path9.join(currentFileDir, "web/client"),
+      path9.join(process.cwd(), "src/web/client"),
+      path9.join(process.cwd(), "dist/client")
     ];
     let fullPath = "";
     for (const dir of candidateDirs) {
-      const candidate = path8.resolve(dir, filePath);
-      const relative = path8.relative(path8.resolve(dir), candidate);
-      if (relative.startsWith("..") || path8.isAbsolute(relative)) continue;
+      const candidate = path9.resolve(dir, filePath);
+      const relative = path9.relative(path9.resolve(dir), candidate);
+      if (relative.startsWith("..") || path9.isAbsolute(relative)) continue;
       try {
-        await fs7.access(candidate);
+        await fs8.access(candidate);
         fullPath = candidate;
         break;
       } catch {
@@ -4131,8 +4160,8 @@ var TimeMachineWebServer = class {
     }
     try {
       if (!fullPath) throw new Error("Asset not found");
-      const content = await fs7.readFile(fullPath);
-      const ext = path8.extname(fullPath);
+      const content = await fs8.readFile(fullPath);
+      const ext = path9.extname(fullPath);
       const contentTypes = {
         ".html": "text/html; charset=utf-8",
         ".css": "text/css; charset=utf-8",
@@ -4205,29 +4234,6 @@ function effectivePort(hostHeader, protocol) {
   const explicit = hostHeader.startsWith("[") ? hostHeader.slice(hostHeader.indexOf("]") + 2) : hostHeader.split(":").slice(1).join(":");
   if (explicit) return explicit;
   return protocol === "https:" ? "443" : "80";
-}
-async function validateWorkspaceRoute(route) {
-  if (!route || typeof route.workspaceId !== "string" || !route.workspaceId.trim() || /[\0\r\n]/.test(route.workspaceId)) {
-    throw Object.assign(new Error("Workspace route workspaceId is invalid."), { code: "BAD_REQUEST" });
-  }
-  if (typeof route.cwd !== "string" || !path8.isAbsolute(route.cwd) || /[\0\r\n]/.test(route.cwd)) {
-    throw Object.assign(new Error("Workspace route cwd must be an absolute path."), { code: "BAD_REQUEST" });
-  }
-  try {
-    const canonical = await fs7.realpath(route.cwd);
-    const canonicalPath = path8.resolve(canonical);
-    const requestedPath = path8.resolve(route.cwd);
-    const samePath = process.platform === "win32" ? canonicalPath.toLowerCase() === requestedPath.toLowerCase() : canonicalPath === requestedPath;
-    if (!samePath) {
-      throw Object.assign(new Error("Workspace route cwd must be a canonical real path."), { code: "BAD_REQUEST" });
-    }
-  } catch (error) {
-    if (error?.code === "BAD_REQUEST") throw error;
-    throw Object.assign(new Error("Workspace route cwd does not exist."), { code: "BAD_REQUEST" });
-  }
-  if (!["shared-lock", "isolated-worktree", "isolated-container"].includes(route.isolation)) {
-    throw Object.assign(new Error("Workspace route isolation is invalid."), { code: "BAD_REQUEST" });
-  }
 }
 
 // src/cli/commands.ts
@@ -4933,7 +4939,7 @@ function boundedToolError(result) {
   return void 0;
 }
 function apply(ctx, config = {}) {
-  const workDir = path9.resolve(process.cwd());
+  const workDir = path10.resolve(process.cwd());
   const service = new TimeMachineService({ workDir, storageDir: config.storageDir, config });
   ctx.provide("timeMachine", service);
   let workspaceHost;
@@ -4946,6 +4952,17 @@ function apply(ctx, config = {}) {
   if (config.enableWebUI !== false) {
     const webServer = new TimeMachineWebServer(service, config.webPort ?? 3088, config.webHost ?? "127.0.0.1", {
       restartConversation: async (sourceSessionId, checkpoint) => {
+        if (workspaceHost) {
+          const route = await validateWorkspaceRoute(await workspaceHost.resolveSessionWorkspace(sourceSessionId));
+          const boundary2 = checkpoint.sessionState.boundarySeq;
+          const forked = await workspaceHost.forkSession({
+            sourceSessionId,
+            ...boundary2 !== void 0 ? { atSeq: boundary2 } : {},
+            workspaceId: route.workspaceId,
+            cwd: route.cwd
+          });
+          return { sessionId: forked.sessionId };
+        }
         const controller = ctx.get("sessionController");
         if (!controller) throw new Error("This DSH profile has no sessionController.");
         const boundary = checkpoint.sessionState.boundarySeq;
@@ -5168,7 +5185,7 @@ function apply(ctx, config = {}) {
       if (!service.config.autoSnapshot || step !== 1) return next();
       installAgentToolBoundary?.(agent);
       const session = agent.session;
-      const cwd = session.header.cwd ? path9.resolve(session.header.cwd) : workDir;
+      const cwd = session.header.cwd ? path10.resolve(session.header.cwd) : workDir;
       if (cwd !== service.workDir) {
         scope.logger.warn(`[time-machine] skipped session ${session.id}: cwd ${cwd} differs from configured workspace ${service.workDir}`);
         return next();
@@ -5211,10 +5228,10 @@ function isNativeWriteTool(name2) {
   return name2 === "write" || name2 === "edit" || name2 === "str_replace_editor";
 }
 function workspaceRelativePath(workDir, displayPath) {
-  const absolute = path9.resolve(workDir, displayPath);
-  const root = path9.resolve(workDir);
-  const relative = path9.relative(root, absolute).replace(/\\/g, "/");
-  if (!relative || relative === ".." || relative.startsWith("../") || path9.isAbsolute(relative)) return void 0;
+  const absolute = path10.resolve(workDir, displayPath);
+  const root = path10.resolve(workDir);
+  const relative = path10.relative(root, absolute).replace(/\\/g, "/");
+  if (!relative || relative === ".." || relative.startsWith("../") || path10.isAbsolute(relative)) return void 0;
   return relative;
 }
 function executionIdentity(execution, identities, allocate) {

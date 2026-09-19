@@ -30,7 +30,7 @@ supported only when it is covered by the current implementation and tests.
 | Durable interrupted-restore journal | Yes; startup restores rescue checkpoint | Store recovery | Yes | Varies |
 | Independent shadow store | Opt-in `shadowStore: true`; loose GC plus explicit private-pack repack | Yes | Yes | Usually local backups |
 | Cross-process workspace lock | Yes; bounded wait with stale-owner recovery | Product-specific | Change Ledger documents active-session blocking and Git-operation fences | Usually unavailable |
-| Pre-destructive tool checkpoint | Opt-in `autoPreCommandSnapshot` on DSH `tools/pre-execute` with `tools/execute` fallback; configurable high-risk tool names, tagged `pre-command` | Built-in terminal safety guidance | Product-specific | Usually unavailable |
+| Pre-destructive tool checkpoint | Opt-in `autoPreCommandSnapshot` on DSH `tools/pre-execute` with `tools/execute` fallback; configurable high-risk tool names, tagged `pre-command` | Opt-in; automatic before file tools and destructive terminal commands, at most one checkpoint per directory per turn | Before every configured mutation tool; `maxSnapshots`/byte quotas and turn-end pruning | Usually unavailable |
 
 ## Choosing the right tool
 
@@ -61,11 +61,14 @@ three-way merge restore for non-conflicting workspace drift; safe mode remains
 the default and still fails closed on any drift.
 
 The newer [PerryLink/dsh-checkpoint-rewind](https://github.com/PerryLink/dsh-checkpoint-rewind)
-project is a particularly close peer: it also uses Git-first checkpoints,
-turn-boundary session forks, and a clearly labeled non-Git copy fallback. The
-remaining differentiators here are the persistent DAG/reflection model,
-Agent-write and unattributed-mutation audit surfaces, selective/merge restore,
-and the explicit external-effect adapter contract.
+project is a particularly close peer: it snapshots before every configured
+mutation tool at `tools/pre-execute`, supports Git/copy providers, turn-boundary
+forks, quotas, and explicit pre-rewind checkpoints. The remaining
+differentiators here are the persistent DAG/reflection model, Agent-write and
+unattributed-mutation audit surfaces, selective/merge restore, and the explicit
+external-effect adapter contract. PerryLink currently offers a simpler
+single-session rewind workflow; Time Machine deliberately keeps parallel branch
+history instead of pruning it into one linear cursor.
 
 Hermes currently offers a different hand-edit contract: its agent-write ledger
 records content hashes for successful file writes and skips files whose current
@@ -77,8 +80,9 @@ for users who expect automatic preservation of hand-edits. See the
 [Hermes checkpoint documentation](https://hermes-agent.nousresearch.com/docs/user-guide/checkpoints-and-rollback)
 for that behavior.
 
-Hermes' secure-workstation guidance also describes checkpoints before
-destructive terminal commands. Time Machine now offers the same boundary for
+Hermes' current checkpoint documentation specifies opt-in snapshots before
+file tools and destructive terminal commands, with at most one checkpoint per
+directory per turn. Time Machine now offers the same boundary for
 DSH tools when `autoPreCommandSnapshot` is enabled: the `tools/pre-execute`
 waterfall (with an `execute` fallback) creates a tagged checkpoint before configured high-risk tools. This
 does not intercept a shell launched outside DSH, and disabled-by-default keeps

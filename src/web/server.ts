@@ -481,9 +481,11 @@ export class TimeMachineWebServer {
     const allowed = new Set([this.host, '127.0.0.1', 'localhost', '::1']);
     if (!allowed.has(hostname)) return false;
     const origin = req.headers.origin;
-    if (!origin) return true;
+    const fetchSite = req.headers['sec-fetch-site'];
+    if (!origin) return fetchSite !== 'cross-site';
     const normalizedOrigin = normalizeOrigin(origin);
     if (normalizedOrigin && this.allowedOrigins.has(normalizedOrigin)) return true;
+    if (fetchSite === 'cross-site') return false;
     try {
       const parsedOrigin = new URL(origin);
       if (!allowed.has(parsedOrigin.hostname)) return false;

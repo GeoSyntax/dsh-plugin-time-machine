@@ -98,6 +98,10 @@ describe('TimeMachineWebServer', () => {
       headers: { Origin: 'https://attacker.example' },
     });
     expect(blocked.status).toBe(403);
+    const fetchMetadataBlocked = await fetch(`http://localhost:${testPort}/api/status`, {
+      headers: { 'sec-fetch-site': 'cross-site' },
+    });
+    expect(fetchMetadataBlocked.status).toBe(403);
   });
 
   it('discovers and switches between real persisted sessions without a default ghost', async () => {

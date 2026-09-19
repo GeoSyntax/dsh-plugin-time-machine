@@ -33,7 +33,7 @@ describe('DSH Cordis plugin entry', () => {
       ctx = new Context();
       ctx.provide('agents', {} as never);
       ctx.provide('sessions', {} as never);
-      new TimeMachinePlugin(ctx, { enableWebUI: false, storageDir: path.join(workDir, '.dsh-tm') });
+      new TimeMachinePlugin(ctx, { enableWebUI: false, enableAgentWriteLedger: true, storageDir: path.join(workDir, '.dsh-tm') });
       await ctx.inject(['agents', 'sessions'], (scope: Context) => { eventScope = scope; });
       const session = {
         id: 'other-root-session',
@@ -72,7 +72,7 @@ describe('DSH Cordis plugin entry', () => {
       ctx = new Context();
       ctx.provide('agents', {} as never);
       ctx.provide('sessions', {} as never);
-      new TimeMachinePlugin(ctx, { enableWebUI: false, storageDir: path.join(workDir, '.dsh-tm') });
+      new TimeMachinePlugin(ctx, { enableWebUI: false, enableAgentWriteLedger: true, storageDir: path.join(workDir, '.dsh-tm') });
       await ctx.inject(['agents', 'sessions'], (scope: Context) => { eventScope = scope; });
       const session = {
         id: 'canonical-alias-session',
@@ -84,8 +84,21 @@ describe('DSH Cordis plugin entry', () => {
       await eventScope!.waterfall('agent/pre-step', {
         agent: { session }, turn: 1, step: 1, signal: new AbortController().signal,
       }, async () => undefined);
-      const nodes = Object.values((await (ctx.get('timeMachine') as TimeMachineService).getDAGManager(session.id)).tree.nodes);
-      expect(nodes).toHaveLength(1);
+      const file = path.join(workDir, 'alias-observed.txt');
+      await fs.writeFile(file, 'alias\n', 'utf8');
+      const execution = { callId: 'alias-write', name: 'write', agent: { session } };
+      ctx.emit('fs/observed', { displayPath: path.join(alias, 'alias-observed.txt') }, { kind: 'present' }, execution);
+      ctx.emit('tools/result', execution, { isError: false });
+      ctx.emit('session/event', session, { type: 'turn/end', seq: 2, data: { turn: 1, reason: { kind: 'completed' } } });
+      const service = ctx.get('timeMachine') as TimeMachineService;
+      let node = (await service.getDAGManager(session.id)).getCurrentNode();
+      for (let attempt = 0; attempt < 100 && !node?.agentWrites?.length; attempt += 1) {
+        await new Promise(resolve => setTimeout(resolve, 10));
+        node = (await service.getDAGManager(session.id)).getCurrentNode();
+      }
+      expect(node?.agentWrites).toEqual(expect.arrayContaining([
+        expect.objectContaining({ path: 'alias-observed.txt', operation: 'modify', sha256: expect.any(String) }),
+      ]));
     } finally {
       await (ctx?.fiber?.dispose?.() ?? Promise.resolve());
       process.chdir(previousCwd);

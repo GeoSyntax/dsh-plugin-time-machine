@@ -68,6 +68,7 @@ UX, selective non-destructive restore, or durable branch exploration.
 | Oversized-file policy | Default fail-closed with `SNAPSHOT_SIZE_LIMIT`; explicit `allowPartialSnapshots` records `omittedPaths` and preserves those live paths during restore | Product-specific | Can skip/report unsupported files | Varies |
 | Durable interrupted-restore journal | Yes; startup restores rescue checkpoint | Store recovery | Yes | Varies |
 | Independent shadow store | Opt-in `shadowStore: true`; loose GC plus explicit private-pack repack | Yes | Yes | Usually local backups |
+| Shadow object encryption | Opt-in AES-256-GCM archive with disposable Git runtime, explicit plaintext migration, fail-closed key errors, and previous-key rotation | Product-specific | Product-specific | Usually unavailable |
 | Cross-process workspace lock | Yes; bounded wait with stale-owner recovery | Product-specific | Change Ledger documents active-session blocking and Git-operation fences | Usually unavailable |
 | Pre-destructive tool checkpoint | Opt-in `autoPreCommandSnapshot` on DSH `tools/pre-execute` with `tools/execute` fallback; defaults include native file tools and destructive shell/PTC tools, tagged `pre-command` | Opt-in; automatic before file tools and destructive terminal commands, at most one checkpoint per directory per turn | Before every configured mutation tool; `maxSnapshots`/byte quotas and turn-end pruning | Usually unavailable |
 
@@ -162,10 +163,14 @@ compaction do not run repository-wide Git GC. Manual age filtering is available
 through `/tm-prune --older-than=...` and `olderThanMs` in the Web API, but
 automatic time-based expiration is available as the opt-in
 `retentionMaxAgeMs` policy; it protects current and branch-head checkpoints.
-Shadow-object encryption is not implemented yet. `GET /api/storage` exposes this
-as `gitObjectsEncrypted: false`, so integrations cannot mistake an independent
-shadow directory for an encrypted backup. Ignored-file quarantine can be
-encrypted with `quarantineEncryptionKeyEnv`.
+Shadow-object encryption is now opt-in through `shadowStoreEncryptionKeyEnv`.
+`GET /api/storage` reports `gitObjectsEncrypted: true` only when the service is
+actually using the AES-GCM archive; otherwise it remains `false`. Existing
+plaintext objects require explicit `/tm-shadow-migrate`, and normal operations
+remove the disposable Git runtime directory after each plumbing call. The
+archive still needs a durable append journal for crash-resume hardening.
+Ignored-file quarantine can independently be encrypted with
+`quarantineEncryptionKeyEnv`.
 
 This worktree limitation is also a current DSH host-contract limitation, not
 just a plugin policy choice. DSH's `workspaceRegistry` and session APIs can

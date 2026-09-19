@@ -45,7 +45,7 @@ describe('registered DSH time-machine commands', () => {
   });
 
   it('registers tm-tree, tm-list, tm-doctor, tm-fork, tm-rewind, tm-undo, and tm-restore handlers', () => {
-    expect(Object.keys(handlers)).toEqual(expect.arrayContaining(['tm-tree', 'tm-list', 'tm-doctor', 'tm-fork', 'tm-rewind', 'tm-undo', 'tm-restore', 'tm-agent-writes', 'tm-unattributed', 'tm-quarantine-migrate', 'tm-external-record', 'tm-external-compensate', 'tm-external-list', 'tm-reflection']));
+    expect(Object.keys(handlers)).toEqual(expect.arrayContaining(['tm-tree', 'tm-list', 'tm-doctor', 'tm-fork', 'tm-rewind', 'tm-undo', 'tm-restore', 'tm-agent-writes', 'tm-unattributed', 'tm-quarantine-migrate', 'tm-shadow-migrate', 'tm-external-record', 'tm-external-compensate', 'tm-external-list', 'tm-reflection']));
   });
 
   it('diagnoses dual-track readiness and actionable warnings', async () => {

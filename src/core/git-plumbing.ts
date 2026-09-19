@@ -5,6 +5,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import zlib from 'node:zlib';
 import type { FileChange, DiffResult } from '../types.js';
+import { EncryptedShadowStore, ShadowStoreKeyError } from './encrypted-shadow-store.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -29,6 +30,10 @@ export interface GitPlumbingOptions {
   quarantineDir?: string;
   /** Optional object directory for plugin-created objects. */
   shadowObjectDir?: string;
+  /** Optional key for an encrypted durable shadow archive. */
+  shadowEncryptionKey?: string;
+  /** Optional previous key for one-time shadow archive rotation. */
+  shadowEncryptionPreviousKey?: string;
   /** Hard limit for ignored-file quarantine bytes; 0 disables the guard. */
   maxQuarantineBytes?: number;
   /** Optional operator-provided key for encrypting ignored-file quarantine backups. */
@@ -173,6 +178,7 @@ export class GitPlumbingEngine {
   private repoRootCached: string | null = null;
   private gitDirCached: string | null = null;
   private readonly shadowObjectDir?: string;
+  private readonly encryptedShadowStore?: EncryptedShadowStore;
   private readonly maxQuarantineBytes: number;
   private readonly maxSnapshotFileBytes: number;
   private readonly maxSnapshotBytes: number;
@@ -188,6 +194,14 @@ export class GitPlumbingEngine {
     this.preservePaths = (options.preservePaths ?? []).map(item => path.resolve(this.workDir, item));
     this.quarantineDir = options.quarantineDir ? path.resolve(options.quarantineDir) : undefined;
     this.shadowObjectDir = options.shadowObjectDir ? path.resolve(options.shadowObjectDir) : undefined;
+    if (this.shadowObjectDir && options.shadowEncryptionKey) {
+      this.encryptedShadowStore = new EncryptedShadowStore(
+        this.shadowObjectDir,
+        path.join(path.dirname(path.dirname(this.shadowObjectDir)), 'git-shadow-encrypted'),
+        options.shadowEncryptionKey,
+        options.shadowEncryptionPreviousKey,
+      );
+    }
     this.maxQuarantineBytes = Math.max(0, Math.floor(options.maxQuarantineBytes ?? 0));
     this.maxSnapshotFileBytes = Math.max(0, Math.floor(options.maxSnapshotFileBytes ?? 0));
     this.maxSnapshotBytes = Math.max(0, Math.floor(options.maxSnapshotBytes ?? 0));
@@ -199,6 +213,15 @@ export class GitPlumbingEngine {
 
   get usesShadowStore(): boolean {
     return Boolean(this.shadowObjectDir);
+  }
+
+  get usesEncryptedShadowStore(): boolean {
+    return Boolean(this.encryptedShadowStore);
+  }
+
+  async migrateShadowStore(): Promise<{ migrated: boolean; entries: number; bytes: number }> {
+    if (!this.encryptedShadowStore) throw new ShadowStoreKeyError('Encrypted shadow migration requires shadowStore and a configured key.');
+    return this.encryptedShadowStore.migratePlaintext();
   }
 
   async isGitRepo(): Promise<boolean> {
@@ -234,19 +257,20 @@ export class GitPlumbingEngine {
     extraEnv: Record<string, string> = {},
     cwd = this.workDir,
   ): Promise<{ stdout: string; stderr: string }> {
-    await this.ensureShadowStore();
-    const env = this.gitEnv(extraEnv);
-    try {
-      return await execFileAsync('git', args, {
-        cwd,
-        env,
-        maxBuffer: 32 * 1024 * 1024,
-        encoding: 'utf8',
-      });
-    } catch (err: any) {
-      const errorMsg = err.stderr || err.stdout || err.message;
-      throw new Error(`Git plumbing command failed: git ${args.join(' ')}\nReason: ${errorMsg}`);
-    }
+    return this.withShadowRuntime(async () => {
+      const env = this.gitEnv(extraEnv);
+      try {
+        return await execFileAsync('git', args, {
+          cwd,
+          env,
+          maxBuffer: 32 * 1024 * 1024,
+          encoding: 'utf8',
+        });
+      } catch (err: any) {
+        const errorMsg = err.stderr || err.stdout || err.message;
+        throw new Error(`Git plumbing command failed: git ${args.join(' ')}\nReason: ${errorMsg}`);
+      }
+    });
   }
 
   async createSnapshot(params: {
@@ -687,8 +711,7 @@ export class GitPlumbingEngine {
   }
 
   private async runGitBuffer(args: string[], extraEnv: Record<string, string> = {}, cwd = this.workDir): Promise<Buffer> {
-    await this.ensureShadowStore();
-    return new Promise((resolve, reject) => {
+    return this.withShadowRuntime(() => new Promise((resolve, reject) => {
       const child = spawn('git', args, { cwd, env: this.gitEnv(extraEnv), windowsHide: true });
       const chunks: Buffer[] = [];
       const errors: Buffer[] = [];
@@ -699,24 +722,26 @@ export class GitPlumbingEngine {
         if (code === 0) return resolve(Buffer.concat(chunks));
         reject(new Error(`Git plumbing command failed: git ${args.join(' ')}\nReason: ${Buffer.concat(errors).toString('utf8')}`));
       });
-    });
+    }));
   }
 
   private async readShadowBlob(oid: string, cwd: string): Promise<Buffer> {
-    if (this.shadowObjectDir) {
-      const loose = path.join(this.shadowObjectDir, oid.slice(0, 2), oid.slice(2));
-      const compressed = await fs.readFile(loose).catch(() => undefined);
-      if (compressed) {
-        try {
-          const inflated = zlib.inflateSync(compressed);
-          const separator = inflated.indexOf(0);
-          if (separator >= 0) return inflated.subarray(separator + 1);
-        } catch {
-          // Fall back to Git for packed or unusual object formats.
+    return this.withShadowRuntime(async () => {
+      if (this.shadowObjectDir) {
+        const loose = path.join(this.shadowObjectDir, oid.slice(0, 2), oid.slice(2));
+        const compressed = await fs.readFile(loose).catch(() => undefined);
+        if (compressed) {
+          try {
+            const inflated = zlib.inflateSync(compressed);
+            const separator = inflated.indexOf(0);
+            if (separator >= 0) return inflated.subarray(separator + 1);
+          } catch {
+            // Fall back to Git for packed or unusual object formats.
+          }
         }
       }
-    }
-    return this.runGitBuffer(['cat-file', 'blob', oid], {}, cwd);
+      return this.runGitBuffer(['cat-file', 'blob', oid], {}, cwd);
+    });
   }
 
   private gitEnv(extraEnv: Record<string, string>): Record<string, string> {
@@ -1125,7 +1150,9 @@ export class GitPlumbingEngine {
   /** Remove unreachable loose objects from the opt-in shadow store only. */
   async pruneShadowObjects(): Promise<ShadowGcResult> {
     if (!this.shadowObjectDir) return { removedObjects: 0, reclaimedBytes: 0, packedObjectsSkipped: false };
-    const { stdout: refs } = await this.runGit(['for-each-ref', '--format=%(refname)', this.refPrefix]).catch(() => ({ stdout: '', stderr: '' }));
+    const shadowObjectDir = this.shadowObjectDir;
+    return this.withShadowRuntime(async () => {
+      const { stdout: refs } = await this.runGit(['for-each-ref', '--format=%(refname)', this.refPrefix]).catch(() => ({ stdout: '', stderr: '' }));
     const refNames = refs.split('\n').map(item => item.trim()).filter(Boolean);
     const reachable = new Set<string>();
     if (refNames.length) {
@@ -1137,15 +1164,15 @@ export class GitPlumbingEngine {
     }
     let removedObjects = 0;
     let reclaimedBytes = 0;
-    const entries = await fs.readdir(this.shadowObjectDir, { withFileTypes: true }).catch(() => [] as import('node:fs').Dirent[]);
+    const entries = await fs.readdir(shadowObjectDir, { withFileTypes: true }).catch(() => [] as import('node:fs').Dirent[]);
     let packedObjectsSkipped = false;
     for (const entry of entries) {
       if (entry.name === 'pack' && entry.isDirectory()) {
-        packedObjectsSkipped = (await fs.readdir(path.join(this.shadowObjectDir, entry.name)).catch(() => [])).length > 0;
+        packedObjectsSkipped = (await fs.readdir(path.join(shadowObjectDir, entry.name)).catch(() => [])).length > 0;
         continue;
       }
       if (!entry.isDirectory() || !/^[0-9a-f]{2}$/.test(entry.name)) continue;
-      const directory = path.join(this.shadowObjectDir, entry.name);
+      const directory = path.join(shadowObjectDir, entry.name);
       for (const object of await fs.readdir(directory, { withFileTypes: true }).catch(() => [] as import('node:fs').Dirent[])) {
         if (!object.isFile() || !/^[0-9a-f]{38}$/.test(object.name)) continue;
         const oid = `${entry.name}${object.name}`;
@@ -1157,21 +1184,24 @@ export class GitPlumbingEngine {
       }
       await fs.rmdir(directory).catch(() => undefined);
     }
-    return { removedObjects, reclaimedBytes, packedObjectsSkipped };
+      return { removedObjects, reclaimedBytes, packedObjectsSkipped };
+    });
   }
 
   /** Rebuild only the opt-in shadow pack from the plugin's private refs. */
   async repackShadowObjects(): Promise<ShadowRepackResult> {
     if (!this.shadowObjectDir) return { repacked: false, removedPackFiles: 0, reclaimedBytes: 0, reachableRefs: 0 };
-    const { stdout: refsOutput } = await this.runGit(['for-each-ref', '--format=%(objectname)', this.refPrefix]).catch(() => ({ stdout: '', stderr: '' }));
+    const shadowObjectDir = this.shadowObjectDir;
+    return this.withShadowRuntime(async () => {
+      const { stdout: refsOutput } = await this.runGit(['for-each-ref', '--format=%(objectname)', this.refPrefix]).catch(() => ({ stdout: '', stderr: '' }));
     const refs = refsOutput.split('\n').map(item => item.trim()).filter(item => /^[0-9a-f]{40}$/.test(item));
-    const packDir = path.join(this.shadowObjectDir, 'pack');
+    const packDir = path.join(shadowObjectDir, 'pack');
     const existing = await fs.readdir(packDir, { withFileTypes: true }).catch(() => [] as import('node:fs').Dirent[]);
     const existingPackFiles = existing.filter(entry => entry.isFile() && /^pack-[0-9a-f]{40}\.(pack|idx|bitmap|rev|mtimes)$/.test(entry.name));
     const lockedPack = existing.some(entry => entry.isFile() && /^pack-[0-9a-f]{40}\.keep$/.test(entry.name));
     if (lockedPack) return { repacked: false, removedPackFiles: 0, reclaimedBytes: 0, reachableRefs: refs.length, skippedReason: 'shadow pack contains a .keep file' };
     const existingBytes = await sumFileSizes(existingPackFiles.map(entry => path.join(packDir, entry.name)));
-    const tempDir = path.join(this.shadowObjectDir, `.repack-${randomUUID()}`);
+    const tempDir = path.join(shadowObjectDir, `.repack-${randomUUID()}`);
     await fs.mkdir(tempDir, { recursive: true });
     let generatedFiles: string[] = [];
     try {
@@ -1200,7 +1230,7 @@ export class GitPlumbingEngine {
         await fs.rm(file, { force: true });
         removedPackFiles += 1;
       }
-      await fs.rm(path.join(this.shadowObjectDir, 'info', 'packs'), { force: true }).catch(() => undefined);
+      await fs.rm(path.join(shadowObjectDir, 'info', 'packs'), { force: true }).catch(() => undefined);
       return {
         repacked: refs.length > 0 && generatedFiles.length > 0,
         removedPackFiles,
@@ -1209,7 +1239,8 @@ export class GitPlumbingEngine {
       };
     } finally {
       await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
-    }
+      }
+    });
   }
 
   private async ensureShadowStore(): Promise<void> {
@@ -1218,11 +1249,16 @@ export class GitPlumbingEngine {
     await this.shadowReady;
   }
 
-  private async runGitInput(args: string[], input: string, cwd = this.workDir): Promise<{ stdout: string; stderr: string }> {
+  private async withShadowRuntime<T>(operation: () => Promise<T>): Promise<T> {
     await this.ensureShadowStore();
-    const env = this.gitEnv({});
-    return await new Promise((resolve, reject) => {
-      const child = spawn('git', args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+    return this.encryptedShadowStore ? this.encryptedShadowStore.withRuntime(operation) : operation();
+  }
+
+  private async runGitInput(args: string[], input: string, cwd = this.workDir): Promise<{ stdout: string; stderr: string }> {
+    return this.withShadowRuntime(async () => {
+      const env = this.gitEnv({});
+      return await new Promise((resolve, reject) => {
+        const child = spawn('git', args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
       const stdout: Buffer[] = [];
       const stderr: Buffer[] = [];
       child.stdout.on('data', chunk => stdout.push(Buffer.from(chunk)));
@@ -1235,6 +1271,7 @@ export class GitPlumbingEngine {
         else reject(new Error(`Git plumbing command failed: git ${args.join(' ')}\nReason: ${err || out || `exit ${code}`}`));
       });
       child.stdin.end(input, 'utf8');
+      });
     });
   }
 }

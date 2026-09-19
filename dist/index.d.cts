@@ -1,7 +1,7 @@
 import { Context } from '@deepseek-ai/cordis';
 import Schema from '@deepseek-ai/schemastery';
-import { D as DAGTree, C as CheckpointNode, T as TimeMachineConfig, S as SessionState, A as AgentWriteRecord, F as FileChange, E as ExternalEffectRecord, a as ExternalEffectAdapter, b as ExternalEffectCompensationResult, R as RestoreOptions, c as RestoreResult, d as SelectiveRestoreResult, e as ReflectionSummary, f as DiffResult, g as RestorePreview, h as StorageStatus, i as SessionSummary, W as WorkspaceIsolation, P as PruneResult } from './client-BGRao_pJ.cjs';
-export { j as CompanionTimelineEntry, k as ExternalCompensationRequest, l as ExternalEffectCompensationContext, m as ExternalEffectRequest, n as ForkRequest, o as PreviewBoundAction, p as PruneRequest, q as RestoreFilesRequest, r as RestoreWorkspaceRequest, s as RewindRequest, t as SessionMessage, u as TimeMachineClient, v as TimeMachineClientError, w as TimeMachineClientOptions, U as UndoRequest, x as buildCompanionTimeline } from './client-BGRao_pJ.cjs';
+import { D as DAGTree, C as CheckpointNode, T as TimeMachineConfig, S as SessionState, A as AgentWriteRecord, F as FileChange, E as ExternalEffectRecord, a as ExternalEffectAdapter, b as ExternalEffectCompensationResult, R as RestoreOptions, c as RestoreResult, d as SelectiveRestoreResult, e as ReflectionSummary, f as DiffResult, g as RestorePreview, h as StorageStatus, i as SessionSummary, W as WorkspaceIsolation, P as PruneResult } from './client-D6yORDhs.cjs';
+export { j as CompanionTimelineEntry, k as ExternalCompensationRequest, l as ExternalEffectCompensationContext, m as ExternalEffectRequest, n as ForkRequest, o as PreviewBoundAction, p as PruneRequest, q as RestoreFilesRequest, r as RestoreWorkspaceRequest, s as RewindRequest, t as SessionMessage, u as TimeMachineClient, v as TimeMachineClientError, w as TimeMachineClientOptions, U as UndoRequest, x as buildCompanionTimeline } from './client-D6yORDhs.cjs';
 
 /** Current on-disk DAG schema. Bump only with an explicit migration path. */
 declare const DAG_FORMAT_VERSION: 1;
@@ -245,6 +245,12 @@ declare class TimeMachineService {
      */
     renderTree(sessionId: string): Promise<string>;
     getStorageStatus(sessionId?: string): Promise<StorageStatus>;
+    /** Explicitly migrate a plaintext shadow object directory into the encrypted archive. */
+    migrateShadowStore(): Promise<{
+        migrated: boolean;
+        entries: number;
+        bytes: number;
+    }>;
     /** Enumerate persisted sessions without creating a new empty DAG. */
     listSessions(): Promise<SessionSummary[]>;
     /** Report runtime capabilities so Web/CLI integrations can fail early. */
@@ -257,7 +263,8 @@ declare class TimeMachineService {
         fallbackTextDiff: boolean;
         selectiveRestore: boolean;
         shadowStore: boolean;
-        shadowStoreEncryption: false;
+        shadowStoreEncryption: boolean;
+        shadowStoreKeyRotation: boolean;
         dagStateEncryption: boolean;
         dagStateKeyRotation: boolean;
         quarantineEncryption: boolean;
@@ -332,6 +339,10 @@ interface GitPlumbingOptions {
     quarantineDir?: string;
     /** Optional object directory for plugin-created objects. */
     shadowObjectDir?: string;
+    /** Optional key for an encrypted durable shadow archive. */
+    shadowEncryptionKey?: string;
+    /** Optional previous key for one-time shadow archive rotation. */
+    shadowEncryptionPreviousKey?: string;
     /** Hard limit for ignored-file quarantine bytes; 0 disables the guard. */
     maxQuarantineBytes?: number;
     /** Optional operator-provided key for encrypting ignored-file quarantine backups. */
@@ -442,6 +453,7 @@ declare class GitPlumbingEngine {
     private repoRootCached;
     private gitDirCached;
     private readonly shadowObjectDir?;
+    private readonly encryptedShadowStore?;
     private readonly maxQuarantineBytes;
     private readonly maxSnapshotFileBytes;
     private readonly maxSnapshotBytes;
@@ -452,6 +464,12 @@ declare class GitPlumbingEngine {
     private workspaceTreeCache?;
     constructor(options: GitPlumbingOptions);
     get usesShadowStore(): boolean;
+    get usesEncryptedShadowStore(): boolean;
+    migrateShadowStore(): Promise<{
+        migrated: boolean;
+        entries: number;
+        bytes: number;
+    }>;
     isGitRepo(): Promise<boolean>;
     getRepoRoot(): Promise<string>;
     getGitDir(): Promise<string>;
@@ -533,6 +551,7 @@ declare class GitPlumbingEngine {
     /** Rebuild only the opt-in shadow pack from the plugin's private refs. */
     repackShadowObjects(): Promise<ShadowRepackResult>;
     private ensureShadowStore;
+    private withShadowRuntime;
     private runGitInput;
 }
 

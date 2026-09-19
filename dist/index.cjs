@@ -40,6 +40,221 @@ var init_cjs_shims = __esm({
   }
 });
 
+// src/core/encrypted-shadow-store.ts
+function safeRelative(value) {
+  const normalized = value.replace(/\\/g, "/");
+  if (!normalized || normalized === "." || normalized.startsWith("/") || normalized.split("/").some((part) => !part || part === "..")) {
+    throw new ShadowArchiveCorruptError(`Unsafe encrypted shadow path '${value}'.`);
+  }
+  return normalized;
+}
+async function exists(file) {
+  return import_promises.default.access(file).then(() => true, () => false);
+}
+async function listFiles(root) {
+  const output = [];
+  async function visit(directory) {
+    for (const entry of await import_promises.default.readdir(directory, { withFileTypes: true }).catch(() => [])) {
+      const absolute = import_node_path.default.join(directory, entry.name);
+      if (entry.isDirectory()) await visit(absolute);
+      else if (entry.isFile()) output.push(absolute);
+      else if (entry.isSymbolicLink()) throw new ShadowArchiveCorruptError(`Shadow object runtime contains unsupported symlink '${absolute}'.`);
+    }
+  }
+  await visit(root);
+  return output.sort();
+}
+var import_node_crypto, import_promises, import_node_path, ShadowStoreKeyError, ShadowArchiveCorruptError, EncryptedShadowStore;
+var init_encrypted_shadow_store = __esm({
+  "src/core/encrypted-shadow-store.ts"() {
+    "use strict";
+    init_cjs_shims();
+    import_node_crypto = require("crypto");
+    import_promises = __toESM(require("fs/promises"), 1);
+    import_node_path = __toESM(require("path"), 1);
+    ShadowStoreKeyError = class extends Error {
+      code = "SHADOW_KEY_INVALID";
+      constructor(message) {
+        super(message);
+        this.name = "ShadowStoreKeyError";
+      }
+    };
+    ShadowArchiveCorruptError = class extends Error {
+      code = "SHADOW_ARCHIVE_CORRUPT";
+      constructor(message) {
+        super(message);
+        this.name = "ShadowArchiveCorruptError";
+      }
+    };
+    EncryptedShadowStore = class {
+      constructor(runtimeDir, archiveDir, key, previousKey) {
+        this.runtimeDir = runtimeDir;
+        this.archiveDir = archiveDir;
+        this.currentKey = (0, import_node_crypto.createHash)("sha256").update(key).digest();
+        this.previousKey = previousKey ? (0, import_node_crypto.createHash)("sha256").update(previousKey).digest() : void 0;
+      }
+      runtimeDir;
+      archiveDir;
+      currentKey;
+      previousKey;
+      queue = Promise.resolve();
+      runtimeDepth = 0;
+      usedPreviousKey = false;
+      async withRuntime(operation) {
+        if (this.runtimeDepth > 0) {
+          this.runtimeDepth += 1;
+          try {
+            return await operation();
+          } finally {
+            this.runtimeDepth -= 1;
+          }
+        }
+        let release;
+        const prior = this.queue;
+        this.queue = new Promise((resolve) => {
+          release = resolve;
+        });
+        await prior;
+        this.runtimeDepth = 1;
+        let materialized = false;
+        try {
+          await this.materialize();
+          materialized = true;
+          return await operation();
+        } finally {
+          try {
+            if (materialized) await this.persist();
+          } finally {
+            this.runtimeDepth = 0;
+            await import_promises.default.rm(this.runtimeDir, { recursive: true, force: true });
+            release();
+          }
+        }
+      }
+      /** Explicitly migrate an existing plaintext runtime directory. */
+      async migratePlaintext() {
+        const files = await listFiles(this.runtimeDir);
+        if (files.length === 0) return { migrated: false, entries: 0, bytes: 0 };
+        if (await exists(import_node_path.default.join(this.archiveDir, "manifest.v1.json"))) {
+          throw new ShadowStoreKeyError("Encrypted shadow archive already exists; refusing to mix plaintext objects.");
+        }
+        await import_promises.default.mkdir(this.archiveDir, { recursive: true });
+        await this.persist(files);
+        const manifest = await this.readManifest();
+        await import_promises.default.rm(this.runtimeDir, { recursive: true, force: true });
+        return { migrated: true, entries: manifest.entries.length, bytes: manifest.entries.reduce((sum, item) => sum + item.bytes, 0) };
+      }
+      async materialize() {
+        const manifest = await this.readManifestOptional();
+        const plaintext = await listFiles(this.runtimeDir);
+        if (!manifest) {
+          if (plaintext.length > 0) {
+            throw new ShadowStoreKeyError("Plaintext shadow objects exist; run explicit shadow migration before enabling encryption.");
+          }
+          await import_promises.default.mkdir(this.runtimeDir, { recursive: true });
+          return;
+        }
+        await import_promises.default.rm(this.runtimeDir, { recursive: true, force: true });
+        await import_promises.default.mkdir(this.runtimeDir, { recursive: true });
+        for (const entry of manifest.entries) {
+          const relative = safeRelative(entry.path);
+          const encrypted = await import_promises.default.readFile(import_node_path.default.join(this.archiveDir, entry.payload)).catch(() => {
+            throw new ShadowArchiveCorruptError(`Encrypted shadow payload '${entry.path}' is missing.`);
+          });
+          if (encrypted.length < 16) throw new ShadowArchiveCorruptError(`Encrypted shadow payload '${entry.path}' is truncated.`);
+          const plaintextBytes = this.decrypt(encrypted, entry.nonce, entry.path);
+          const digest = (0, import_node_crypto.createHash)("sha256").update(plaintextBytes).digest("hex");
+          if (digest !== entry.sha256 || plaintextBytes.length !== entry.bytes) {
+            throw new ShadowArchiveCorruptError(`Encrypted shadow payload '${entry.path}' failed integrity validation.`);
+          }
+          const target = import_node_path.default.join(this.runtimeDir, ...relative.split("/"));
+          await import_promises.default.mkdir(import_node_path.default.dirname(target), { recursive: true });
+          await import_promises.default.writeFile(target, plaintextBytes);
+        }
+      }
+      async persist(existingFiles) {
+        const files = existingFiles ?? await listFiles(this.runtimeDir);
+        const staging = import_node_path.default.join(this.archiveDir, `.staging-${(0, import_node_crypto.randomUUID)()}`);
+        const payloadDir = import_node_path.default.join(staging, "payload");
+        await import_promises.default.mkdir(payloadDir, { recursive: true });
+        const entries = [];
+        try {
+          for (const file of files) {
+            const relative = safeRelative(import_node_path.default.relative(this.runtimeDir, file).replace(/\\/g, "/"));
+            const plaintext = await import_promises.default.readFile(file);
+            const nonce = (0, import_node_crypto.randomBytes)(12);
+            const cipher = (0, import_node_crypto.createCipheriv)("aes-256-gcm", this.currentKey, nonce);
+            cipher.setAAD(Buffer.from(`dsh-tm-shadow:v1:${relative}`, "utf8"));
+            const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final(), cipher.getAuthTag()]);
+            const payload = `payload/${(0, import_node_crypto.randomUUID)()}.bin`;
+            await import_promises.default.mkdir(import_node_path.default.join(payloadDir, "payload"), { recursive: true });
+            await import_promises.default.writeFile(import_node_path.default.join(staging, payload), ciphertext);
+            entries.push({
+              path: relative,
+              payload,
+              nonce: nonce.toString("base64url"),
+              sha256: (0, import_node_crypto.createHash)("sha256").update(plaintext).digest("hex"),
+              bytes: plaintext.length
+            });
+          }
+          const manifest = { version: 1, entries };
+          await import_promises.default.mkdir(this.archiveDir, { recursive: true });
+          for (const entry of entries) {
+            const target = import_node_path.default.join(this.archiveDir, entry.payload);
+            await import_promises.default.mkdir(import_node_path.default.dirname(target), { recursive: true });
+            await import_promises.default.rename(import_node_path.default.join(staging, entry.payload), target);
+          }
+          const temporaryManifest = import_node_path.default.join(this.archiveDir, `.manifest-${(0, import_node_crypto.randomUUID)()}.tmp`);
+          await import_promises.default.writeFile(temporaryManifest, `${JSON.stringify(manifest, null, 2)}
+`, "utf8");
+          await import_promises.default.rename(temporaryManifest, import_node_path.default.join(this.archiveDir, "manifest.v1.json"));
+        } finally {
+          await import_promises.default.rm(staging, { recursive: true, force: true }).catch(() => void 0);
+        }
+        this.usedPreviousKey = false;
+      }
+      async readManifest() {
+        const manifest = await this.readManifestOptional();
+        if (!manifest) throw new ShadowArchiveCorruptError("Encrypted shadow archive manifest is missing.");
+        return manifest;
+      }
+      async readManifestOptional() {
+        const raw = await import_promises.default.readFile(import_node_path.default.join(this.archiveDir, "manifest.v1.json"), "utf8").catch((error) => {
+          if (error?.code === "ENOENT") return void 0;
+          throw new ShadowArchiveCorruptError(`Encrypted shadow archive cannot be read: ${error?.message ?? "unknown error"}`);
+        });
+        if (!raw) return void 0;
+        try {
+          const value = JSON.parse(raw);
+          if (value.version !== 1 || !Array.isArray(value.entries)) throw new Error("unsupported manifest");
+          for (const entry of value.entries) {
+            safeRelative(entry.path);
+            if (!entry.payload || !entry.nonce || !/^[0-9a-f]{64}$/.test(entry.sha256) || !Number.isInteger(entry.bytes) || entry.bytes < 0) throw new Error("invalid entry");
+          }
+          return value;
+        } catch (error) {
+          throw new ShadowArchiveCorruptError(`Encrypted shadow archive manifest is invalid: ${error?.message ?? "unknown error"}`);
+        }
+      }
+      decrypt(encrypted, nonceText, relative) {
+        const keys = this.previousKey ? [this.currentKey, this.previousKey] : [this.currentKey];
+        for (let index = 0; index < keys.length; index += 1) {
+          try {
+            const decipher = (0, import_node_crypto.createDecipheriv)("aes-256-gcm", keys[index], Buffer.from(nonceText, "base64url"));
+            decipher.setAAD(Buffer.from(`dsh-tm-shadow:v1:${relative}`, "utf8"));
+            decipher.setAuthTag(encrypted.subarray(encrypted.length - 16));
+            const result = Buffer.concat([decipher.update(encrypted.subarray(0, encrypted.length - 16)), decipher.final()]);
+            if (index === 1) this.usedPreviousKey = true;
+            return result;
+          } catch {
+          }
+        }
+        throw new ShadowStoreKeyError(`Encrypted shadow payload '${relative}' failed authentication.`);
+      }
+    };
+  }
+});
+
 // src/core/git-plumbing.ts
 var git_plumbing_exports = {};
 __export(git_plumbing_exports, {
@@ -54,17 +269,17 @@ __export(git_plumbing_exports, {
 });
 async function sumFileSizes(files) {
   let total = 0;
-  for (const file of files) total += (await import_promises.default.stat(file).catch(() => ({ size: 0 }))).size;
+  for (const file of files) total += (await import_promises2.default.stat(file).catch(() => ({ size: 0 }))).size;
   return total;
 }
 async function directoryBytes(root) {
-  const rootStat = await import_promises.default.stat(root).catch(() => void 0);
+  const rootStat = await import_promises2.default.stat(root).catch(() => void 0);
   if (rootStat?.isFile()) return rootStat.size;
   let total = 0;
-  for (const entry of await import_promises.default.readdir(root, { withFileTypes: true }).catch(() => [])) {
-    const absolute = import_node_path.default.join(root, entry.name);
+  for (const entry of await import_promises2.default.readdir(root, { withFileTypes: true }).catch(() => [])) {
+    const absolute = import_node_path2.default.join(root, entry.name);
     if (entry.isDirectory()) total += await directoryBytes(absolute);
-    else total += (await import_promises.default.stat(absolute).catch(() => ({ size: 0 }))).size;
+    else total += (await import_promises2.default.stat(absolute).catch(() => ({ size: 0 }))).size;
   }
   return total;
 }
@@ -80,17 +295,18 @@ function symmetricDifference(left, right) {
 function longestFirst(left, right) {
   return right.split("/").length - left.split("/").length || right.localeCompare(left);
 }
-var import_node_child_process, import_node_crypto, import_node_util, import_node_path, import_promises, import_node_zlib, execFileAsync, WorkspaceDriftError, UnsupportedWorkspaceStateError, WorkspaceRestoreConflictError, WorkspaceMergeConflictError, QuarantineQuotaError, QuarantineKeyError, SnapshotSizeError, GitPlumbingEngine;
+var import_node_child_process, import_node_crypto2, import_node_util, import_node_path2, import_promises2, import_node_zlib, execFileAsync, WorkspaceDriftError, UnsupportedWorkspaceStateError, WorkspaceRestoreConflictError, WorkspaceMergeConflictError, QuarantineQuotaError, QuarantineKeyError, SnapshotSizeError, GitPlumbingEngine;
 var init_git_plumbing = __esm({
   "src/core/git-plumbing.ts"() {
     "use strict";
     init_cjs_shims();
     import_node_child_process = require("child_process");
-    import_node_crypto = require("crypto");
+    import_node_crypto2 = require("crypto");
     import_node_util = require("util");
-    import_node_path = __toESM(require("path"), 1);
-    import_promises = __toESM(require("fs/promises"), 1);
+    import_node_path2 = __toESM(require("path"), 1);
+    import_promises2 = __toESM(require("fs/promises"), 1);
     import_node_zlib = __toESM(require("zlib"), 1);
+    init_encrypted_shadow_store();
     execFileAsync = (0, import_node_util.promisify)(import_node_child_process.execFile);
     WorkspaceDriftError = class extends Error {
       constructor(details) {
@@ -170,6 +386,7 @@ var init_git_plumbing = __esm({
       repoRootCached = null;
       gitDirCached = null;
       shadowObjectDir;
+      encryptedShadowStore;
       maxQuarantineBytes;
       maxSnapshotFileBytes;
       maxSnapshotBytes;
@@ -179,19 +396,34 @@ var init_git_plumbing = __esm({
       /** Last complete managed tree and the Git status signature that produced it. */
       workspaceTreeCache;
       constructor(options) {
-        this.workDir = import_node_path.default.resolve(options.workDir);
+        this.workDir = import_node_path2.default.resolve(options.workDir);
         this.refPrefix = options.refPrefix || "refs/dsh-tm";
-        this.preservePaths = (options.preservePaths ?? []).map((item) => import_node_path.default.resolve(this.workDir, item));
-        this.quarantineDir = options.quarantineDir ? import_node_path.default.resolve(options.quarantineDir) : void 0;
-        this.shadowObjectDir = options.shadowObjectDir ? import_node_path.default.resolve(options.shadowObjectDir) : void 0;
+        this.preservePaths = (options.preservePaths ?? []).map((item) => import_node_path2.default.resolve(this.workDir, item));
+        this.quarantineDir = options.quarantineDir ? import_node_path2.default.resolve(options.quarantineDir) : void 0;
+        this.shadowObjectDir = options.shadowObjectDir ? import_node_path2.default.resolve(options.shadowObjectDir) : void 0;
+        if (this.shadowObjectDir && options.shadowEncryptionKey) {
+          this.encryptedShadowStore = new EncryptedShadowStore(
+            this.shadowObjectDir,
+            import_node_path2.default.join(import_node_path2.default.dirname(import_node_path2.default.dirname(this.shadowObjectDir)), "git-shadow-encrypted"),
+            options.shadowEncryptionKey,
+            options.shadowEncryptionPreviousKey
+          );
+        }
         this.maxQuarantineBytes = Math.max(0, Math.floor(options.maxQuarantineBytes ?? 0));
         this.maxSnapshotFileBytes = Math.max(0, Math.floor(options.maxSnapshotFileBytes ?? 0));
         this.maxSnapshotBytes = Math.max(0, Math.floor(options.maxSnapshotBytes ?? 0));
         this.allowPartialSnapshots = options.allowPartialSnapshots === true;
-        this.quarantineKey = options.quarantineEncryptionKey ? (0, import_node_crypto.createHash)("sha256").update(options.quarantineEncryptionKey).digest() : void 0;
+        this.quarantineKey = options.quarantineEncryptionKey ? (0, import_node_crypto2.createHash)("sha256").update(options.quarantineEncryptionKey).digest() : void 0;
       }
       get usesShadowStore() {
         return Boolean(this.shadowObjectDir);
+      }
+      get usesEncryptedShadowStore() {
+        return Boolean(this.encryptedShadowStore);
+      }
+      async migrateShadowStore() {
+        if (!this.encryptedShadowStore) throw new ShadowStoreKeyError("Encrypted shadow migration requires shadowStore and a configured key.");
+        return this.encryptedShadowStore.migratePlaintext();
       }
       async isGitRepo() {
         if (this.isRepoCached !== null) return this.isRepoCached;
@@ -206,31 +438,32 @@ var init_git_plumbing = __esm({
       async getRepoRoot() {
         if (this.repoRootCached) return this.repoRootCached;
         const { stdout } = await this.runGit(["rev-parse", "--show-toplevel"]);
-        this.repoRootCached = await import_promises.default.realpath(import_node_path.default.resolve(stdout.trim())).catch(() => import_node_path.default.resolve(stdout.trim()));
-        this.preservePaths = await Promise.all(this.preservePaths.map(async (absolute) => await import_promises.default.realpath(absolute).catch(() => absolute)));
+        this.repoRootCached = await import_promises2.default.realpath(import_node_path2.default.resolve(stdout.trim())).catch(() => import_node_path2.default.resolve(stdout.trim()));
+        this.preservePaths = await Promise.all(this.preservePaths.map(async (absolute) => await import_promises2.default.realpath(absolute).catch(() => absolute)));
         return this.repoRootCached;
       }
       async getGitDir() {
         if (this.gitDirCached) return this.gitDirCached;
         const { stdout } = await this.runGit(["rev-parse", "--absolute-git-dir"]);
-        this.gitDirCached = import_node_path.default.resolve(stdout.trim());
+        this.gitDirCached = import_node_path2.default.resolve(stdout.trim());
         return this.gitDirCached;
       }
       async runGit(args, extraEnv = {}, cwd = this.workDir) {
-        await this.ensureShadowStore();
-        const env = this.gitEnv(extraEnv);
-        try {
-          return await execFileAsync("git", args, {
-            cwd,
-            env,
-            maxBuffer: 32 * 1024 * 1024,
-            encoding: "utf8"
-          });
-        } catch (err) {
-          const errorMsg = err.stderr || err.stdout || err.message;
-          throw new Error(`Git plumbing command failed: git ${args.join(" ")}
+        return this.withShadowRuntime(async () => {
+          const env = this.gitEnv(extraEnv);
+          try {
+            return await execFileAsync("git", args, {
+              cwd,
+              env,
+              maxBuffer: 32 * 1024 * 1024,
+              encoding: "utf8"
+            });
+          } catch (err) {
+            const errorMsg = err.stderr || err.stdout || err.message;
+            throw new Error(`Git plumbing command failed: git ${args.join(" ")}
 Reason: ${errorMsg}`);
-        }
+          }
+        });
       }
       async createSnapshot(params) {
         if (!await this.isGitRepo()) {
@@ -274,7 +507,7 @@ Reason: ${errorMsg}`);
             omittedPaths: treeResult.omittedPaths
           };
         } finally {
-          if (indexFile) await import_promises.default.rm(indexFile, { force: true }).catch(() => void 0);
+          if (indexFile) await import_promises2.default.rm(indexFile, { force: true }).catch(() => void 0);
         }
       }
       /** Compute the current managed tree without publishing a commit or ref. */
@@ -283,7 +516,7 @@ Reason: ${errorMsg}`);
         try {
           return { treeOid, ignoredPaths: await this.listIgnoredPaths() };
         } finally {
-          await import_promises.default.rm(indexFile, { force: true }).catch(() => void 0);
+          await import_promises2.default.rm(indexFile, { force: true }).catch(() => void 0);
         }
       }
       /** Read Git control-plane state without touching the user's index or refs. */
@@ -298,11 +531,11 @@ Reason: ${errorMsg}`);
           ["REVERT_HEAD", "revert"]
         ];
         for (const [file, operation] of operationFiles) {
-          if (await import_promises.default.access(import_node_path.default.join(gitDir, file)).then(() => true).catch(() => false)) return { headOid, branch, operation };
+          if (await import_promises2.default.access(import_node_path2.default.join(gitDir, file)).then(() => true).catch(() => false)) return { headOid, branch, operation };
         }
         const rebaseDirs = [["rebase-merge", "rebase"], ["rebase-apply", "rebase"]];
         for (const [directory, operation] of rebaseDirs) {
-          if (await import_promises.default.access(import_node_path.default.join(gitDir, directory)).then(() => true).catch(() => false)) return { headOid, branch, operation };
+          if (await import_promises2.default.access(import_node_path2.default.join(gitDir, directory)).then(() => true).catch(() => false)) return { headOid, branch, operation };
         }
         return { headOid, branch, operation: null };
       }
@@ -314,7 +547,7 @@ Reason: ${errorMsg}`);
         }
         const sparseConfig = await this.runGit(["config", "--bool", "--get", "core.sparseCheckout"]).then((result) => result.stdout.trim() === "true").catch(() => false);
         const gitDir = await this.getGitDir();
-        const sparseFile = await import_promises.default.access(import_node_path.default.join(gitDir, "info", "sparse-checkout")).then(() => true).catch(() => false);
+        const sparseFile = await import_promises2.default.access(import_node_path2.default.join(gitDir, "info", "sparse-checkout")).then(() => true).catch(() => false);
         const { stdout } = await this.runGit(["ls-files", "--stage", "-z"]).catch(() => ({ stdout: "" }));
         const submodulePaths = stdout.split("\0").filter(Boolean).map((entry) => entry.match(/^160000\s+[0-9a-f]+\s+\d+\t(.+)$/)?.[1]).filter((item) => Boolean(item));
         return { sparseCheckout: sparseConfig || sparseFile, submodulePaths, inProgressOperation: control.operation };
@@ -335,7 +568,7 @@ Reason: ${errorMsg}`);
         const current = await this.inspectWorkspace();
         const preservePaths = [...new Set((options.preservePaths ?? []).map(normalizeGitPath).filter(Boolean))];
         if (mode === "safe" && options.expectedCurrentTreeOid && current.treeOid !== options.expectedCurrentTreeOid) {
-          const details = (await this.diffNameOnly(options.expectedCurrentTreeOid, current.treeOid)).filter((item) => !preservePaths.some((path8) => item === path8 || item.startsWith(`${path8}/`)));
+          const details = (await this.diffNameOnly(options.expectedCurrentTreeOid, current.treeOid)).filter((item) => !preservePaths.some((path9) => item === path9 || item.startsWith(`${path9}/`)));
           if (details.length) throw new WorkspaceDriftError(details);
         }
         if (mode === "safe" && options.expectedCurrentIgnoredPaths) {
@@ -360,7 +593,7 @@ Reason: ${errorMsg}`);
             if (this.isPreservedRelative(relative)) continue;
             const absolute = await this.safeWorkspacePath(relative);
             if (options.ignoredBackupKey) await this.backupIgnoredPath(options.ignoredBackupKey, relative, absolute);
-            await import_promises.default.rm(absolute, { recursive: true, force: true });
+            await import_promises2.default.rm(absolute, { recursive: true, force: true });
             deletedIgnoredPaths.push(relative);
           }
         }
@@ -375,59 +608,59 @@ Reason: ${errorMsg}`);
             const currentFiles = await this.listTreeFileNames(current.treeOid);
             for (const entry of targetEntries) {
               const destination = await this.safeWorkspacePath(entry.path);
-              await import_promises.default.mkdir(import_node_path.default.dirname(destination), { recursive: true });
-              await import_promises.default.rm(destination, { recursive: true, force: true });
+              await import_promises2.default.mkdir(import_node_path2.default.dirname(destination), { recursive: true });
+              await import_promises2.default.rm(destination, { recursive: true, force: true });
               const content = await this.readShadowBlob(entry.oid, root);
               if (entry.mode === "120000") {
-                await import_promises.default.symlink(content.toString("utf8"), destination);
+                await import_promises2.default.symlink(content.toString("utf8"), destination);
               } else {
-                await import_promises.default.writeFile(destination, content);
-                await import_promises.default.chmod(destination, Number.parseInt(entry.mode, 8) & 511).catch(() => void 0);
+                await import_promises2.default.writeFile(destination, content);
+                await import_promises2.default.chmod(destination, Number.parseInt(entry.mode, 8) & 511).catch(() => void 0);
               }
             }
             for (const relative of currentFiles.filter((file) => !targetFiles.has(file)).sort(longestFirst)) {
-              await import_promises.default.rm(await this.safeWorkspacePath(relative), { recursive: true, force: true });
+              await import_promises2.default.rm(await this.safeWorkspacePath(relative), { recursive: true, force: true });
             }
           }
           if (omittedStash) await this.restoreStashedWorkspacePaths(omittedStash);
         } finally {
-          await import_promises.default.rm(indexFile, { force: true }).catch(() => void 0);
-          if (omittedStash) await import_promises.default.rm(omittedStash.root, { recursive: true, force: true }).catch(() => void 0);
+          await import_promises2.default.rm(indexFile, { force: true }).catch(() => void 0);
+          if (omittedStash) await import_promises2.default.rm(omittedStash.root, { recursive: true, force: true }).catch(() => void 0);
         }
         this.workspaceTreeCache = void 0;
         return { deletedIgnoredPaths, restoredTreeOid: restoreTree };
       }
       async stashWorkspacePaths(paths) {
-        const root = import_node_path.default.join(await this.getGitDir(), `dsh-tm-omitted-${(0, import_node_crypto.randomUUID)()}`);
+        const root = import_node_path2.default.join(await this.getGitDir(), `dsh-tm-omitted-${(0, import_node_crypto2.randomUUID)()}`);
         const entries = [];
         try {
           for (const relative of [...new Set(paths.map(normalizeGitPath).filter(Boolean))]) {
             const source = await this.safeWorkspacePath(relative);
-            const stat = await import_promises.default.lstat(source).catch(() => void 0);
+            const stat = await import_promises2.default.lstat(source).catch(() => void 0);
             if (!stat) continue;
-            const destination = import_node_path.default.join(root, ...relative.split("/"));
-            await import_promises.default.mkdir(import_node_path.default.dirname(destination), { recursive: true });
-            await import_promises.default.cp(source, destination, { recursive: true, force: true, verbatimSymlinks: true });
+            const destination = import_node_path2.default.join(root, ...relative.split("/"));
+            await import_promises2.default.mkdir(import_node_path2.default.dirname(destination), { recursive: true });
+            await import_promises2.default.cp(source, destination, { recursive: true, force: true, verbatimSymlinks: true });
             entries.push(relative);
           }
           return { root, entries };
         } catch (error) {
-          await import_promises.default.rm(root, { recursive: true, force: true }).catch(() => void 0);
+          await import_promises2.default.rm(root, { recursive: true, force: true }).catch(() => void 0);
           throw error;
         }
       }
       async restoreStashedWorkspacePaths(stash) {
         for (const relative of stash.entries) {
-          const source = import_node_path.default.join(stash.root, ...relative.split("/"));
+          const source = import_node_path2.default.join(stash.root, ...relative.split("/"));
           const destination = await this.safeWorkspacePath(relative);
-          await import_promises.default.mkdir(import_node_path.default.dirname(destination), { recursive: true });
-          await import_promises.default.rm(destination, { recursive: true, force: true });
-          await import_promises.default.cp(source, destination, { recursive: true, force: true, verbatimSymlinks: true });
+          await import_promises2.default.mkdir(import_node_path2.default.dirname(destination), { recursive: true });
+          await import_promises2.default.rm(destination, { recursive: true, force: true });
+          await import_promises2.default.cp(source, destination, { recursive: true, force: true, verbatimSymlinks: true });
         }
       }
       async mergeWorkspaceTree(baseTree, targetTree, currentTree) {
         if (!baseTree) throw new Error("Merge restore requires the active checkpoint tree.");
-        const indexFile = import_node_path.default.join(await this.getGitDir(), `dsh-tm-merge-index-${(0, import_node_crypto.randomUUID)()}`);
+        const indexFile = import_node_path2.default.join(await this.getGitDir(), `dsh-tm-merge-index-${(0, import_node_crypto2.randomUUID)()}`);
         try {
           await this.runGit(["read-tree", "-m", baseTree, targetTree, currentTree], { GIT_INDEX_FILE: indexFile });
           const { stdout: conflicts } = await this.runGit(["ls-files", "-u", "-z"], { GIT_INDEX_FILE: indexFile });
@@ -436,7 +669,7 @@ Reason: ${errorMsg}`);
           const { stdout } = await this.runGit(["write-tree"], { GIT_INDEX_FILE: indexFile });
           return stdout.trim();
         } finally {
-          await import_promises.default.rm(indexFile, { force: true }).catch(() => void 0);
+          await import_promises2.default.rm(indexFile, { force: true }).catch(() => void 0);
         }
       }
       /** Restore only selected tracked workspace paths using a disposable index. */
@@ -448,52 +681,52 @@ Reason: ${errorMsg}`);
         for (const relative of normalized) await this.safeWorkspacePath(relative);
         const mode = options.mode ?? "safe";
         const current = await this.inspectWorkspace();
-        const ignoredSelection = current.ignoredPaths.filter((file) => normalized.some((path8) => file === path8 || file.startsWith(`${path8}/`)));
+        const ignoredSelection = current.ignoredPaths.filter((file) => normalized.some((path9) => file === path9 || file.startsWith(`${path9}/`)));
         if (ignoredSelection.length) throw new WorkspaceRestoreConflictError(ignoredSelection);
         if (mode === "safe" && options.expectedCurrentTreeOid && current.treeOid !== options.expectedCurrentTreeOid) {
           const changed = await this.diffNameOnly(options.expectedCurrentTreeOid, current.treeOid);
-          const selectedDrift = changed.filter((file) => normalized.some((path8) => file === path8 || file.startsWith(`${path8}/`)));
+          const selectedDrift = changed.filter((file) => normalized.some((path9) => file === path9 || file.startsWith(`${path9}/`)));
           if (selectedDrift.length) throw new WorkspaceDriftError(selectedDrift);
         }
         const { stdout: treeStdout } = await this.runGit(["rev-parse", `${commitOrTreeOid}^{tree}`]);
         const targetTree = treeStdout.trim();
         const targetFiles = await this.listTreeFileNames(targetTree);
         const currentFiles = await this.listTreeFileNames(current.treeOid);
-        const selectedTargetFiles = targetFiles.filter((file) => normalized.some((path8) => file === path8 || file.startsWith(`${path8}/`)));
-        const selectedCurrentFiles = currentFiles.filter((file) => normalized.some((path8) => file === path8 || file.startsWith(`${path8}/`)));
+        const selectedTargetFiles = targetFiles.filter((file) => normalized.some((path9) => file === path9 || file.startsWith(`${path9}/`)));
+        const selectedCurrentFiles = currentFiles.filter((file) => normalized.some((path9) => file === path9 || file.startsWith(`${path9}/`)));
         if (selectedTargetFiles.length === 0 && selectedCurrentFiles.length === 0) {
           throw new Error(`None of the selected paths exist in the current or target snapshot: ${normalized.join(", ")}`);
         }
-        const exportDir = import_node_path.default.join(await import_promises.default.mkdtemp(import_node_path.default.join(await import_promises.default.mkdtemp(import_node_path.default.join(this.workDir, ".dsh-tm-export-")), "snapshot-")));
-        const indexFile = import_node_path.default.join(await this.getGitDir(), `dsh-tm-index-${(0, import_node_crypto.randomUUID)()}`);
+        const exportDir = import_node_path2.default.join(await import_promises2.default.mkdtemp(import_node_path2.default.join(await import_promises2.default.mkdtemp(import_node_path2.default.join(this.workDir, ".dsh-tm-export-")), "snapshot-")));
+        const indexFile = import_node_path2.default.join(await this.getGitDir(), `dsh-tm-index-${(0, import_node_crypto2.randomUUID)()}`);
         try {
-          await import_promises.default.mkdir(exportDir, { recursive: true });
+          await import_promises2.default.mkdir(exportDir, { recursive: true });
           await this.runGit(["read-tree", targetTree], { GIT_INDEX_FILE: indexFile });
-          await this.runGit(["checkout-index", "--all", `--prefix=${exportDir}${import_node_path.default.sep}`], { GIT_INDEX_FILE: indexFile });
+          await this.runGit(["checkout-index", "--all", `--prefix=${exportDir}${import_node_path2.default.sep}`], { GIT_INDEX_FILE: indexFile });
           const targetSet = new Set(selectedTargetFiles);
           for (const relative of selectedCurrentFiles) {
             if (targetSet.has(relative)) continue;
-            await import_promises.default.rm(await this.safeWorkspacePath(relative), { recursive: true, force: true });
+            await import_promises2.default.rm(await this.safeWorkspacePath(relative), { recursive: true, force: true });
           }
           for (const relative of selectedTargetFiles) {
-            const source = import_node_path.default.join(exportDir, ...relative.split("/"));
+            const source = import_node_path2.default.join(exportDir, ...relative.split("/"));
             const destination = await this.safeWorkspacePath(relative);
-            await import_promises.default.mkdir(import_node_path.default.dirname(destination), { recursive: true });
-            await import_promises.default.rm(destination, { recursive: true, force: true });
-            await import_promises.default.cp(source, destination, { recursive: true, force: true, verbatimSymlinks: true });
+            await import_promises2.default.mkdir(import_node_path2.default.dirname(destination), { recursive: true });
+            await import_promises2.default.rm(destination, { recursive: true, force: true });
+            await import_promises2.default.cp(source, destination, { recursive: true, force: true, verbatimSymlinks: true });
           }
           this.workspaceTreeCache = void 0;
           return normalized;
         } finally {
-          await import_promises.default.rm(indexFile, { force: true }).catch(() => void 0);
-          await import_promises.default.rm(import_node_path.default.dirname(exportDir), { recursive: true, force: true }).catch(() => void 0);
+          await import_promises2.default.rm(indexFile, { force: true }).catch(() => void 0);
+          await import_promises2.default.rm(import_node_path2.default.dirname(exportDir), { recursive: true, force: true }).catch(() => void 0);
         }
       }
       /** Restore quarantined ignored content without ever writing it into Git objects. */
       async restoreIgnoredBackup(key) {
         if (!this.quarantineDir) return;
-        const backupRoot = import_node_path.default.join(this.quarantineDir, encodeRefPart(key));
-        const encryptedManifest = await import_promises.default.readFile(import_node_path.default.join(backupRoot, ".manifest.json"), "utf8").then((raw) => JSON.parse(raw)).catch((error) => {
+        const backupRoot = import_node_path2.default.join(this.quarantineDir, encodeRefPart(key));
+        const encryptedManifest = await import_promises2.default.readFile(import_node_path2.default.join(backupRoot, ".manifest.json"), "utf8").then((raw) => JSON.parse(raw)).catch((error) => {
           if (error?.code === "ENOENT") return void 0;
           throw new QuarantineKeyError(`Encrypted quarantine manifest is invalid: ${error?.message ?? "unknown error"}`);
         });
@@ -503,34 +736,34 @@ Reason: ${errorMsg}`);
           const directories = encryptedManifest.entries.filter((entry) => entry.type === "directory").sort((a, b) => a.path.localeCompare(b.path));
           for (const entry of directories) {
             const destination = await this.safeWorkspacePath(entry.path);
-            await import_promises.default.mkdir(destination, { recursive: true, mode: entry.mode });
+            await import_promises2.default.mkdir(destination, { recursive: true, mode: entry.mode });
           }
           for (const entry of encryptedManifest.entries.filter((item) => item.type !== "directory")) {
             const destination = await this.safeWorkspacePath(entry.path);
-            await import_promises.default.mkdir(import_node_path.default.dirname(destination), { recursive: true });
-            await import_promises.default.rm(destination, { recursive: true, force: true });
+            await import_promises2.default.mkdir(import_node_path2.default.dirname(destination), { recursive: true });
+            await import_promises2.default.rm(destination, { recursive: true, force: true });
             if (entry.type === "symlink") {
-              await import_promises.default.symlink(entry.linkTarget, destination);
+              await import_promises2.default.symlink(entry.linkTarget, destination);
               continue;
             }
             if (!entry.payload || !entry.nonce) throw new QuarantineKeyError(`Encrypted quarantine entry '${entry.path}' is incomplete.`);
-            const encrypted = await import_promises.default.readFile(import_node_path.default.join(backupRoot, entry.payload));
+            const encrypted = await import_promises2.default.readFile(import_node_path2.default.join(backupRoot, entry.payload));
             if (encrypted.length < 16) throw new QuarantineKeyError(`Encrypted quarantine entry '${entry.path}' is corrupt.`);
             let plaintext;
             try {
-              const decipher = (0, import_node_crypto.createDecipheriv)("aes-256-gcm", this.quarantineKey, Buffer.from(entry.nonce, "base64url"));
+              const decipher = (0, import_node_crypto2.createDecipheriv)("aes-256-gcm", this.quarantineKey, Buffer.from(entry.nonce, "base64url"));
               decipher.setAuthTag(encrypted.subarray(encrypted.length - 16));
               plaintext = Buffer.concat([decipher.update(encrypted.subarray(0, encrypted.length - 16)), decipher.final()]);
             } catch {
               throw new QuarantineKeyError(`Encrypted quarantine entry '${entry.path}' failed authentication.`);
             }
-            await import_promises.default.writeFile(destination, plaintext);
-            await import_promises.default.chmod(destination, entry.mode).catch(() => void 0);
+            await import_promises2.default.writeFile(destination, plaintext);
+            await import_promises2.default.chmod(destination, entry.mode).catch(() => void 0);
           }
           return;
         }
         if (this.quarantineKey) {
-          const plaintextEntries = await import_promises.default.readdir(backupRoot).catch((error) => {
+          const plaintextEntries = await import_promises2.default.readdir(backupRoot).catch((error) => {
             if (error?.code === "ENOENT") return [];
             throw error;
           });
@@ -539,27 +772,27 @@ Reason: ${errorMsg}`);
           }
         }
         const root = await this.getRepoRoot();
-        const entries = await import_promises.default.readdir(backupRoot, { withFileTypes: true }).catch((error) => {
+        const entries = await import_promises2.default.readdir(backupRoot, { withFileTypes: true }).catch((error) => {
           if (error?.code === "ENOENT") return [];
           throw error;
         });
         for (const entry of entries) {
-          const source = import_node_path.default.join(backupRoot, entry.name);
-          const destination = import_node_path.default.join(root, entry.name);
-          await import_promises.default.cp(source, destination, { recursive: true, force: true, verbatimSymlinks: true });
+          const source = import_node_path2.default.join(backupRoot, entry.name);
+          const destination = import_node_path2.default.join(root, entry.name);
+          await import_promises2.default.cp(source, destination, { recursive: true, force: true, verbatimSymlinks: true });
         }
       }
       /** Validate encrypted quarantine content before a restore mutates the workspace. */
       async validateIgnoredBackup(key) {
         if (!this.quarantineDir) return;
-        const backupRoot = import_node_path.default.join(this.quarantineDir, encodeRefPart(key));
-        const manifest = await import_promises.default.readFile(import_node_path.default.join(backupRoot, ".manifest.json"), "utf8").then((raw) => JSON.parse(raw)).catch((error) => {
+        const backupRoot = import_node_path2.default.join(this.quarantineDir, encodeRefPart(key));
+        const manifest = await import_promises2.default.readFile(import_node_path2.default.join(backupRoot, ".manifest.json"), "utf8").then((raw) => JSON.parse(raw)).catch((error) => {
           if (error?.code === "ENOENT") return void 0;
           throw new QuarantineKeyError(`Encrypted quarantine manifest is invalid: ${error?.message ?? "unknown error"}`);
         });
         if (!manifest) {
           if (this.quarantineKey) {
-            const plaintextEntries = await import_promises.default.readdir(backupRoot).catch((error) => {
+            const plaintextEntries = await import_promises2.default.readdir(backupRoot).catch((error) => {
               if (error?.code === "ENOENT") return [];
               throw error;
             });
@@ -573,10 +806,10 @@ Reason: ${errorMsg}`);
         if (manifest.version !== 1 || !Array.isArray(manifest.entries)) throw new QuarantineKeyError("Encrypted quarantine manifest version is unsupported.");
         for (const entry of manifest.entries.filter((item) => item.type === "file")) {
           if (!entry.payload || !entry.nonce) throw new QuarantineKeyError(`Encrypted quarantine entry '${entry.path}' is incomplete.`);
-          const encrypted = await import_promises.default.readFile(import_node_path.default.join(backupRoot, entry.payload));
+          const encrypted = await import_promises2.default.readFile(import_node_path2.default.join(backupRoot, entry.payload));
           if (encrypted.length < 16) throw new QuarantineKeyError(`Encrypted quarantine entry '${entry.path}' is corrupt.`);
           try {
-            const decipher = (0, import_node_crypto.createDecipheriv)("aes-256-gcm", this.quarantineKey, Buffer.from(entry.nonce, "base64url"));
+            const decipher = (0, import_node_crypto2.createDecipheriv)("aes-256-gcm", this.quarantineKey, Buffer.from(entry.nonce, "base64url"));
             decipher.setAuthTag(encrypted.subarray(encrypted.length - 16));
             decipher.update(encrypted.subarray(0, encrypted.length - 16));
             decipher.final();
@@ -588,9 +821,9 @@ Reason: ${errorMsg}`);
       /** Remove a quarantine backup only after the DAG no longer references its key. */
       async removeIgnoredBackup(key) {
         if (!this.quarantineDir) return 0;
-        const backupRoot = import_node_path.default.join(this.quarantineDir, encodeRefPart(key));
+        const backupRoot = import_node_path2.default.join(this.quarantineDir, encodeRefPart(key));
         const reclaimed = await directoryBytes(backupRoot);
-        await import_promises.default.rm(backupRoot, { recursive: true, force: true });
+        await import_promises2.default.rm(backupRoot, { recursive: true, force: true });
         return reclaimed;
       }
       async getDiffBetween(baseOid, targetOid) {
@@ -602,8 +835,7 @@ Reason: ${errorMsg}`);
         }
       }
       async runGitBuffer(args, extraEnv = {}, cwd = this.workDir) {
-        await this.ensureShadowStore();
-        return new Promise((resolve, reject) => {
+        return this.withShadowRuntime(() => new Promise((resolve, reject) => {
           const child = (0, import_node_child_process.spawn)("git", args, { cwd, env: this.gitEnv(extraEnv), windowsHide: true });
           const chunks = [];
           const errors = [];
@@ -615,22 +847,24 @@ Reason: ${errorMsg}`);
             reject(new Error(`Git plumbing command failed: git ${args.join(" ")}
 Reason: ${Buffer.concat(errors).toString("utf8")}`));
           });
-        });
+        }));
       }
       async readShadowBlob(oid, cwd) {
-        if (this.shadowObjectDir) {
-          const loose = import_node_path.default.join(this.shadowObjectDir, oid.slice(0, 2), oid.slice(2));
-          const compressed = await import_promises.default.readFile(loose).catch(() => void 0);
-          if (compressed) {
-            try {
-              const inflated = import_node_zlib.default.inflateSync(compressed);
-              const separator = inflated.indexOf(0);
-              if (separator >= 0) return inflated.subarray(separator + 1);
-            } catch {
+        return this.withShadowRuntime(async () => {
+          if (this.shadowObjectDir) {
+            const loose = import_node_path2.default.join(this.shadowObjectDir, oid.slice(0, 2), oid.slice(2));
+            const compressed = await import_promises2.default.readFile(loose).catch(() => void 0);
+            if (compressed) {
+              try {
+                const inflated = import_node_zlib.default.inflateSync(compressed);
+                const separator = inflated.indexOf(0);
+                if (separator >= 0) return inflated.subarray(separator + 1);
+              } catch {
+              }
             }
           }
-        }
-        return this.runGitBuffer(["cat-file", "blob", oid], {}, cwd);
+          return this.runGitBuffer(["cat-file", "blob", oid], {}, cwd);
+        });
       }
       gitEnv(extraEnv) {
         const env = {
@@ -641,14 +875,14 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
         };
         if (this.shadowObjectDir) {
           env.GIT_OBJECT_DIRECTORY = this.shadowObjectDir;
-          const primaryObjects = import_node_path.default.join(this.gitDirCached ?? import_node_path.default.join(this.workDir, ".git"), "objects");
-          env.GIT_ALTERNATE_OBJECT_DIRECTORIES = [primaryObjects, env.GIT_ALTERNATE_OBJECT_DIRECTORIES].filter(Boolean).map((item) => item.replace(/\\/g, "/")).join(import_node_path.default.delimiter);
+          const primaryObjects = import_node_path2.default.join(this.gitDirCached ?? import_node_path2.default.join(this.workDir, ".git"), "objects");
+          env.GIT_ALTERNATE_OBJECT_DIRECTORIES = [primaryObjects, env.GIT_ALTERNATE_OBJECT_DIRECTORIES].filter(Boolean).map((item) => item.replace(/\\/g, "/")).join(import_node_path2.default.delimiter);
         }
         return env;
       }
       async writeWorkspaceTree(enforceSnapshotLimits = false, extraOmittedPaths = [], baseTreeOid, changedPaths = []) {
         const root = await this.getRepoRoot();
-        const indexFile = import_node_path.default.join(await this.getGitDir(), `dsh-tm-index-${(0, import_node_crypto.randomUUID)()}`);
+        const indexFile = import_node_path2.default.join(await this.getGitDir(), `dsh-tm-index-${(0, import_node_crypto2.randomUUID)()}`);
         const env = { GIT_INDEX_FILE: indexFile };
         try {
           try {
@@ -705,7 +939,7 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
           const { stdout } = await this.runGit(["write-tree"], env, root);
           return { treeOid: stdout.trim(), indexFile, omittedPaths };
         } catch (error) {
-          await import_promises.default.rm(indexFile, { force: true }).catch(() => void 0);
+          await import_promises2.default.rm(indexFile, { force: true }).catch(() => void 0);
           throw error;
         }
       }
@@ -746,7 +980,7 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
         let totalBytes = 0;
         const omitted = [];
         for (const relative of files) {
-          const stat = await import_promises.default.lstat(import_node_path.default.join(root, ...relative.split("/"))).catch(() => void 0);
+          const stat = await import_promises2.default.lstat(import_node_path2.default.join(root, ...relative.split("/"))).catch(() => void 0);
           if (!stat?.isFile()) continue;
           if (this.maxSnapshotFileBytes > 0 && stat.size > this.maxSnapshotFileBytes) {
             if (this.allowPartialSnapshots) {
@@ -820,7 +1054,7 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
       }
       protectedRepoPaths(repoRoot) {
         return this.preservePaths.flatMap((absolute) => {
-          const relative = normalizeGitPath(import_node_path.default.relative(repoRoot, absolute));
+          const relative = normalizeGitPath(import_node_path2.default.relative(repoRoot, absolute));
           return relative && relative !== ".." && !relative.startsWith("../") ? [relative] : [];
         });
       }
@@ -828,15 +1062,15 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
         const normalized = normalizeGitPath(relative);
         const repoRoot = this.repoRootCached ?? this.workDir;
         return this.preservePaths.some((absolute) => {
-          const candidate = normalizeGitPath(import_node_path.default.relative(repoRoot, absolute));
+          const candidate = normalizeGitPath(import_node_path2.default.relative(repoRoot, absolute));
           return candidate === normalized || normalized.startsWith(`${candidate}/`);
         });
       }
       async safeWorkspacePath(relative) {
         const root = await this.getRepoRoot();
-        const absolute = import_node_path.default.resolve(root, relative);
-        const relation = import_node_path.default.relative(root, absolute);
-        if (!relation || relation === ".." || relation.startsWith(`..${import_node_path.default.sep}`) || import_node_path.default.isAbsolute(relation)) {
+        const absolute = import_node_path2.default.resolve(root, relative);
+        const relation = import_node_path2.default.relative(root, absolute);
+        if (!relation || relation === ".." || relation.startsWith(`..${import_node_path2.default.sep}`) || import_node_path2.default.isAbsolute(relation)) {
           throw new Error(`Unsafe workspace path: ${relative}`);
         }
         return absolute;
@@ -847,32 +1081,32 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
           await this.backupIgnoredPathEncrypted(key, relative, absolute);
           return;
         }
-        const destination = import_node_path.default.join(this.quarantineDir, encodeRefPart(key), ...relative.split("/"));
+        const destination = import_node_path2.default.join(this.quarantineDir, encodeRefPart(key), ...relative.split("/"));
         if (this.maxQuarantineBytes > 0) {
           const currentBytes = await directoryBytes(this.quarantineDir);
           const incomingBytes = await directoryBytes(absolute);
-          const existingBytes = await directoryBytes(import_node_path.default.dirname(destination));
+          const existingBytes = await directoryBytes(import_node_path2.default.dirname(destination));
           const requiredBytes = currentBytes - existingBytes + incomingBytes;
           if (requiredBytes > this.maxQuarantineBytes) throw new QuarantineQuotaError(this.maxQuarantineBytes, requiredBytes);
         }
-        await import_promises.default.mkdir(import_node_path.default.dirname(destination), { recursive: true });
-        await import_promises.default.cp(absolute, destination, { recursive: true, force: true, verbatimSymlinks: true });
+        await import_promises2.default.mkdir(import_node_path2.default.dirname(destination), { recursive: true });
+        await import_promises2.default.cp(absolute, destination, { recursive: true, force: true, verbatimSymlinks: true });
       }
       async backupIgnoredPathEncrypted(key, relative, absolute) {
-        const root = import_node_path.default.join(this.quarantineDir, encodeRefPart(key));
-        const manifestPath = import_node_path.default.join(root, ".manifest.json");
-        const existing = await import_promises.default.readFile(manifestPath, "utf8").then((raw) => JSON.parse(raw)).catch(async (error) => {
+        const root = import_node_path2.default.join(this.quarantineDir, encodeRefPart(key));
+        const manifestPath = import_node_path2.default.join(root, ".manifest.json");
+        const existing = await import_promises2.default.readFile(manifestPath, "utf8").then((raw) => JSON.parse(raw)).catch(async (error) => {
           if (error?.code === "ENOENT") {
-            const entries = await import_promises.default.readdir(root).catch(() => []);
+            const entries = await import_promises2.default.readdir(root).catch(() => []);
             if (entries.length) throw new QuarantineKeyError("Plaintext quarantine exists; refusing to mix it with encrypted backups.");
             return { version: 1, entries: [] };
           }
           throw new QuarantineKeyError(`Encrypted quarantine manifest is invalid: ${error?.message ?? "unknown error"}`);
         });
         if (existing.version !== 1 || !Array.isArray(existing.entries)) throw new QuarantineKeyError("Encrypted quarantine manifest version is unsupported.");
-        const staging = import_node_path.default.join(root, `.staging-${(0, import_node_crypto.randomUUID)()}`);
-        const payloadDir = import_node_path.default.join(staging, "payload");
-        await import_promises.default.mkdir(payloadDir, { recursive: true });
+        const staging = import_node_path2.default.join(root, `.staging-${(0, import_node_crypto2.randomUUID)()}`);
+        const payloadDir = import_node_path2.default.join(staging, "payload");
+        await import_promises2.default.mkdir(payloadDir, { recursive: true });
         const added = [];
         try {
           await this.collectEncryptedQuarantineEntries(absolute, relative, payloadDir, added);
@@ -884,21 +1118,21 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
           if (this.maxQuarantineBytes > 0 && requiredBytes > this.maxQuarantineBytes) {
             throw new QuarantineQuotaError(this.maxQuarantineBytes, requiredBytes);
           }
-          await import_promises.default.mkdir(import_node_path.default.join(root, "payload"), { recursive: true });
+          await import_promises2.default.mkdir(import_node_path2.default.join(root, "payload"), { recursive: true });
           for (const entry of added) {
-            const source = import_node_path.default.join(payloadDir, entry.payload);
-            const destination = import_node_path.default.join(root, "payload", entry.payload);
-            await import_promises.default.rename(source, destination);
-            entry.payload = import_node_path.default.posix.join("payload", entry.payload);
+            const source = import_node_path2.default.join(payloadDir, entry.payload);
+            const destination = import_node_path2.default.join(root, "payload", entry.payload);
+            await import_promises2.default.rename(source, destination);
+            entry.payload = import_node_path2.default.posix.join("payload", entry.payload);
           }
-          await import_promises.default.rm(staging, { recursive: true, force: true });
+          await import_promises2.default.rm(staging, { recursive: true, force: true });
           const next = { version: 1, entries: [...existing.entries, ...added] };
-          const temporaryManifest = `${manifestPath}.${(0, import_node_crypto.randomUUID)()}.tmp`;
-          await import_promises.default.writeFile(temporaryManifest, `${JSON.stringify(next, null, 2)}
+          const temporaryManifest = `${manifestPath}.${(0, import_node_crypto2.randomUUID)()}.tmp`;
+          await import_promises2.default.writeFile(temporaryManifest, `${JSON.stringify(next, null, 2)}
 `, "utf8");
-          await import_promises.default.rename(temporaryManifest, manifestPath);
+          await import_promises2.default.rename(temporaryManifest, manifestPath);
         } catch (error) {
-          await import_promises.default.rm(staging, { recursive: true, force: true }).catch(() => void 0);
+          await import_promises2.default.rm(staging, { recursive: true, force: true }).catch(() => void 0);
           throw error;
         }
       }
@@ -906,9 +1140,9 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
       async migrateIgnoredBackup(key) {
         if (!this.quarantineDir) throw new Error("Ignored-path migration requires a quarantineDir.");
         if (!this.quarantineKey) throw new QuarantineKeyError("Encrypted quarantine migration requires the configured key.");
-        const root = import_node_path.default.join(this.quarantineDir, encodeRefPart(key));
-        const manifestPath = import_node_path.default.join(root, ".manifest.json");
-        const existingManifest = await import_promises.default.readFile(manifestPath, "utf8").then((raw) => JSON.parse(raw)).catch((error) => {
+        const root = import_node_path2.default.join(this.quarantineDir, encodeRefPart(key));
+        const manifestPath = import_node_path2.default.join(root, ".manifest.json");
+        const existingManifest = await import_promises2.default.readFile(manifestPath, "utf8").then((raw) => JSON.parse(raw)).catch((error) => {
           if (error?.code === "ENOENT") return void 0;
           throw new QuarantineKeyError(`Encrypted quarantine manifest is invalid: ${error?.message ?? "unknown error"}`);
         });
@@ -918,20 +1152,20 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
           }
           return { migrated: false, bytesRewritten: 0, entryCount: existingManifest.entries.length };
         }
-        const entries = await import_promises.default.readdir(root, { withFileTypes: true }).catch((error) => {
+        const entries = await import_promises2.default.readdir(root, { withFileTypes: true }).catch((error) => {
           if (error?.code === "ENOENT") return [];
           throw error;
         });
         if (entries.length === 0) return { migrated: false, bytesRewritten: 0, entryCount: 0 };
-        const legacyRoot = `${root}.legacy-${(0, import_node_crypto.randomUUID)()}`;
-        const stagingRoot = import_node_path.default.join(import_node_path.default.dirname(root), `.migration-${(0, import_node_crypto.randomUUID)()}`);
-        const payloadDir = import_node_path.default.join(stagingRoot, "payload");
-        await import_promises.default.rename(root, legacyRoot);
+        const legacyRoot = `${root}.legacy-${(0, import_node_crypto2.randomUUID)()}`;
+        const stagingRoot = import_node_path2.default.join(import_node_path2.default.dirname(root), `.migration-${(0, import_node_crypto2.randomUUID)()}`);
+        const payloadDir = import_node_path2.default.join(stagingRoot, "payload");
+        await import_promises2.default.rename(root, legacyRoot);
         try {
-          await import_promises.default.mkdir(payloadDir, { recursive: true });
+          await import_promises2.default.mkdir(payloadDir, { recursive: true });
           const encryptedEntries = [];
           for (const entry of entries) {
-            await this.collectEncryptedQuarantineEntries(import_node_path.default.join(legacyRoot, entry.name), entry.name, payloadDir, encryptedEntries);
+            await this.collectEncryptedQuarantineEntries(import_node_path2.default.join(legacyRoot, entry.name), entry.name, payloadDir, encryptedEntries);
           }
           const manifest = { version: 1, entries: encryptedEntries };
           const manifestBytes = Buffer.byteLength(JSON.stringify(manifest));
@@ -942,47 +1176,47 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
           if (this.maxQuarantineBytes > 0 && requiredBytes > this.maxQuarantineBytes) {
             throw new QuarantineQuotaError(this.maxQuarantineBytes, requiredBytes);
           }
-          await import_promises.default.mkdir(import_node_path.default.join(root, "payload"), { recursive: true });
+          await import_promises2.default.mkdir(import_node_path2.default.join(root, "payload"), { recursive: true });
           for (const entry of encryptedEntries) {
-            const source = import_node_path.default.join(payloadDir, entry.payload);
-            const destination = import_node_path.default.join(root, "payload", entry.payload);
-            await import_promises.default.rename(source, destination);
-            entry.payload = import_node_path.default.posix.join("payload", entry.payload);
+            const source = import_node_path2.default.join(payloadDir, entry.payload);
+            const destination = import_node_path2.default.join(root, "payload", entry.payload);
+            await import_promises2.default.rename(source, destination);
+            entry.payload = import_node_path2.default.posix.join("payload", entry.payload);
           }
-          await import_promises.default.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}
+          await import_promises2.default.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}
 `, "utf8");
           const rewrittenBytes = await directoryBytes(root);
-          await import_promises.default.rm(stagingRoot, { recursive: true, force: true });
-          await import_promises.default.rm(legacyRoot, { recursive: true, force: true });
+          await import_promises2.default.rm(stagingRoot, { recursive: true, force: true });
+          await import_promises2.default.rm(legacyRoot, { recursive: true, force: true });
           return { migrated: true, bytesRewritten: rewrittenBytes, entryCount: encryptedEntries.length };
         } catch (error) {
-          await import_promises.default.rm(root, { recursive: true, force: true }).catch(() => void 0);
-          await import_promises.default.rm(stagingRoot, { recursive: true, force: true }).catch(() => void 0);
-          await import_promises.default.rename(legacyRoot, root).catch(() => void 0);
+          await import_promises2.default.rm(root, { recursive: true, force: true }).catch(() => void 0);
+          await import_promises2.default.rm(stagingRoot, { recursive: true, force: true }).catch(() => void 0);
+          await import_promises2.default.rename(legacyRoot, root).catch(() => void 0);
           throw error;
         }
       }
       async collectEncryptedQuarantineEntries(source, relative, payloadDir, output) {
-        const stat = await import_promises.default.lstat(source);
+        const stat = await import_promises2.default.lstat(source);
         if (stat.isDirectory()) {
           output.push({ path: normalizeGitPath(relative), type: "directory", mode: stat.mode & 511 });
-          for (const child of await import_promises.default.readdir(source)) {
-            await this.collectEncryptedQuarantineEntries(import_node_path.default.join(source, child), import_node_path.default.posix.join(relative, child), payloadDir, output);
+          for (const child of await import_promises2.default.readdir(source)) {
+            await this.collectEncryptedQuarantineEntries(import_node_path2.default.join(source, child), import_node_path2.default.posix.join(relative, child), payloadDir, output);
           }
           return;
         }
         if (stat.isSymbolicLink()) {
-          output.push({ path: normalizeGitPath(relative), type: "symlink", mode: stat.mode & 511, linkTarget: await import_promises.default.readlink(source) });
+          output.push({ path: normalizeGitPath(relative), type: "symlink", mode: stat.mode & 511, linkTarget: await import_promises2.default.readlink(source) });
           return;
         }
         if (!stat.isFile()) throw new QuarantineKeyError(`Unsupported ignored backup entry: ${relative}`);
-        const plaintext = await import_promises.default.readFile(source);
-        const nonce = (0, import_node_crypto.randomBytes)(12);
-        const cipher = (0, import_node_crypto.createCipheriv)("aes-256-gcm", this.quarantineKey, nonce);
+        const plaintext = await import_promises2.default.readFile(source);
+        const nonce = (0, import_node_crypto2.randomBytes)(12);
+        const cipher = (0, import_node_crypto2.createCipheriv)("aes-256-gcm", this.quarantineKey, nonce);
         const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
         const tag = cipher.getAuthTag();
-        const payload = (0, import_node_crypto.randomUUID)();
-        await import_promises.default.writeFile(import_node_path.default.join(payloadDir, payload), Buffer.concat([ciphertext, tag]));
+        const payload = (0, import_node_crypto2.randomUUID)();
+        await import_promises2.default.writeFile(import_node_path2.default.join(payloadDir, payload), Buffer.concat([ciphertext, tag]));
         output.push({
           path: normalizeGitPath(relative),
           type: "file",
@@ -1012,121 +1246,132 @@ Reason: ${Buffer.concat(errors).toString("utf8")}`));
       }
       async deleteCheckpointRef(sessionId, checkpointId) {
         const ref = `${this.refPrefix}/${encodeRefPart(sessionId)}/nodes/${encodeRefPart(checkpointId)}`;
-        const exists = await this.runGit(["show-ref", "--verify", "--quiet", ref]).then(() => true).catch(() => false);
-        if (!exists) return false;
+        const exists2 = await this.runGit(["show-ref", "--verify", "--quiet", ref]).then(() => true).catch(() => false);
+        if (!exists2) return false;
         await this.runGit(["update-ref", "-d", ref]);
         return true;
       }
       /** Remove unreachable loose objects from the opt-in shadow store only. */
       async pruneShadowObjects() {
         if (!this.shadowObjectDir) return { removedObjects: 0, reclaimedBytes: 0, packedObjectsSkipped: false };
-        const { stdout: refs } = await this.runGit(["for-each-ref", "--format=%(refname)", this.refPrefix]).catch(() => ({ stdout: "", stderr: "" }));
-        const refNames = refs.split("\n").map((item) => item.trim()).filter(Boolean);
-        const reachable = /* @__PURE__ */ new Set();
-        if (refNames.length) {
-          const { stdout } = await this.runGit(["rev-list", "--objects", ...refNames]);
-          for (const line of stdout.split("\n")) {
-            const oid = line.trim().split(/\s+/, 1)[0];
-            if (/^[0-9a-f]{40}$/.test(oid)) reachable.add(oid);
+        const shadowObjectDir = this.shadowObjectDir;
+        return this.withShadowRuntime(async () => {
+          const { stdout: refs } = await this.runGit(["for-each-ref", "--format=%(refname)", this.refPrefix]).catch(() => ({ stdout: "", stderr: "" }));
+          const refNames = refs.split("\n").map((item) => item.trim()).filter(Boolean);
+          const reachable = /* @__PURE__ */ new Set();
+          if (refNames.length) {
+            const { stdout } = await this.runGit(["rev-list", "--objects", ...refNames]);
+            for (const line of stdout.split("\n")) {
+              const oid = line.trim().split(/\s+/, 1)[0];
+              if (/^[0-9a-f]{40}$/.test(oid)) reachable.add(oid);
+            }
           }
-        }
-        let removedObjects = 0;
-        let reclaimedBytes = 0;
-        const entries = await import_promises.default.readdir(this.shadowObjectDir, { withFileTypes: true }).catch(() => []);
-        let packedObjectsSkipped = false;
-        for (const entry of entries) {
-          if (entry.name === "pack" && entry.isDirectory()) {
-            packedObjectsSkipped = (await import_promises.default.readdir(import_node_path.default.join(this.shadowObjectDir, entry.name)).catch(() => [])).length > 0;
-            continue;
+          let removedObjects = 0;
+          let reclaimedBytes = 0;
+          const entries = await import_promises2.default.readdir(shadowObjectDir, { withFileTypes: true }).catch(() => []);
+          let packedObjectsSkipped = false;
+          for (const entry of entries) {
+            if (entry.name === "pack" && entry.isDirectory()) {
+              packedObjectsSkipped = (await import_promises2.default.readdir(import_node_path2.default.join(shadowObjectDir, entry.name)).catch(() => [])).length > 0;
+              continue;
+            }
+            if (!entry.isDirectory() || !/^[0-9a-f]{2}$/.test(entry.name)) continue;
+            const directory = import_node_path2.default.join(shadowObjectDir, entry.name);
+            for (const object of await import_promises2.default.readdir(directory, { withFileTypes: true }).catch(() => [])) {
+              if (!object.isFile() || !/^[0-9a-f]{38}$/.test(object.name)) continue;
+              const oid = `${entry.name}${object.name}`;
+              if (reachable.has(oid)) continue;
+              const file = import_node_path2.default.join(directory, object.name);
+              reclaimedBytes += (await import_promises2.default.stat(file).catch(() => ({ size: 0 }))).size;
+              await import_promises2.default.rm(file, { force: true });
+              removedObjects += 1;
+            }
+            await import_promises2.default.rmdir(directory).catch(() => void 0);
           }
-          if (!entry.isDirectory() || !/^[0-9a-f]{2}$/.test(entry.name)) continue;
-          const directory = import_node_path.default.join(this.shadowObjectDir, entry.name);
-          for (const object of await import_promises.default.readdir(directory, { withFileTypes: true }).catch(() => [])) {
-            if (!object.isFile() || !/^[0-9a-f]{38}$/.test(object.name)) continue;
-            const oid = `${entry.name}${object.name}`;
-            if (reachable.has(oid)) continue;
-            const file = import_node_path.default.join(directory, object.name);
-            reclaimedBytes += (await import_promises.default.stat(file).catch(() => ({ size: 0 }))).size;
-            await import_promises.default.rm(file, { force: true });
-            removedObjects += 1;
-          }
-          await import_promises.default.rmdir(directory).catch(() => void 0);
-        }
-        return { removedObjects, reclaimedBytes, packedObjectsSkipped };
+          return { removedObjects, reclaimedBytes, packedObjectsSkipped };
+        });
       }
       /** Rebuild only the opt-in shadow pack from the plugin's private refs. */
       async repackShadowObjects() {
         if (!this.shadowObjectDir) return { repacked: false, removedPackFiles: 0, reclaimedBytes: 0, reachableRefs: 0 };
-        const { stdout: refsOutput } = await this.runGit(["for-each-ref", "--format=%(objectname)", this.refPrefix]).catch(() => ({ stdout: "", stderr: "" }));
-        const refs = refsOutput.split("\n").map((item) => item.trim()).filter((item) => /^[0-9a-f]{40}$/.test(item));
-        const packDir = import_node_path.default.join(this.shadowObjectDir, "pack");
-        const existing = await import_promises.default.readdir(packDir, { withFileTypes: true }).catch(() => []);
-        const existingPackFiles = existing.filter((entry) => entry.isFile() && /^pack-[0-9a-f]{40}\.(pack|idx|bitmap|rev|mtimes)$/.test(entry.name));
-        const lockedPack = existing.some((entry) => entry.isFile() && /^pack-[0-9a-f]{40}\.keep$/.test(entry.name));
-        if (lockedPack) return { repacked: false, removedPackFiles: 0, reclaimedBytes: 0, reachableRefs: refs.length, skippedReason: "shadow pack contains a .keep file" };
-        const existingBytes = await sumFileSizes(existingPackFiles.map((entry) => import_node_path.default.join(packDir, entry.name)));
-        const tempDir = import_node_path.default.join(this.shadowObjectDir, `.repack-${(0, import_node_crypto.randomUUID)()}`);
-        await import_promises.default.mkdir(tempDir, { recursive: true });
-        let generatedFiles = [];
-        try {
-          if (refs.length) {
-            const prefix = import_node_path.default.join(tempDir, "pack");
-            await this.runGitInput(["pack-objects", "--revs", "--no-reuse-object", "--delta-base-offset", prefix], `${refs.join("\n")}
+        const shadowObjectDir = this.shadowObjectDir;
+        return this.withShadowRuntime(async () => {
+          const { stdout: refsOutput } = await this.runGit(["for-each-ref", "--format=%(objectname)", this.refPrefix]).catch(() => ({ stdout: "", stderr: "" }));
+          const refs = refsOutput.split("\n").map((item) => item.trim()).filter((item) => /^[0-9a-f]{40}$/.test(item));
+          const packDir = import_node_path2.default.join(shadowObjectDir, "pack");
+          const existing = await import_promises2.default.readdir(packDir, { withFileTypes: true }).catch(() => []);
+          const existingPackFiles = existing.filter((entry) => entry.isFile() && /^pack-[0-9a-f]{40}\.(pack|idx|bitmap|rev|mtimes)$/.test(entry.name));
+          const lockedPack = existing.some((entry) => entry.isFile() && /^pack-[0-9a-f]{40}\.keep$/.test(entry.name));
+          if (lockedPack) return { repacked: false, removedPackFiles: 0, reclaimedBytes: 0, reachableRefs: refs.length, skippedReason: "shadow pack contains a .keep file" };
+          const existingBytes = await sumFileSizes(existingPackFiles.map((entry) => import_node_path2.default.join(packDir, entry.name)));
+          const tempDir = import_node_path2.default.join(shadowObjectDir, `.repack-${(0, import_node_crypto2.randomUUID)()}`);
+          await import_promises2.default.mkdir(tempDir, { recursive: true });
+          let generatedFiles = [];
+          try {
+            if (refs.length) {
+              const prefix = import_node_path2.default.join(tempDir, "pack");
+              await this.runGitInput(["pack-objects", "--revs", "--no-reuse-object", "--delta-base-offset", prefix], `${refs.join("\n")}
 `);
-            generatedFiles = (await import_promises.default.readdir(tempDir, { withFileTypes: true })).filter((entry) => entry.isFile() && /^(pack-[0-9a-f]{40})\.(pack|idx)$/.test(entry.name)).map((entry) => entry.name);
+              generatedFiles = (await import_promises2.default.readdir(tempDir, { withFileTypes: true })).filter((entry) => entry.isFile() && /^(pack-[0-9a-f]{40})\.(pack|idx)$/.test(entry.name)).map((entry) => entry.name);
+            }
+            await import_promises2.default.mkdir(packDir, { recursive: true });
+            for (const file of generatedFiles) {
+              const destination = import_node_path2.default.join(packDir, file);
+              const source = import_node_path2.default.join(tempDir, file);
+              const alreadyPresent = await import_promises2.default.access(destination).then(() => true).catch(() => false);
+              if (alreadyPresent) await import_promises2.default.rm(source, { force: true });
+              else await import_promises2.default.rename(source, destination);
+            }
+            const keep = new Set(generatedFiles);
+            let removedPackFiles = 0;
+            let reclaimedBytes = 0;
+            for (const entry of existingPackFiles) {
+              if (keep.has(entry.name)) continue;
+              const file = import_node_path2.default.join(packDir, entry.name);
+              reclaimedBytes += (await import_promises2.default.stat(file).catch(() => ({ size: 0 }))).size;
+              await import_promises2.default.rm(file, { force: true });
+              removedPackFiles += 1;
+            }
+            await import_promises2.default.rm(import_node_path2.default.join(shadowObjectDir, "info", "packs"), { force: true }).catch(() => void 0);
+            return {
+              repacked: refs.length > 0 && generatedFiles.length > 0,
+              removedPackFiles,
+              reclaimedBytes: Math.max(reclaimedBytes, existingBytes - await sumFileSizes(generatedFiles.map((file) => import_node_path2.default.join(packDir, file)))),
+              reachableRefs: refs.length
+            };
+          } finally {
+            await import_promises2.default.rm(tempDir, { recursive: true, force: true }).catch(() => void 0);
           }
-          await import_promises.default.mkdir(packDir, { recursive: true });
-          for (const file of generatedFiles) {
-            const destination = import_node_path.default.join(packDir, file);
-            const source = import_node_path.default.join(tempDir, file);
-            const alreadyPresent = await import_promises.default.access(destination).then(() => true).catch(() => false);
-            if (alreadyPresent) await import_promises.default.rm(source, { force: true });
-            else await import_promises.default.rename(source, destination);
-          }
-          const keep = new Set(generatedFiles);
-          let removedPackFiles = 0;
-          let reclaimedBytes = 0;
-          for (const entry of existingPackFiles) {
-            if (keep.has(entry.name)) continue;
-            const file = import_node_path.default.join(packDir, entry.name);
-            reclaimedBytes += (await import_promises.default.stat(file).catch(() => ({ size: 0 }))).size;
-            await import_promises.default.rm(file, { force: true });
-            removedPackFiles += 1;
-          }
-          await import_promises.default.rm(import_node_path.default.join(this.shadowObjectDir, "info", "packs"), { force: true }).catch(() => void 0);
-          return {
-            repacked: refs.length > 0 && generatedFiles.length > 0,
-            removedPackFiles,
-            reclaimedBytes: Math.max(reclaimedBytes, existingBytes - await sumFileSizes(generatedFiles.map((file) => import_node_path.default.join(packDir, file)))),
-            reachableRefs: refs.length
-          };
-        } finally {
-          await import_promises.default.rm(tempDir, { recursive: true, force: true }).catch(() => void 0);
-        }
+        });
       }
       async ensureShadowStore() {
         if (!this.shadowObjectDir) return;
-        this.shadowReady ??= import_promises.default.mkdir(this.shadowObjectDir, { recursive: true }).then(() => void 0);
+        this.shadowReady ??= import_promises2.default.mkdir(this.shadowObjectDir, { recursive: true }).then(() => void 0);
         await this.shadowReady;
       }
-      async runGitInput(args, input, cwd = this.workDir) {
+      async withShadowRuntime(operation) {
         await this.ensureShadowStore();
-        const env = this.gitEnv({});
-        return await new Promise((resolve, reject) => {
-          const child = (0, import_node_child_process.spawn)("git", args, { cwd, env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
-          const stdout = [];
-          const stderr = [];
-          child.stdout.on("data", (chunk) => stdout.push(Buffer.from(chunk)));
-          child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
-          child.once("error", reject);
-          child.once("close", (code) => {
-            const out = Buffer.concat(stdout).toString("utf8");
-            const err = Buffer.concat(stderr).toString("utf8");
-            if (code === 0) resolve({ stdout: out, stderr: err });
-            else reject(new Error(`Git plumbing command failed: git ${args.join(" ")}
+        return this.encryptedShadowStore ? this.encryptedShadowStore.withRuntime(operation) : operation();
+      }
+      async runGitInput(args, input, cwd = this.workDir) {
+        return this.withShadowRuntime(async () => {
+          const env = this.gitEnv({});
+          return await new Promise((resolve, reject) => {
+            const child = (0, import_node_child_process.spawn)("git", args, { cwd, env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+            const stdout = [];
+            const stderr = [];
+            child.stdout.on("data", (chunk) => stdout.push(Buffer.from(chunk)));
+            child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
+            child.once("error", reject);
+            child.once("close", (code) => {
+              const out = Buffer.concat(stdout).toString("utf8");
+              const err = Buffer.concat(stderr).toString("utf8");
+              if (code === 0) resolve({ stdout: out, stderr: err });
+              else reject(new Error(`Git plumbing command failed: git ${args.join(" ")}
 Reason: ${err || out || `exit ${code}`}`));
+            });
+            child.stdin.end(input, "utf8");
           });
-          child.stdin.end(input, "utf8");
         });
       }
     };
@@ -1164,23 +1409,23 @@ __export(index_exports, {
 });
 module.exports = __toCommonJS(index_exports);
 init_cjs_shims();
-var import_node_path7 = __toESM(require("path"), 1);
-var import_node_crypto6 = require("crypto");
+var import_node_path8 = __toESM(require("path"), 1);
+var import_node_crypto7 = require("crypto");
 var import_schemastery = __toESM(require("@deepseek-ai/schemastery"), 1);
 var import_picocolors2 = __toESM(require("picocolors"), 1);
 
 // src/service.ts
 init_cjs_shims();
-var import_node_path5 = __toESM(require("path"), 1);
-var import_promises5 = __toESM(require("fs/promises"), 1);
-var import_node_crypto5 = require("crypto");
+var import_node_path6 = __toESM(require("path"), 1);
+var import_promises6 = __toESM(require("fs/promises"), 1);
+var import_node_crypto6 = require("crypto");
 init_git_plumbing();
 
 // src/core/fallback-engine.ts
 init_cjs_shims();
-var import_node_crypto2 = require("crypto");
-var import_node_path2 = __toESM(require("path"), 1);
-var import_promises2 = __toESM(require("fs/promises"), 1);
+var import_node_crypto3 = require("crypto");
+var import_node_path3 = __toESM(require("path"), 1);
+var import_promises3 = __toESM(require("fs/promises"), 1);
 init_git_plumbing();
 var FallbackSnapshotEngine = class {
   workDir;
@@ -1189,39 +1434,39 @@ var FallbackSnapshotEngine = class {
   maxSnapshotFileBytes;
   maxSnapshotBytes;
   constructor(options) {
-    this.workDir = import_node_path2.default.resolve(options.workDir);
-    this.storageDir = import_node_path2.default.resolve(options.storageDir);
-    this.preservePaths = [this.storageDir, ...(options.preservePaths ?? []).map((item) => import_node_path2.default.resolve(this.workDir, item))];
+    this.workDir = import_node_path3.default.resolve(options.workDir);
+    this.storageDir = import_node_path3.default.resolve(options.storageDir);
+    this.preservePaths = [this.storageDir, ...(options.preservePaths ?? []).map((item) => import_node_path3.default.resolve(this.workDir, item))];
     this.maxSnapshotFileBytes = Math.max(0, Math.floor(options.maxSnapshotFileBytes ?? 0));
     this.maxSnapshotBytes = Math.max(0, Math.floor(options.maxSnapshotBytes ?? 0));
   }
   getCheckpointDir(sessionId, checkpointId) {
     const sessionKey = Buffer.from(sessionId, "utf8").toString("base64url") || "_";
     const checkpointKey2 = Buffer.from(checkpointId, "utf8").toString("base64url") || "_";
-    return import_node_path2.default.join(this.storageDir, sessionKey, checkpointKey2);
+    return import_node_path3.default.join(this.storageDir, sessionKey, checkpointKey2);
   }
   async createSnapshot(params) {
     const targetDir = this.getCheckpointDir(params.sessionId, params.checkpointId);
-    const temporary = `${targetDir}.${(0, import_node_crypto2.randomUUID)()}.tmp`;
-    const filesDir = import_node_path2.default.join(temporary, "files");
-    await import_promises2.default.mkdir(filesDir, { recursive: true });
+    const temporary = `${targetDir}.${(0, import_node_crypto3.randomUUID)()}.tmp`;
+    const filesDir = import_node_path3.default.join(temporary, "files");
+    await import_promises3.default.mkdir(filesDir, { recursive: true });
     try {
       const plannedEntries = await this.scanTree(this.workDir);
       await this.assertSnapshotSize(plannedEntries);
       const entries = await this.captureTree(this.workDir, filesDir, plannedEntries);
       const treeOid = await hashSnapshot(filesDir, entries);
       const manifest = { version: 1, entries, treeOid };
-      await import_promises2.default.writeFile(import_node_path2.default.join(temporary, "manifest.json"), `${JSON.stringify(manifest, null, 2)}
+      await import_promises3.default.writeFile(import_node_path3.default.join(temporary, "manifest.json"), `${JSON.stringify(manifest, null, 2)}
 `, "utf8");
-      await import_promises2.default.mkdir(import_node_path2.default.dirname(targetDir), { recursive: true });
-      await import_promises2.default.rename(temporary, targetDir);
+      await import_promises3.default.mkdir(import_node_path3.default.dirname(targetDir), { recursive: true });
+      await import_promises3.default.rename(temporary, targetDir);
       return {
         treeOid: `fallback_${treeOid}`,
         commitOid: `fallback_${treeOid}`,
         changedFiles: entries.filter((entry) => entry.type !== "directory").map((entry) => ({ path: entry.path, status: "modified" }))
       };
     } catch (error) {
-      await import_promises2.default.rm(temporary, { recursive: true, force: true }).catch(() => void 0);
+      await import_promises3.default.rm(temporary, { recursive: true, force: true }).catch(() => void 0);
       throw error;
     }
   }
@@ -1237,9 +1482,9 @@ var FallbackSnapshotEngine = class {
   /** Compare a persisted fallback manifest with the current workspace. */
   async getChangedFiles(sessionId, checkpointId) {
     const snapshotDir = this.getCheckpointDir(sessionId, checkpointId);
-    const raw = await import_promises2.default.readFile(import_node_path2.default.join(snapshotDir, "manifest.json"));
+    const raw = await import_promises3.default.readFile(import_node_path3.default.join(snapshotDir, "manifest.json"));
     const manifest = parseManifest(raw.toString("utf8"));
-    const filesDir = import_node_path2.default.join(snapshotDir, "files");
+    const filesDir = import_node_path3.default.join(snapshotDir, "files");
     const current = await this.scanTree(this.workDir);
     const targetByPath = new Map(manifest.entries.filter((entry) => entry.type !== "directory").map((entry) => [entry.path, entry]));
     const currentByPath = new Map(current.filter((entry) => entry.type !== "directory").map((entry) => [entry.path, entry]));
@@ -1283,35 +1528,35 @@ var FallbackSnapshotEngine = class {
   }
   async restoreSnapshot(sessionId, checkpointId, options = {}) {
     const snapshotDir = this.getCheckpointDir(sessionId, checkpointId);
-    const raw = await import_promises2.default.readFile(import_node_path2.default.join(snapshotDir, "manifest.json"), "utf8").catch((error) => {
+    const raw = await import_promises3.default.readFile(import_node_path3.default.join(snapshotDir, "manifest.json"), "utf8").catch((error) => {
       if (error?.code === "ENOENT") throw new Error(`Fallback snapshot '${checkpointId}' is missing or uses an unsupported legacy format.`);
       throw error;
     });
     const manifest = parseManifest(raw);
-    const filesDir = import_node_path2.default.join(snapshotDir, "files");
+    const filesDir = import_node_path3.default.join(snapshotDir, "files");
     const preservePaths = options.preservePaths ?? [];
     const targetPaths = new Set(manifest.entries.filter((entry) => !isPathOmitted(entry.path, preservePaths)).map((entry) => entry.path));
     const currentEntries = await this.scanTree(this.workDir);
     for (const entry of currentEntries.sort(deepestFirst)) {
       if (isPathOmitted(entry.path, preservePaths)) continue;
       if (targetPaths.has(entry.path)) continue;
-      await import_promises2.default.rm(this.resolveSafe(entry.path), { recursive: true, force: true });
+      await import_promises3.default.rm(this.resolveSafe(entry.path), { recursive: true, force: true });
     }
     for (const entry of manifest.entries.filter((item) => item.type === "directory" && !isPathOmitted(item.path, preservePaths)).sort(shallowestFirst)) {
       const destination = this.resolveSafe(entry.path);
-      const stat = await import_promises2.default.lstat(destination).catch(() => void 0);
-      if (stat && !stat.isDirectory()) await import_promises2.default.rm(destination, { recursive: true, force: true });
-      await import_promises2.default.mkdir(destination, { recursive: true, mode: entry.mode });
+      const stat = await import_promises3.default.lstat(destination).catch(() => void 0);
+      if (stat && !stat.isDirectory()) await import_promises3.default.rm(destination, { recursive: true, force: true });
+      await import_promises3.default.mkdir(destination, { recursive: true, mode: entry.mode });
     }
     for (const entry of manifest.entries.filter((item) => item.type !== "directory" && !isPathOmitted(item.path, preservePaths))) {
       const destination = this.resolveSafe(entry.path);
-      await import_promises2.default.mkdir(import_node_path2.default.dirname(destination), { recursive: true });
-      await import_promises2.default.rm(destination, { recursive: true, force: true });
+      await import_promises3.default.mkdir(import_node_path3.default.dirname(destination), { recursive: true });
+      await import_promises3.default.rm(destination, { recursive: true, force: true });
       if (entry.type === "file") {
-        await import_promises2.default.copyFile(import_node_path2.default.join(filesDir, ...entry.path.split("/")), destination);
-        await import_promises2.default.chmod(destination, entry.mode).catch(() => void 0);
+        await import_promises3.default.copyFile(import_node_path3.default.join(filesDir, ...entry.path.split("/")), destination);
+        await import_promises3.default.chmod(destination, entry.mode).catch(() => void 0);
       } else {
-        await import_promises2.default.symlink(entry.linkTarget, destination);
+        await import_promises3.default.symlink(entry.linkTarget, destination);
       }
     }
   }
@@ -1325,9 +1570,9 @@ var FallbackSnapshotEngine = class {
         throw new Error(`Workspace changed after the latest checkpoint: expected ${options.expectedCurrentTreeOid}, observed ${currentTree}`);
       }
     }
-    const raw = await import_promises2.default.readFile(import_node_path2.default.join(snapshotDir, "manifest.json"), "utf8");
+    const raw = await import_promises3.default.readFile(import_node_path3.default.join(snapshotDir, "manifest.json"), "utf8");
     const manifest = parseManifest(raw);
-    const filesDir = import_node_path2.default.join(snapshotDir, "files");
+    const filesDir = import_node_path3.default.join(snapshotDir, "files");
     const selected = (entry) => normalized.some((item) => entry.path === item || entry.path.startsWith(`${item}/`));
     const currentEntries = (await this.scanTree(this.workDir)).filter(selected).sort(deepestFirst);
     const targetEntries = manifest.entries.filter(selected);
@@ -1336,21 +1581,21 @@ var FallbackSnapshotEngine = class {
     }
     const targetPaths = new Set(targetEntries.map((entry) => entry.path));
     for (const entry of currentEntries) {
-      if (!targetPaths.has(entry.path)) await import_promises2.default.rm(this.resolveSafe(entry.path), { recursive: true, force: true });
+      if (!targetPaths.has(entry.path)) await import_promises3.default.rm(this.resolveSafe(entry.path), { recursive: true, force: true });
     }
     for (const entry of targetEntries.filter((item) => item.type === "directory").sort(shallowestFirst)) {
       const destination = this.resolveSafe(entry.path);
-      await import_promises2.default.mkdir(destination, { recursive: true, mode: entry.mode });
+      await import_promises3.default.mkdir(destination, { recursive: true, mode: entry.mode });
     }
     for (const entry of targetEntries.filter((item) => item.type !== "directory")) {
       const destination = this.resolveSafe(entry.path);
-      await import_promises2.default.mkdir(import_node_path2.default.dirname(destination), { recursive: true });
-      await import_promises2.default.rm(destination, { recursive: true, force: true });
+      await import_promises3.default.mkdir(import_node_path3.default.dirname(destination), { recursive: true });
+      await import_promises3.default.rm(destination, { recursive: true, force: true });
       if (entry.type === "file") {
-        await import_promises2.default.copyFile(import_node_path2.default.join(filesDir, ...entry.path.split("/")), destination);
-        await import_promises2.default.chmod(destination, entry.mode).catch(() => void 0);
+        await import_promises3.default.copyFile(import_node_path3.default.join(filesDir, ...entry.path.split("/")), destination);
+        await import_promises3.default.chmod(destination, entry.mode).catch(() => void 0);
       } else {
-        await import_promises2.default.symlink(entry.linkTarget, destination);
+        await import_promises3.default.symlink(entry.linkTarget, destination);
       }
     }
     return normalized;
@@ -1358,19 +1603,19 @@ var FallbackSnapshotEngine = class {
   async removeSnapshot(sessionId, checkpointId) {
     const target = this.getCheckpointDir(sessionId, checkpointId);
     const before = await directorySize(target);
-    await import_promises2.default.rm(target, { recursive: true, force: true });
+    await import_promises3.default.rm(target, { recursive: true, force: true });
     return before;
   }
   async captureTree(sourceRoot, destinationRoot, plannedEntries) {
     const entries = plannedEntries ?? await this.scanTree(sourceRoot);
     for (const entry of entries) {
-      const source = import_node_path2.default.join(sourceRoot, ...entry.path.split("/"));
-      const destination = import_node_path2.default.join(destinationRoot, ...entry.path.split("/"));
+      const source = import_node_path3.default.join(sourceRoot, ...entry.path.split("/"));
+      const destination = import_node_path3.default.join(destinationRoot, ...entry.path.split("/"));
       if (entry.type === "directory") {
-        await import_promises2.default.mkdir(destination, { recursive: true, mode: entry.mode });
+        await import_promises3.default.mkdir(destination, { recursive: true, mode: entry.mode });
       } else if (entry.type === "file") {
-        await import_promises2.default.mkdir(import_node_path2.default.dirname(destination), { recursive: true });
-        await import_promises2.default.copyFile(source, destination);
+        await import_promises3.default.mkdir(import_node_path3.default.dirname(destination), { recursive: true });
+        await import_promises3.default.copyFile(source, destination);
       }
     }
     return entries;
@@ -1379,17 +1624,17 @@ var FallbackSnapshotEngine = class {
     if (target.type !== live.type || target.mode !== live.mode) return false;
     if (target.type === "symlink") return target.linkTarget === live.linkTarget;
     if (target.type !== "file") return true;
-    const expected = await import_promises2.default.readFile(import_node_path2.default.join(filesDir, ...target.path.split("/"))).catch(() => void 0);
-    const actual = await import_promises2.default.readFile(import_node_path2.default.join(this.workDir, ...live.path.split("/"))).catch(() => void 0);
+    const expected = await import_promises3.default.readFile(import_node_path3.default.join(filesDir, ...target.path.split("/"))).catch(() => void 0);
+    const actual = await import_promises3.default.readFile(import_node_path3.default.join(this.workDir, ...live.path.split("/"))).catch(() => void 0);
     return Boolean(expected && actual && expected.equals(actual));
   }
   async readSnapshot(sessionId, checkpointId) {
     const snapshotDir = this.getCheckpointDir(sessionId, checkpointId);
-    const manifest = parseManifest(await import_promises2.default.readFile(import_node_path2.default.join(snapshotDir, "manifest.json"), "utf8"));
-    return { manifest, filesDir: import_node_path2.default.join(snapshotDir, "files") };
+    const manifest = parseManifest(await import_promises3.default.readFile(import_node_path3.default.join(snapshotDir, "manifest.json"), "utf8"));
+    return { manifest, filesDir: import_node_path3.default.join(snapshotDir, "files") };
   }
   async entryContent(entry, filesDir) {
-    if (entry.type === "file") return import_promises2.default.readFile(import_node_path2.default.join(filesDir, ...entry.path.split("/")));
+    if (entry.type === "file") return import_promises3.default.readFile(import_node_path3.default.join(filesDir, ...entry.path.split("/")));
     if (entry.type === "symlink") return Buffer.from(`symlink -> ${entry.linkTarget ?? ""}
 `, "utf8");
     return Buffer.alloc(0);
@@ -1399,7 +1644,7 @@ var FallbackSnapshotEngine = class {
     let totalBytes = 0;
     for (const entry of entries) {
       if (entry.type !== "file") continue;
-      const stat = await import_promises2.default.stat(import_node_path2.default.join(this.workDir, ...entry.path.split("/")));
+      const stat = await import_promises3.default.stat(import_node_path3.default.join(this.workDir, ...entry.path.split("/")));
       if (this.maxSnapshotFileBytes > 0 && stat.size > this.maxSnapshotFileBytes) {
         throw new SnapshotSizeError({ file: entry.path, fileBytes: stat.size, limitBytes: this.maxSnapshotFileBytes });
       }
@@ -1412,16 +1657,16 @@ var FallbackSnapshotEngine = class {
   async scanTree(root, omitPaths = []) {
     const entries = [];
     const visit = async (directory, relative = "") => {
-      for (const dirent of await import_promises2.default.readdir(directory, { withFileTypes: true })) {
-        const absolute = import_node_path2.default.join(directory, dirent.name);
+      for (const dirent of await import_promises3.default.readdir(directory, { withFileTypes: true })) {
+        const absolute = import_node_path3.default.join(directory, dirent.name);
         if (this.isPreserved(absolute)) continue;
         const childRelative = relative ? `${relative}/${dirent.name}` : dirent.name;
         validateRelativePath(childRelative);
         if (isPathOmitted(childRelative, omitPaths)) continue;
-        const stat = await import_promises2.default.lstat(absolute);
+        const stat = await import_promises3.default.lstat(absolute);
         const mode = stat.mode & 511;
         if (stat.isSymbolicLink()) {
-          entries.push({ path: childRelative, type: "symlink", mode, linkTarget: await import_promises2.default.readlink(absolute) });
+          entries.push({ path: childRelative, type: "symlink", mode, linkTarget: await import_promises3.default.readlink(absolute) });
         } else if (stat.isDirectory()) {
           entries.push({ path: childRelative, type: "directory", mode });
           await visit(absolute, childRelative);
@@ -1434,14 +1679,14 @@ var FallbackSnapshotEngine = class {
     return entries.sort((left, right) => left.path.localeCompare(right.path));
   }
   isPreserved(absolute) {
-    const resolved = import_node_path2.default.resolve(absolute);
-    return this.preservePaths.some((base) => resolved === base || resolved.startsWith(`${base}${import_node_path2.default.sep}`));
+    const resolved = import_node_path3.default.resolve(absolute);
+    return this.preservePaths.some((base) => resolved === base || resolved.startsWith(`${base}${import_node_path3.default.sep}`));
   }
   resolveSafe(relative) {
     validateRelativePath(relative);
-    const absolute = import_node_path2.default.resolve(this.workDir, ...relative.split("/"));
-    const relation = import_node_path2.default.relative(this.workDir, absolute);
-    if (!relation || relation === ".." || relation.startsWith(`..${import_node_path2.default.sep}`) || import_node_path2.default.isAbsolute(relation)) {
+    const absolute = import_node_path3.default.resolve(this.workDir, ...relative.split("/"));
+    const relation = import_node_path3.default.relative(this.workDir, absolute);
+    if (!relation || relation === ".." || relation.startsWith(`..${import_node_path3.default.sep}`) || import_node_path3.default.isAbsolute(relation)) {
       throw new Error(`Unsafe snapshot path '${relative}'.`);
     }
     if (this.isPreserved(absolute)) throw new Error(`Snapshot path overlaps protected storage: '${relative}'.`);
@@ -1452,10 +1697,10 @@ function isPathOmitted(value, omitPaths) {
   return omitPaths.some((item) => value === item || value.startsWith(`${item}/`));
 }
 async function hashSnapshot(root, entries) {
-  const hash = (0, import_node_crypto2.createHash)("sha256");
+  const hash = (0, import_node_crypto3.createHash)("sha256");
   for (const entry of entries) {
     hash.update(`${entry.type}\0${entry.path}\0${entry.mode}\0${entry.linkTarget ?? ""}\0`);
-    if (entry.type === "file") hash.update(await import_promises2.default.readFile(import_node_path2.default.join(root, ...entry.path.split("/"))));
+    if (entry.type === "file") hash.update(await import_promises3.default.readFile(import_node_path3.default.join(root, ...entry.path.split("/"))));
   }
   return hash.digest("hex");
 }
@@ -1472,7 +1717,7 @@ function parseManifest(raw) {
   return parsed;
 }
 function validateRelativePath(value) {
-  if (!value || value.includes("\0") || value.includes("\\") || import_node_path2.default.posix.isAbsolute(value) || value.split("/").some((part) => part === "" || part === "." || part === "..")) {
+  if (!value || value.includes("\0") || value.includes("\\") || import_node_path3.default.posix.isAbsolute(value) || value.split("/").some((part) => part === "" || part === "." || part === "..")) {
     throw new Error(`Unsafe relative path '${value}'.`);
   }
 }
@@ -1531,10 +1776,10 @@ function sharedSuffix(left, right, prefix) {
 async function directorySize(root) {
   let total = 0;
   const visit = async (directory) => {
-    for (const entry of await import_promises2.default.readdir(directory, { withFileTypes: true }).catch(() => [])) {
-      const absolute = import_node_path2.default.join(directory, entry.name);
+    for (const entry of await import_promises3.default.readdir(directory, { withFileTypes: true }).catch(() => [])) {
+      const absolute = import_node_path3.default.join(directory, entry.name);
       if (entry.isDirectory()) await visit(absolute);
-      else total += (await import_promises2.default.stat(absolute).catch(() => ({ size: 0 }))).size;
+      else total += (await import_promises3.default.stat(absolute).catch(() => ({ size: 0 }))).size;
     }
   };
   await visit(root);
@@ -1543,9 +1788,9 @@ async function directorySize(root) {
 
 // src/core/dag-manager.ts
 init_cjs_shims();
-var import_node_path3 = __toESM(require("path"), 1);
-var import_promises3 = __toESM(require("fs/promises"), 1);
-var import_node_crypto3 = require("crypto");
+var import_node_path4 = __toESM(require("path"), 1);
+var import_promises4 = __toESM(require("fs/promises"), 1);
+var import_node_crypto4 = require("crypto");
 var import_picocolors = __toESM(require("picocolors"), 1);
 var DAG_FORMAT_VERSION = 1;
 var DAG_ENVELOPE_VERSION = 1;
@@ -1563,8 +1808,8 @@ var DAGStateManager = class {
   previousEncryptionKey;
   constructor(options) {
     const branch = options.initialBranch || "main";
-    this.encryptionKey = options.encryptionKey?.trim() ? (0, import_node_crypto3.createHash)("sha256").update(options.encryptionKey).digest() : void 0;
-    this.previousEncryptionKey = options.previousEncryptionKey?.trim() ? (0, import_node_crypto3.createHash)("sha256").update(options.previousEncryptionKey).digest() : void 0;
+    this.encryptionKey = options.encryptionKey?.trim() ? (0, import_node_crypto4.createHash)("sha256").update(options.encryptionKey).digest() : void 0;
+    this.previousEncryptionKey = options.previousEncryptionKey?.trim() ? (0, import_node_crypto4.createHash)("sha256").update(options.previousEncryptionKey).digest() : void 0;
     this.tree = {
       formatVersion: DAG_FORMAT_VERSION,
       sessionId: options.sessionId,
@@ -1582,14 +1827,14 @@ var DAGStateManager = class {
       }
     };
     const safeSessionKey = Buffer.from(options.sessionId, "utf8").toString("base64url") || "_";
-    this.storageFile = import_node_path3.default.join(options.storageDir, `dag_${safeSessionKey}.json`);
+    this.storageFile = import_node_path4.default.join(options.storageDir, `dag_${safeSessionKey}.json`);
   }
   /**
    * 初始化并尝试从本地恢复树结构
    */
   async init() {
     try {
-      const content = await import_promises3.default.readFile(this.storageFile, "utf-8");
+      const content = await import_promises4.default.readFile(this.storageFile, "utf-8");
       const decoded = this.decode(content);
       const { tree, migrated } = this.migrateTree(decoded.tree);
       this.assertTree(tree);
@@ -1603,13 +1848,13 @@ var DAGStateManager = class {
    * 持久化当前 DAG 树到本地 JSON
    */
   async persist() {
-    await import_promises3.default.mkdir(import_node_path3.default.dirname(this.storageFile), { recursive: true });
-    const temporary = `${this.storageFile}.${(0, import_node_crypto3.randomUUID)()}.tmp`;
+    await import_promises4.default.mkdir(import_node_path4.default.dirname(this.storageFile), { recursive: true });
+    const temporary = `${this.storageFile}.${(0, import_node_crypto4.randomUUID)()}.tmp`;
     try {
-      await import_promises3.default.writeFile(temporary, this.encode(this.tree), { encoding: "utf-8", flag: "wx" });
-      await import_promises3.default.rename(temporary, this.storageFile);
+      await import_promises4.default.writeFile(temporary, this.encode(this.tree), { encoding: "utf-8", flag: "wx" });
+      await import_promises4.default.rename(temporary, this.storageFile);
     } finally {
-      await import_promises3.default.rm(temporary, { force: true }).catch(() => void 0);
+      await import_promises4.default.rm(temporary, { force: true }).catch(() => void 0);
     }
   }
   /**
@@ -1892,8 +2137,8 @@ var DAGStateManager = class {
     const plaintext = Buffer.from(JSON.stringify(tree, null, 2), "utf8");
     if (!this.encryptionKey) return `${plaintext.toString("utf8")}
 `;
-    const nonce = (0, import_node_crypto3.randomBytes)(12);
-    const cipher = (0, import_node_crypto3.createCipheriv)("aes-256-gcm", this.encryptionKey, nonce);
+    const nonce = (0, import_node_crypto4.randomBytes)(12);
+    const cipher = (0, import_node_crypto4.createCipheriv)("aes-256-gcm", this.encryptionKey, nonce);
     const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
     const envelope = {
       kind: "dsh-time-machine-dag",
@@ -1918,7 +2163,7 @@ var DAGStateManager = class {
       const keys = [{ key: this.encryptionKey, previous: false }, ...this.previousEncryptionKey ? [{ key: this.previousEncryptionKey, previous: true }] : []];
       for (const candidate of keys) {
         try {
-          const decipher = (0, import_node_crypto3.createDecipheriv)("aes-256-gcm", candidate.key, Buffer.from(parsed.nonce, "base64url"));
+          const decipher = (0, import_node_crypto4.createDecipheriv)("aes-256-gcm", candidate.key, Buffer.from(parsed.nonce, "base64url"));
           decipher.setAuthTag(Buffer.from(parsed.tag, "base64url"));
           const plaintext = Buffer.concat([
             decipher.update(Buffer.from(parsed.ciphertext, "base64url")),
@@ -2073,10 +2318,10 @@ var KeyedOperationLock = class {
 
 // src/core/workspace-lock.ts
 init_cjs_shims();
-var import_promises4 = __toESM(require("fs/promises"), 1);
-var import_node_path4 = __toESM(require("path"), 1);
+var import_promises5 = __toESM(require("fs/promises"), 1);
+var import_node_path5 = __toESM(require("path"), 1);
 var import_node_os = __toESM(require("os"), 1);
-var import_node_crypto4 = require("crypto");
+var import_node_crypto5 = require("crypto");
 var WorkspaceBusyError = class extends Error {
   code = "WORKSPACE_BUSY";
   constructor(lockPath, timeoutMs) {
@@ -2090,13 +2335,13 @@ var WorkspaceFileLock = class {
   retryMs;
   staleMs;
   constructor(lockPath, options = {}) {
-    this.lockPath = import_node_path4.default.resolve(lockPath);
+    this.lockPath = import_node_path5.default.resolve(lockPath);
     this.timeoutMs = Math.max(0, Math.floor(options.timeoutMs ?? 3e4));
     this.retryMs = Math.max(5, Math.floor(options.retryMs ?? 25));
     this.staleMs = Math.max(this.retryMs, Math.floor(options.staleMs ?? 12e4));
   }
   async run(operation) {
-    const token = (0, import_node_crypto4.randomUUID)();
+    const token = (0, import_node_crypto5.randomUUID)();
     const handle = await this.acquire(token);
     try {
       return await operation();
@@ -2106,11 +2351,11 @@ var WorkspaceFileLock = class {
     }
   }
   async acquire(token) {
-    await import_promises4.default.mkdir(import_node_path4.default.dirname(this.lockPath), { recursive: true });
+    await import_promises5.default.mkdir(import_node_path5.default.dirname(this.lockPath), { recursive: true });
     const startedAt = Date.now();
     while (true) {
       try {
-        const handle = await import_promises4.default.open(this.lockPath, "wx");
+        const handle = await import_promises5.default.open(this.lockPath, "wx");
         await handle.writeFile(JSON.stringify({ token, pid: process.pid, host: import_node_os.default.hostname(), createdAt: Date.now() }), "utf8");
         return handle;
       } catch (error) {
@@ -2122,24 +2367,24 @@ var WorkspaceFileLock = class {
     }
   }
   async removeDeadOwner() {
-    const stat = await import_promises4.default.stat(this.lockPath).catch(() => void 0);
+    const stat = await import_promises5.default.stat(this.lockPath).catch(() => void 0);
     if (!stat) return;
-    const owner = await import_promises4.default.readFile(this.lockPath, "utf8").then((value) => JSON.parse(value)).catch(() => ({}));
+    const owner = await import_promises5.default.readFile(this.lockPath, "utf8").then((value) => JSON.parse(value)).catch(() => ({}));
     const age = Date.now() - (owner.createdAt ?? stat.mtimeMs);
     if (owner.pid && owner.pid !== process.pid) {
       try {
         process.kill(owner.pid, 0);
         return;
       } catch {
-        await import_promises4.default.rm(this.lockPath, { force: true }).catch(() => void 0);
+        await import_promises5.default.rm(this.lockPath, { force: true }).catch(() => void 0);
         return;
       }
     }
-    if (age > this.staleMs) await import_promises4.default.rm(this.lockPath, { force: true }).catch(() => void 0);
+    if (age > this.staleMs) await import_promises5.default.rm(this.lockPath, { force: true }).catch(() => void 0);
   }
   async release(token) {
-    const owner = await import_promises4.default.readFile(this.lockPath, "utf8").then((value) => JSON.parse(value)).catch(() => void 0);
-    if (owner?.token === token) await import_promises4.default.rm(this.lockPath, { force: true }).catch(() => void 0);
+    const owner = await import_promises5.default.readFile(this.lockPath, "utf8").then((value) => JSON.parse(value)).catch(() => void 0);
+    if (owner?.token === token) await import_promises5.default.rm(this.lockPath, { force: true }).catch(() => void 0);
   }
 };
 
@@ -2173,9 +2418,9 @@ var TimeMachineService = class {
   restorePlans = /* @__PURE__ */ new Map();
   externalEffectAdapters = /* @__PURE__ */ new Map();
   constructor(options) {
-    this.workDir = import_node_path5.default.resolve(options.workDir);
-    this.storageDir = options.storageDir ? import_node_path5.default.resolve(options.storageDir) : import_node_path5.default.join(this.workDir, ".dsh", "time-machine");
-    this.journalDir = import_node_path5.default.join(this.storageDir, "restore-journals");
+    this.workDir = import_node_path6.default.resolve(options.workDir);
+    this.storageDir = options.storageDir ? import_node_path6.default.resolve(options.storageDir) : import_node_path6.default.join(this.workDir, ".dsh", "time-machine");
+    this.journalDir = import_node_path6.default.join(this.storageDir, "restore-journals");
     this.config = {
       autoSnapshot: options.config?.autoSnapshot ?? true,
       enableReflectionAdvisor: options.config?.enableReflectionAdvisor ?? true,
@@ -2190,6 +2435,8 @@ var TimeMachineService = class {
       maxSnapshots: Math.max(0, Math.floor(options.config?.maxSnapshots ?? 0)),
       maxStorageBytes: Math.max(0, Math.floor(options.config?.maxStorageBytes ?? 0)),
       shadowStore: options.config?.shadowStore ?? false,
+      shadowStoreEncryptionKeyEnv: options.config?.shadowStoreEncryptionKeyEnv ?? "",
+      shadowStoreEncryptionPreviousKeyEnv: options.config?.shadowStoreEncryptionPreviousKeyEnv ?? "",
       autoPrune: options.config?.autoPrune ?? false,
       retentionMaxAgeMs: Math.max(0, Math.floor(options.config?.retentionMaxAgeMs ?? 0)),
       workspaceLockTimeoutMs: Math.max(0, Math.floor(options.config?.workspaceLockTimeoutMs ?? 3e4)),
@@ -2211,8 +2458,10 @@ var TimeMachineService = class {
       workDir: this.workDir,
       refPrefix: this.config.refPrefix,
       preservePaths: [this.storageDir, ...this.config.preservePaths],
-      quarantineDir: import_node_path5.default.join(this.storageDir, "ignored-quarantine"),
-      shadowObjectDir: this.config.shadowStore ? import_node_path5.default.join(this.storageDir, "git-shadow", "objects") : void 0,
+      quarantineDir: import_node_path6.default.join(this.storageDir, "ignored-quarantine"),
+      shadowObjectDir: this.config.shadowStore ? import_node_path6.default.join(this.storageDir, "git-shadow", "objects") : void 0,
+      shadowEncryptionKey: this.config.shadowStoreEncryptionKeyEnv ? process.env[this.config.shadowStoreEncryptionKeyEnv] : void 0,
+      shadowEncryptionPreviousKey: this.config.shadowStoreEncryptionPreviousKeyEnv ? process.env[this.config.shadowStoreEncryptionPreviousKeyEnv] : void 0,
       maxQuarantineBytes: this.config.maxQuarantineBytes,
       quarantineEncryptionKey: this.config.quarantineEncryptionKeyEnv ? process.env[this.config.quarantineEncryptionKeyEnv] : void 0,
       maxSnapshotFileBytes: this.config.maxSnapshotFileBytes,
@@ -2221,12 +2470,12 @@ var TimeMachineService = class {
     });
     this.fallbackEngine = new FallbackSnapshotEngine({
       workDir: this.workDir,
-      storageDir: import_node_path5.default.join(this.storageDir, "fallback_backups"),
+      storageDir: import_node_path6.default.join(this.storageDir, "fallback_backups"),
       preservePaths: [this.storageDir, ...this.config.preservePaths],
       maxSnapshotFileBytes: this.config.maxSnapshotFileBytes,
       maxSnapshotBytes: this.config.maxSnapshotBytes
     });
-    this.workspaceLock = new WorkspaceFileLock(import_node_path5.default.join(this.storageDir, ".workspace.lock"), {
+    this.workspaceLock = new WorkspaceFileLock(import_node_path6.default.join(this.storageDir, ".workspace.lock"), {
       timeoutMs: this.config.workspaceLockTimeoutMs
     });
   }
@@ -2290,7 +2539,7 @@ var TimeMachineService = class {
       if (this.config.retentionMaxAgeMs > 0) await this.autoPruneForAge(dag);
       await this.enforceStorageQuota(dag);
     }
-    const checkpointId = `chk_t${params.turnIndex}_${(0, import_node_crypto5.randomUUID)().replace(/-/g, "").slice(0, 12)}`;
+    const checkpointId = `chk_t${params.turnIndex}_${(0, import_node_crypto6.randomUUID)().replace(/-/g, "").slice(0, 12)}`;
     const currentNode = dag.getCurrentNode();
     const parentCommitOid = currentNode ? currentNode.gitCommitOid : null;
     let treeOid = "";
@@ -2435,7 +2684,7 @@ var TimeMachineService = class {
         ...effect.compensation?.trim() ? { compensation: effect.compensation.trim() } : {},
         failureSemantics: effect.failureSemantics.trim(),
         status: effect.status,
-        id: effect.id?.trim() || (0, import_node_crypto5.randomUUID)(),
+        id: effect.id?.trim() || (0, import_node_crypto6.randomUUID)(),
         recordedAt: Date.now()
       };
       if ((node.externalEffects ?? []).some((item) => item.id === record.id)) {
@@ -2754,13 +3003,13 @@ var TimeMachineService = class {
         ...driftDiffs.map((diff) => diff.file),
         ...symmetricDifference2(expectedIgnored, currentState.ignoredPaths).map((item) => `(ignored) ${item}`)
       ])].sort();
-      const conflictingPaths = allConflictingPaths.filter((file) => !preservedHandEditPaths.some((path8) => file === path8 || file.startsWith(`${path8}/`)));
+      const conflictingPaths = allConflictingPaths.filter((file) => !preservedHandEditPaths.some((path9) => file === path9 || file.startsWith(`${path9}/`)));
       const currentLineage = current ? dag.getLineage(current.id) : [];
       const targetIndex = currentLineage.findIndex((node) => node.id === checkpointId);
       const externalEffects = currentLineage.slice(targetIndex >= 0 ? targetIndex + 1 : 0).flatMap((node) => node.externalEffects ?? []).map((effect) => cloneJson2(effect));
       const workspaceDrifted = Boolean(current && (currentState.treeOid !== expectedTree || !sameStrings(currentState.ignoredPaths, expectedIgnored)));
       this.expireRestorePlans();
-      const planId = `plan_${(0, import_node_crypto5.randomUUID)().replace(/-/g, "")}`;
+      const planId = `plan_${(0, import_node_crypto6.randomUUID)().replace(/-/g, "")}`;
       const createdAt = Date.now();
       const expiresAt = this.config.restorePlanTtlMs > 0 ? createdAt + this.config.restorePlanTtlMs : null;
       this.restorePlans.set(planId, {
@@ -2862,14 +3111,18 @@ var TimeMachineService = class {
       checkpoints,
       pruneCandidates: leaves,
       gitObjectsShared: await this.gitEngine.isGitRepo() && !this.config.shadowStore,
-      gitObjectsEncrypted: false,
+      gitObjectsEncrypted: this.gitEngine.usesEncryptedShadowStore,
       dagStateEncrypted: Boolean(this.config.stateEncryptionKeyEnv && process.env[this.config.stateEncryptionKeyEnv]),
       quarantineEncrypted: Boolean(this.config.quarantineEncryptionKeyEnv && process.env[this.config.quarantineEncryptionKeyEnv])
     };
   }
+  /** Explicitly migrate a plaintext shadow object directory into the encrypted archive. */
+  async migrateShadowStore() {
+    return this.runWorkspaceOperation(() => this.gitEngine.migrateShadowStore());
+  }
   /** Enumerate persisted sessions without creating a new empty DAG. */
   async listSessions() {
-    const entries = await import_promises5.default.readdir(this.storageDir, { withFileTypes: true }).catch(() => []);
+    const entries = await import_promises6.default.readdir(this.storageDir, { withFileTypes: true }).catch(() => []);
     const summaries = [];
     for (const entry of entries) {
       if (!entry.isFile() || !entry.name.startsWith("dag_") || !entry.name.endsWith(".json")) continue;
@@ -2913,7 +3166,10 @@ var TimeMachineService = class {
       fallbackTextDiff: !git,
       selectiveRestore: usable || !git,
       shadowStore: git && this.config.shadowStore,
-      shadowStoreEncryption: false,
+      shadowStoreEncryption: git && this.gitEngine.usesEncryptedShadowStore,
+      shadowStoreKeyRotation: Boolean(
+        this.config.shadowStoreEncryptionKeyEnv && process.env[this.config.shadowStoreEncryptionKeyEnv] && this.config.shadowStoreEncryptionPreviousKeyEnv && process.env[this.config.shadowStoreEncryptionPreviousKeyEnv]
+      ),
       dagStateEncryption: Boolean(this.config.stateEncryptionKeyEnv && process.env[this.config.stateEncryptionKeyEnv]),
       dagStateKeyRotation: Boolean(
         this.config.stateEncryptionKeyEnv && process.env[this.config.stateEncryptionKeyEnv] && this.config.stateEncryptionPreviousKeyEnv && process.env[this.config.stateEncryptionPreviousKeyEnv]
@@ -3054,9 +3310,9 @@ var TimeMachineService = class {
       }
     };
     for (const manager of this.dagManagers.values()) collect(manager.tree);
-    for (const entry of await import_promises5.default.readdir(this.storageDir, { withFileTypes: true }).catch(() => [])) {
+    for (const entry of await import_promises6.default.readdir(this.storageDir, { withFileTypes: true }).catch(() => [])) {
       if (!entry.isFile() || !entry.name.startsWith("dag_") || !entry.name.endsWith(".json")) continue;
-      const raw = await import_promises5.default.readFile(import_node_path5.default.join(this.storageDir, entry.name), "utf8").then((value) => JSON.parse(value)).catch(() => void 0);
+      const raw = await import_promises6.default.readFile(import_node_path6.default.join(this.storageDir, entry.name), "utf8").then((value) => JSON.parse(value)).catch(() => void 0);
       if (raw) collect(raw);
     }
     return keys;
@@ -3097,7 +3353,7 @@ var TimeMachineService = class {
       const expectedIgnored = current.settledIgnoredPaths ?? current.ignoredPaths ?? [];
       if (actual.treeOid !== expectedTree || !sameStrings(actual.ignoredPaths, expectedIgnored)) {
         const { WorkspaceDriftError: WorkspaceDriftError2 } = await Promise.resolve().then(() => (init_git_plumbing(), git_plumbing_exports));
-        const changed = actual.treeOid === expectedTree ? [] : (isGit ? (await this.gitEngine.getDiffBetween(expectedTree, actual.treeOid)).map((item) => item.file) : current ? (await this.fallbackEngine.getChangedFiles(dag.tree.sessionId, current.id)).map((item) => item.path) : []).filter((file) => !preservedPaths.some((path8) => file === path8 || file.startsWith(`${path8}/`)));
+        const changed = actual.treeOid === expectedTree ? [] : (isGit ? (await this.gitEngine.getDiffBetween(expectedTree, actual.treeOid)).map((item) => item.file) : current ? (await this.fallbackEngine.getChangedFiles(dag.tree.sessionId, current.id)).map((item) => item.path) : []).filter((file) => !preservedPaths.some((path9) => file === path9 || file.startsWith(`${path9}/`)));
         const ignoredDrift = !sameStrings(actual.ignoredPaths, expectedIgnored);
         if (changed.length || ignoredDrift) {
           const details = actual.treeOid === expectedTree ? ["workspace no longer matches the active checkpoint"] : [`managed tree changed (expected ${expectedTree}, observed ${actual.treeOid})${changed.length ? `: ${changed.join(", ")}` : ""}`];
@@ -3171,7 +3427,7 @@ var TimeMachineService = class {
       const verified2 = await this.gitEngine.inspectWorkspace({ omitPaths: [...target.omittedPaths ?? [], ...preservePaths2] });
       const expectedTree2 = options.mode === "merge" ? result.restoredTreeOid : target.gitTreeOid;
       const treeMismatch = verified2.treeOid !== expectedTree2;
-      const allowedMismatch = treeMismatch && preservePaths2.length ? (await this.gitEngine.getDiffBetween(expectedTree2, verified2.treeOid)).every((item) => preservePaths2.some((path8) => item.file === path8 || item.file.startsWith(`${path8}/`))) : false;
+      const allowedMismatch = treeMismatch && preservePaths2.length ? (await this.gitEngine.getDiffBetween(expectedTree2, verified2.treeOid)).every((item) => preservePaths2.some((path9) => item.file === path9 || item.file.startsWith(`${path9}/`))) : false;
       if (treeMismatch && !allowedMismatch || !sameStrings(verified2.ignoredPaths, target.ignoredPaths ?? [])) {
         throw new Error(`Workspace integrity check failed after restoring checkpoint '${target.id}'.`);
       }
@@ -3202,64 +3458,64 @@ var TimeMachineService = class {
     return preserved;
   }
   async hashWorkspacePath(relative) {
-    const absolute = import_node_path5.default.resolve(this.workDir, relative);
-    if (!absolute.startsWith(`${import_node_path5.default.resolve(this.workDir)}${import_node_path5.default.sep}`)) throw new Error("Path escapes workspace.");
-    const stat = await import_promises5.default.lstat(absolute);
-    const hash = (0, import_node_crypto5.createHash)("sha256");
-    if (stat.isSymbolicLink()) hash.update(`symlink:${await import_promises5.default.readlink(absolute)}`);
-    else if (stat.isFile()) hash.update(await import_promises5.default.readFile(absolute));
+    const absolute = import_node_path6.default.resolve(this.workDir, relative);
+    if (!absolute.startsWith(`${import_node_path6.default.resolve(this.workDir)}${import_node_path6.default.sep}`)) throw new Error("Path escapes workspace.");
+    const stat = await import_promises6.default.lstat(absolute);
+    const hash = (0, import_node_crypto6.createHash)("sha256");
+    if (stat.isSymbolicLink()) hash.update(`symlink:${await import_promises6.default.readlink(absolute)}`);
+    else if (stat.isFile()) hash.update(await import_promises6.default.readFile(absolute));
     else throw new Error(`Agent write path '${relative}' is not a regular file or symlink.`);
     return hash.digest("hex");
   }
   async completeRestoreJournal(journalId) {
     if (!journalId) return;
-    await import_promises5.default.rm(import_node_path5.default.join(this.journalDir, `${journalId}.json`), { force: true }).catch(() => void 0);
+    await import_promises6.default.rm(import_node_path6.default.join(this.journalDir, `${journalId}.json`), { force: true }).catch(() => void 0);
   }
   async createRestoreJournal(params) {
-    const id = `restore_${(0, import_node_crypto5.randomUUID)().replace(/-/g, "")}`;
+    const id = `restore_${(0, import_node_crypto6.randomUUID)().replace(/-/g, "")}`;
     const journal = { version: 1, id, phase: "prepared", createdAt: Date.now(), ...params };
-    await import_promises5.default.mkdir(this.journalDir, { recursive: true });
-    const file = import_node_path5.default.join(this.journalDir, `${id}.json`);
-    const temporary = `${file}.${(0, import_node_crypto5.randomUUID)()}.tmp`;
+    await import_promises6.default.mkdir(this.journalDir, { recursive: true });
+    const file = import_node_path6.default.join(this.journalDir, `${id}.json`);
+    const temporary = `${file}.${(0, import_node_crypto6.randomUUID)()}.tmp`;
     try {
-      await import_promises5.default.writeFile(temporary, `${JSON.stringify(journal, null, 2)}
+      await import_promises6.default.writeFile(temporary, `${JSON.stringify(journal, null, 2)}
 `, { encoding: "utf8", flag: "wx" });
-      await import_promises5.default.rename(temporary, file);
+      await import_promises6.default.rename(temporary, file);
     } finally {
-      await import_promises5.default.rm(temporary, { force: true }).catch(() => void 0);
+      await import_promises6.default.rm(temporary, { force: true }).catch(() => void 0);
     }
     return id;
   }
   async updateRestoreJournal(journalId, phase) {
     if (!journalId) return;
-    const file = import_node_path5.default.join(this.journalDir, `${journalId}.json`);
-    const raw = await import_promises5.default.readFile(file, "utf8").catch(() => void 0);
+    const file = import_node_path6.default.join(this.journalDir, `${journalId}.json`);
+    const raw = await import_promises6.default.readFile(file, "utf8").catch(() => void 0);
     if (!raw) return;
     const journal = JSON.parse(raw);
     journal.phase = phase;
-    await import_promises5.default.writeFile(file, `${JSON.stringify(journal, null, 2)}
+    await import_promises6.default.writeFile(file, `${JSON.stringify(journal, null, 2)}
 `, "utf8");
   }
   async recoverInterruptedRestores(sessionId, dag) {
-    const entries = await import_promises5.default.readdir(this.journalDir, { withFileTypes: true }).catch(() => []);
+    const entries = await import_promises6.default.readdir(this.journalDir, { withFileTypes: true }).catch(() => []);
     for (const entry of entries) {
       if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
-      const file = import_node_path5.default.join(this.journalDir, entry.name);
+      const file = import_node_path6.default.join(this.journalDir, entry.name);
       let journal;
       try {
-        journal = JSON.parse(await import_promises5.default.readFile(file, "utf8"));
+        journal = JSON.parse(await import_promises6.default.readFile(file, "utf8"));
       } catch {
         continue;
       }
       if (journal.version !== 1 || journal.sessionId !== sessionId) continue;
       const rescue = dag.getNode(journal.rescueCheckpointId);
       if (!rescue) {
-        await import_promises5.default.rm(file, { force: true });
+        await import_promises6.default.rm(file, { force: true });
         continue;
       }
       await this.restoreNode(rescue, void 0, { mode: "force", createRescuePoint: false });
       await dag.rewindTo(rescue.id);
-      await import_promises5.default.rm(file, { force: true });
+      await import_promises6.default.rm(file, { force: true });
     }
   }
 };
@@ -3284,10 +3540,10 @@ function symmetricDifference2(left, right) {
 async function directoryBytes2(root) {
   let total = 0;
   const visit = async (directory) => {
-    for (const entry of await import_promises5.default.readdir(directory, { withFileTypes: true }).catch(() => [])) {
-      const absolute = import_node_path5.default.join(directory, entry.name);
+    for (const entry of await import_promises6.default.readdir(directory, { withFileTypes: true }).catch(() => [])) {
+      const absolute = import_node_path6.default.join(directory, entry.name);
       if (entry.isDirectory()) await visit(absolute);
-      else total += (await import_promises5.default.stat(absolute).catch(() => ({ size: 0 }))).size;
+      else total += (await import_promises6.default.stat(absolute).catch(() => ({ size: 0 }))).size;
     }
   };
   await visit(root);
@@ -3296,8 +3552,8 @@ async function directoryBytes2(root) {
 async function countFiles(root) {
   let total = 0;
   const visit = async (directory) => {
-    for (const entry of await import_promises5.default.readdir(directory, { withFileTypes: true }).catch(() => [])) {
-      const absolute = import_node_path5.default.join(directory, entry.name);
+    for (const entry of await import_promises6.default.readdir(directory, { withFileTypes: true }).catch(() => [])) {
+      const absolute = import_node_path6.default.join(directory, entry.name);
       if (entry.isDirectory()) await visit(absolute);
       else total += 1;
     }
@@ -3309,8 +3565,8 @@ async function countFiles(root) {
 // src/web/server.ts
 init_cjs_shims();
 var import_node_http = __toESM(require("http"), 1);
-var import_node_path6 = __toESM(require("path"), 1);
-var import_promises6 = __toESM(require("fs/promises"), 1);
+var import_node_path7 = __toESM(require("path"), 1);
+var import_promises7 = __toESM(require("fs/promises"), 1);
 var import_node_url = require("url");
 var TimeMachineWebServer = class {
   server = null;
@@ -3600,6 +3856,12 @@ var TimeMachineWebServer = class {
       res.end(JSON.stringify({ success: true, result }));
       return;
     }
+    if (pathname === "/api/shadow-migrate" && req.method === "POST") {
+      const result = await this.service.migrateShadowStore();
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: true, result }));
+      return;
+    }
     if (pathname === "/api/external-effects" && req.method === "POST") {
       const body = await this.readJsonBody(req);
       if (typeof body.sessionId !== "string" || typeof body.checkpointId !== "string") {
@@ -3759,21 +4021,21 @@ var TimeMachineWebServer = class {
       res.end("Not found");
       return;
     }
-    const currentFileDir = import_node_path6.default.dirname(new import_node_url.URL(importMetaUrl).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
+    const currentFileDir = import_node_path7.default.dirname(new import_node_url.URL(importMetaUrl).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
     const candidateDirs = [
-      import_node_path6.default.join(currentFileDir, "client"),
-      import_node_path6.default.join(currentFileDir, "../src/web/client"),
-      import_node_path6.default.join(currentFileDir, "web/client"),
-      import_node_path6.default.join(process.cwd(), "src/web/client"),
-      import_node_path6.default.join(process.cwd(), "dist/client")
+      import_node_path7.default.join(currentFileDir, "client"),
+      import_node_path7.default.join(currentFileDir, "../src/web/client"),
+      import_node_path7.default.join(currentFileDir, "web/client"),
+      import_node_path7.default.join(process.cwd(), "src/web/client"),
+      import_node_path7.default.join(process.cwd(), "dist/client")
     ];
     let fullPath = "";
     for (const dir of candidateDirs) {
-      const candidate = import_node_path6.default.resolve(dir, filePath);
-      const relative = import_node_path6.default.relative(import_node_path6.default.resolve(dir), candidate);
-      if (relative.startsWith("..") || import_node_path6.default.isAbsolute(relative)) continue;
+      const candidate = import_node_path7.default.resolve(dir, filePath);
+      const relative = import_node_path7.default.relative(import_node_path7.default.resolve(dir), candidate);
+      if (relative.startsWith("..") || import_node_path7.default.isAbsolute(relative)) continue;
       try {
-        await import_promises6.default.access(candidate);
+        await import_promises7.default.access(candidate);
         fullPath = candidate;
         break;
       } catch {
@@ -3781,8 +4043,8 @@ var TimeMachineWebServer = class {
     }
     try {
       if (!fullPath) throw new Error("Asset not found");
-      const content = await import_promises6.default.readFile(fullPath);
-      const ext = import_node_path6.default.extname(fullPath);
+      const content = await import_promises7.default.readFile(fullPath);
+      const ext = import_node_path7.default.extname(fullPath);
       const contentTypes = {
         ".html": "text/html; charset=utf-8",
         ".css": "text/css; charset=utf-8",
@@ -3912,6 +4174,7 @@ Use /tm-undo N to restore and fork from the numbered active-lineage checkpoint.`
           `Workspace isolation: ${capabilities.workspaceIsolation}`,
           `Workspace routing: ${capabilities.workspaceRouting}`,
           `Shadow Git object encryption: ${capabilities.shadowStoreEncryption ? "enabled" : "not available (objects are plaintext at rest)"}`,
+          `Shadow Git key rotation: ${capabilities.shadowStoreKeyRotation ? "ready (current + previous keys configured)" : "not configured"}`,
           `DAG/session metadata encryption: ${capabilities.dagStateEncryption ? "enabled" : "disabled (metadata is plaintext at rest)"}`,
           `DAG/session key rotation: ${capabilities.dagStateKeyRotation ? "ready (current + previous keys configured)" : "not configured"}`,
           `Web dashboard: ${service.config.enableWebUI === false ? "disabled" : `available on ${service.config.webHost ?? "127.0.0.1"}:${service.config.webPort ?? 3088}`}`,
@@ -4008,6 +4271,18 @@ ${changes.map((item) => `${item.status} ${item.path}`).join("\n")}` };
         return {
           kind: "success",
           text: result.migrated ? `Encrypted quarantine backup ${key}: ${result.entryCount} ${result.entryCount === 1 ? "entry" : "entries"} rewritten (${formatBytes(result.bytesRewritten)}).` : `Quarantine backup ${key} is already encrypted or empty.`
+        };
+      }
+    });
+    scope.commands.register({
+      name: "tm-shadow-migrate",
+      description: "Encrypt the existing plaintext Git shadow object store",
+      recordInput: false,
+      handler: async () => {
+        const result = await service.migrateShadowStore();
+        return {
+          kind: "success",
+          text: result.migrated ? `Encrypted shadow store: ${result.entries} ${result.entries === 1 ? "file" : "files"} rewritten (${formatBytes(result.bytes)}).` : "Shadow store is empty or already encrypted."
         };
       }
     });
@@ -4305,6 +4580,10 @@ var TimeMachineClient = class {
   async storage(sessionId) {
     return this.get(`/api/storage${sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ""}`);
   }
+  /** Explicitly migrate a legacy plaintext shadow store into the encrypted archive. */
+  async migrateShadowStore() {
+    return this.post("/api/shadow-migrate", {});
+  }
   async dag(sessionId) {
     return this.get(`/api/dag?sessionId=${encodeURIComponent(sessionId)}`);
   }
@@ -4489,6 +4768,8 @@ var Config = import_schemastery.default.object({
   maxSnapshots: import_schemastery.default.number().default(0),
   maxStorageBytes: import_schemastery.default.number().default(0),
   shadowStore: import_schemastery.default.boolean().default(false),
+  shadowStoreEncryptionKeyEnv: import_schemastery.default.string().default(""),
+  shadowStoreEncryptionPreviousKeyEnv: import_schemastery.default.string().default(""),
   autoPrune: import_schemastery.default.boolean().default(false),
   retentionMaxAgeMs: import_schemastery.default.number().default(0),
   workspaceLockTimeoutMs: import_schemastery.default.number().default(3e4),
@@ -4507,7 +4788,7 @@ var Config = import_schemastery.default.object({
   preCommandMaxPerTurn: import_schemastery.default.number().step(1).min(0).default(1)
 });
 function apply(ctx, config = {}) {
-  const workDir = import_node_path7.default.resolve(process.cwd());
+  const workDir = import_node_path8.default.resolve(process.cwd());
   const service = new TimeMachineService({ workDir, storageDir: config.storageDir, config });
   ctx.provide("timeMachine", service);
   registerCliCommands(ctx, service);
@@ -4642,7 +4923,7 @@ function apply(ctx, config = {}) {
       for (const [displayPath, operation] of observed.paths) {
         const relative = workspaceRelativePath(workDir, displayPath);
         if (!relative) continue;
-        const sha256 = operation === "delete" ? (0, import_node_crypto6.createHash)("sha256").update(`dsh-time-machine:absent:${relative}`).digest("hex") : void 0;
+        const sha256 = operation === "delete" ? (0, import_node_crypto7.createHash)("sha256").update(`dsh-time-machine:absent:${relative}`).digest("hex") : void 0;
         chain = chain.then(() => service.recordAgentWrite(observed.sessionId, checkpointId, { path: relative, operation, ...sha256 ? { sha256 } : {} }).then(() => void 0).catch((error) => {
           ctx.logger.warn(`[time-machine] could not record Agent write ${relative}: ${errorMessage(error)}`);
         }));
@@ -4688,7 +4969,7 @@ function apply(ctx, config = {}) {
       if (!service.config.autoSnapshot || step !== 1) return next();
       installAgentToolBoundary?.(agent);
       const session = agent.session;
-      const cwd = session.header.cwd ? import_node_path7.default.resolve(session.header.cwd) : workDir;
+      const cwd = session.header.cwd ? import_node_path8.default.resolve(session.header.cwd) : workDir;
       if (cwd !== service.workDir) {
         scope.logger.warn(`[time-machine] skipped session ${session.id}: cwd ${cwd} differs from configured workspace ${service.workDir}`);
         return next();
@@ -4730,10 +5011,10 @@ function isNativeWriteTool(name2) {
   return name2 === "write" || name2 === "edit" || name2 === "str_replace_editor";
 }
 function workspaceRelativePath(workDir, displayPath) {
-  const absolute = import_node_path7.default.resolve(workDir, displayPath);
-  const root = import_node_path7.default.resolve(workDir);
-  const relative = import_node_path7.default.relative(root, absolute).replace(/\\/g, "/");
-  if (!relative || relative === ".." || relative.startsWith("../") || import_node_path7.default.isAbsolute(relative)) return void 0;
+  const absolute = import_node_path8.default.resolve(workDir, displayPath);
+  const root = import_node_path8.default.resolve(workDir);
+  const relative = import_node_path8.default.relative(root, absolute).replace(/\\/g, "/");
+  if (!relative || relative === ".." || relative.startsWith("../") || import_node_path8.default.isAbsolute(relative)) return void 0;
   return relative;
 }
 function executionIdentity(execution, identities, allocate) {

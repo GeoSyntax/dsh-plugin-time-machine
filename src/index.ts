@@ -26,6 +26,8 @@ export const Config: Schema<Config> = Schema.object({
   maxSnapshots: Schema.number().default(0),
   maxStorageBytes: Schema.number().default(0),
   shadowStore: Schema.boolean().default(false),
+  shadowStoreEncryptionKeyEnv: Schema.string().default(''),
+  shadowStoreEncryptionPreviousKeyEnv: Schema.string().default(''),
   autoPrune: Schema.boolean().default(false),
   retentionMaxAgeMs: Schema.number().default(0),
   workspaceLockTimeoutMs: Schema.number().default(30000),

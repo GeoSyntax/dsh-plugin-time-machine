@@ -28,7 +28,10 @@ temporarily configuring `stateEncryptionPreviousKeyEnv`; authenticated files
 are rewritten with the current key atomically. Ignored-file quarantine is now
 covered by `quarantineEncryptionKeyEnv`; an explicit `/tm-quarantine-migrate`
 path converts legacy plaintext backups while preserving fail-closed behavior.
-Shadow object encryption remains the outstanding part of this item.
+Shadow object encryption is now implemented through a disposable Git-readable
+runtime directory and an authenticated AES-256-GCM archive. Existing plaintext
+objects require the explicit `/tm-shadow-migrate` command; current and previous
+keys support authenticated rotation.
 Use an operator-provided key (prefer an environment-backed key reference; never
 write the secret into the DAG). Migration must be explicit, and a missing/invalid
 key must fail closed without deleting plaintext backups.

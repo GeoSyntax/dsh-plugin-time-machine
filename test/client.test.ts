@@ -43,6 +43,18 @@ describe('TimeMachineClient companion contract', () => {
     await expect(client.sessions()).resolves.toEqual([expect.objectContaining({ sessionId: 's', checkpointCount: 2 })]);
   });
 
+  it('exposes explicit shadow-store migration to companion clients', async () => {
+    const client = new TimeMachineClient({
+      baseUrl: 'http://127.0.0.1:3088',
+      fetch: async (url, init) => {
+        expect(String(url)).toContain('/api/shadow-migrate');
+        expect(init?.method).toBe('POST');
+        return new Response(JSON.stringify({ success: true, result: { migrated: true, entries: 2 } }), { status: 200 });
+      },
+    });
+    await expect(client.migrateShadowStore()).resolves.toMatchObject({ result: { migrated: true, entries: 2 } });
+  });
+
   it('validates and forwards prune dry-run requests for companions', async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     const client = new TimeMachineClient({

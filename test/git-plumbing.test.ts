@@ -357,4 +357,62 @@ describe('GitPlumbingEngine', () => {
     expect(repackedAfterDelete.repacked).toBe(false);
     expect(repackedAfterDelete.reachableRefs).toBe(0);
   });
+
+  it('encrypts shadow objects at rest and restores them through a disposable runtime', async () => {
+    const shadowObjectDir = path.join(tmpDir, '.dsh-tm', 'git-shadow', 'objects');
+    const archiveDir = path.join(tmpDir, '.dsh-tm', 'git-shadow-encrypted');
+    engine = new GitPlumbingEngine({ workDir: tmpDir, shadowObjectDir, shadowEncryptionKey: 'shadow-secret' });
+    const file = path.join(tmpDir, 'encrypted-shadow.txt');
+    await fs.writeFile(file, 'secret-one\n', 'utf8');
+    const first = await engine.createSnapshot({ sessionId: 'encrypted-shadow', checkpointId: 'one' });
+    expect(engine.usesEncryptedShadowStore).toBe(true);
+    const manifest = JSON.parse(await fs.readFile(path.join(archiveDir, 'manifest.v1.json'), 'utf8')) as { version: number; entries: unknown[] };
+    expect(manifest.version).toBe(1);
+    expect(manifest.entries.length).toBeGreaterThan(0);
+    await expect(fs.access(shadowObjectDir)).rejects.toThrow();
+    const encryptedBytes = await fs.readFile(path.join(archiveDir, 'payload', (await fs.readdir(path.join(archiveDir, 'payload')))[0]));
+    expect(encryptedBytes.toString('utf8')).not.toContain('secret-one');
+    const manifestBeforeWrongKey = await fs.readFile(path.join(archiveDir, 'manifest.v1.json'), 'utf8');
+
+    const restarted = new GitPlumbingEngine({ workDir: tmpDir, shadowObjectDir, shadowEncryptionKey: 'shadow-secret' });
+    expect((await restarted.runGit(['cat-file', '-t', first.commitOid])).stdout.trim()).toBe('commit');
+    await expect(fs.access(shadowObjectDir)).rejects.toThrow();
+    const wrongKey = new GitPlumbingEngine({ workDir: tmpDir, shadowObjectDir, shadowEncryptionKey: 'wrong-secret' });
+    await expect(wrongKey.runGit(['cat-file', '-t', first.commitOid])).rejects.toMatchObject({ code: 'SHADOW_KEY_INVALID' });
+    const manifestAfterWrongKey = JSON.parse(await fs.readFile(path.join(archiveDir, 'manifest.v1.json'), 'utf8')) as { entries: Array<{ path: string; sha256: string; bytes: number }> };
+    const beforeEntries = (JSON.parse(manifestBeforeWrongKey) as { entries: Array<{ path: string; sha256: string; bytes: number }> }).entries
+      .map(entry => `${entry.path}:${entry.sha256}:${entry.bytes}`).sort();
+    const afterEntries = manifestAfterWrongKey.entries.map(entry => `${entry.path}:${entry.sha256}:${entry.bytes}`).sort();
+    expect(afterEntries).toEqual(beforeEntries);
+  });
+
+  it('explicitly migrates a legacy plaintext shadow store before enabling encryption', async () => {
+    const shadowObjectDir = path.join(tmpDir, '.dsh-tm', 'git-shadow', 'objects');
+    const legacy = new GitPlumbingEngine({ workDir: tmpDir, shadowObjectDir });
+    await fs.writeFile(path.join(tmpDir, 'legacy-shadow.txt'), 'legacy-secret\n', 'utf8');
+    const snapshot = await legacy.createSnapshot({ sessionId: 'legacy-shadow', checkpointId: 'one' });
+    const encrypted = new GitPlumbingEngine({ workDir: tmpDir, shadowObjectDir, shadowEncryptionKey: 'migration-secret' });
+    const result = await encrypted.migrateShadowStore();
+    expect(result.migrated).toBe(true);
+    expect(result.entries).toBeGreaterThan(0);
+    expect(await fs.readdir(path.join(tmpDir, '.dsh-tm', 'git-shadow-encrypted'))).toContain('manifest.v1.json');
+    expect(await fs.access(shadowObjectDir).then(() => true, () => false)).toBe(false);
+    expect((await encrypted.runGit(['cat-file', '-t', snapshot.commitOid])).stdout.trim()).toBe('commit');
+  });
+
+  it('rotates the encrypted shadow key only after authenticated read', async () => {
+    const shadowObjectDir = path.join(tmpDir, '.dsh-tm', 'git-shadow', 'objects');
+    const oldEngine = new GitPlumbingEngine({ workDir: tmpDir, shadowObjectDir, shadowEncryptionKey: 'old-shadow-key' });
+    await fs.writeFile(path.join(tmpDir, 'rotation.txt'), 'rotation\n', 'utf8');
+    const snapshot = await oldEngine.createSnapshot({ sessionId: 'shadow-rotation', checkpointId: 'one' });
+    const rotated = new GitPlumbingEngine({
+      workDir: tmpDir,
+      shadowObjectDir,
+      shadowEncryptionKey: 'new-shadow-key',
+      shadowEncryptionPreviousKey: 'old-shadow-key',
+    });
+    expect((await rotated.runGit(['cat-file', '-t', snapshot.commitOid])).stdout.trim()).toBe('commit');
+    await expect(new GitPlumbingEngine({ workDir: tmpDir, shadowObjectDir, shadowEncryptionKey: 'old-shadow-key' }).runGit(['cat-file', '-t', snapshot.commitOid]))
+      .rejects.toMatchObject({ code: 'SHADOW_KEY_INVALID' });
+  });
 });

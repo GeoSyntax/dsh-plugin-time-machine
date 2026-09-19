@@ -333,6 +333,13 @@ export class TimeMachineWebServer {
       return;
     }
 
+    if (pathname === '/api/shadow-migrate' && req.method === 'POST') {
+      const result = await this.service.migrateShadowStore();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, result }));
+      return;
+    }
+
     if (pathname === '/api/external-effects' && req.method === 'POST') {
       const body = await this.readJsonBody(req);
       if (typeof body.sessionId !== 'string' || typeof body.checkpointId !== 'string') {

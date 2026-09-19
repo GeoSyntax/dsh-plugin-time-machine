@@ -29,6 +29,10 @@ var TimeMachineClient = class {
   async storage(sessionId) {
     return this.get(`/api/storage${sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ""}`);
   }
+  /** Explicitly migrate a legacy plaintext shadow store into the encrypted archive. */
+  async migrateShadowStore() {
+    return this.post("/api/shadow-migrate", {});
+  }
   async dag(sessionId) {
     return this.get(`/api/dag?sessionId=${encodeURIComponent(sessionId)}`);
   }

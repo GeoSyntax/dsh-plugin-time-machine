@@ -65,6 +65,7 @@ dsh plugin --profile web list --depth 0
 /tm-external-list [checkpoint] [--all]
 /tm-reflection <checkpoint>
 /tm-quarantine-migrate <backup-key>
+/tm-shadow-migrate
 /tm-external-compensate <checkpoint> <effect-id> [--execute]
 /tm-external-record <checkpoint> <adapter> <operation> --failure=<text> [--reversible]
 /tm-preview <checkpoint> [--preserve-hand-edits|--no-preserve-hand-edits]
@@ -149,6 +150,11 @@ dsh plugin --profile web list --depth 0
     maxSnapshots: 0
     maxStorageBytes: 0
     shadowStore: false
+    # Optional: env var containing the AES-256-GCM shadow archive key.
+    # Requires shadowStore: true; plaintext migration is explicit.
+    shadowStoreEncryptionKeyEnv: ''
+    # Optional previous key; authenticated archives rotate on next access.
+    shadowStoreEncryptionPreviousKeyEnv: ''
     autoPrune: false
     # 0 disables automatic age retention; e.g. 604800000 = 7 days.
     retentionMaxAgeMs: 0
@@ -191,6 +197,8 @@ Web dashboard 只绑定 loopback，并拒绝非本机 Host 和跨 origin 请求�
 
 `workspaceRouting: "single-root"` 表示一个插件实例只接管启动时的 `workDir`；当 DSH session 的 `header.cwd` 不同于该目录时会被明确跳过。多项目宿主应为每个 workspace 启动独立实例，或等待宿主提供 session→workspace 路由契约。
 
+能力接口中的 `shadowStoreKeyRotation: true` 表示当前密钥和旧密钥均已配置；下次成功读取旧归档后会用当前密钥重写，不会在未认证时删除旧数据。
+
 ## Verification
 
 ```bash
@@ -216,9 +224,9 @@ TM_DSH_SOURCE=/path/to/deepseek-harness pnpm smoke:dsh:source
 - 当前一个插件实例管理一个启动时 `workDir`；不同 session `cwd` 会被跳过。
 - 默认模式下 Git 快照复用用户仓库的 object database 和私有 refs；需要独立对象目录时开启 `shadowStore`。
 - `shadowStore: true` 会把插件新写入的 Git objects 放到 `storageDir/git-shadow/objects`，主仓库 objects 仅作为只读 alternate；这是 opt-in。删除插件 refs 时会清理 shadow loose objects；显式 `--repack-shadow` 会按私有 refs 重建 pack，但不会改写或执行用户仓库的全局 Git GC。
-- Shadow Git objects 当前仍是明文 at rest；`GET /api/storage` 会明确返回 `gitObjectsEncrypted: false`。只有 ignored-file quarantine 可通过 `quarantineEncryptionKeyEnv` 加密，不能把 shadow store 当作加密备份。
+- 配置 `shadowStoreEncryptionKeyEnv` 后，Git object 只在单次 plumbing 操作的临时运行时目录中解密，持久化归档使用 AES-256-GCM；错误密钥或认证失败返回 `SHADOW_KEY_INVALID`，缺失/截断/结构损坏返回 `SHADOW_ARCHIVE_CORRUPT`，不会删除原归档。已有明文对象必须显式执行 `/tm-shadow-migrate` 或 `POST /api/shadow-migrate`。
+- 未配置 `shadowStoreEncryptionKeyEnv` 时，Shadow Git objects 仍是明文 at rest，`GET /api/storage` 会明确返回 `gitObjectsEncrypted: false`；配置后返回 `gitObjectsEncrypted: true`。插件不会直接改写 Git loose object/pack 字节来伪装加密。
 - DAG/session metadata 默认仍是明文；设置 `stateEncryptionKeyEnv` 指向环境变量后，prompt、消息、变量和失败工具输入会使用 AES-256-GCM 加密保存。轮换密钥时同时设置 `stateEncryptionPreviousKeyEnv`，插件会在认证旧密钥后原子重加密；缺少或错误的密钥会 fail-closed，不会生成空白 session 或覆盖原文件。
-- Shadow object 加密仍未实现；安全设计、迁移和崩溃恢复验收边界见 [`docs/ENCRYPTED_SHADOW_DESIGN.md`](docs/ENCRYPTED_SHADOW_DESIGN.md)。插件不会直接改写 Git loose object/pack 字节来伪装加密。
 - 工作区变更操作带有跨进程文件锁；`workspaceLockTimeoutMs` 控制等待其他 DSH 实例的最长时间。它能避免并发覆盖，但不会替代为多个 Agent 创建独立 worktree。
 - `maxQuarantineBytes` 可选限制 ignored 文件 quarantine 的总容量；超过上限时返回 `QUARANTINE_QUOTA_EXCEEDED`，不会丢弃备份。
 - `quarantineEncryptionKeyEnv` 可选指定一个环境变量名；启用后 ignored-file quarantine 使用 AES-256-GCM 加密，密钥本身不会写入 DAG、manifest 或 Git refs。缺少密钥、密文损坏或发现旧的明文 quarantine 会返回 `QUARANTINE_KEY_INVALID` 并保留备份，不会静默删除或混用数据；明文迁移必须由运维显式执行。

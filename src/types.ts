@@ -166,6 +166,10 @@ export interface TimeMachineConfig {
   maxStorageBytes?: number;
   /** Store plugin-created Git objects outside the user's normal object directory. */
   shadowStore?: boolean;
+  /** Optional environment variable containing a key for encrypted shadow objects. */
+  shadowStoreEncryptionKeyEnv?: string;
+  /** Optional old key used once to atomically rotate encrypted shadow objects. */
+  shadowStoreEncryptionPreviousKeyEnv?: string;
   /** Allow quota-triggered compaction before ordinary checkpoints; disabled by default. */
   autoPrune?: boolean;
   /** Automatically compact checkpoints older than this age before ordinary checkpoints; 0 disables it. */
@@ -273,7 +277,7 @@ export interface StorageStatus {
   checkpoints: number;
   pruneCandidates: number;
   gitObjectsShared: boolean;
-  /** Shadow Git objects are currently plaintext at rest; quarantine may differ. */
+  /** True when plugin-owned shadow objects are stored in the encrypted archive. */
   gitObjectsEncrypted: boolean;
   /** Persisted DAG/session metadata is encrypted at rest when configured. */
   dagStateEncrypted: boolean;

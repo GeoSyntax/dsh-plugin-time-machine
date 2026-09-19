@@ -130,6 +130,11 @@ export class TimeMachineClient {
     return this.get(`/api/storage${sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ''}`) as Promise<Record<string, unknown>>;
   }
 
+  /** Explicitly migrate a legacy plaintext shadow store into the encrypted archive. */
+  async migrateShadowStore(): Promise<Record<string, unknown>> {
+    return this.post('/api/shadow-migrate', {}) as Promise<Record<string, unknown>>;
+  }
+
   async dag(sessionId: string): Promise<DAGTree> {
     return this.get(`/api/dag?sessionId=${encodeURIComponent(sessionId)}`) as Promise<DAGTree>;
   }

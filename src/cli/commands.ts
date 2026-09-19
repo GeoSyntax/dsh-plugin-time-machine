@@ -69,6 +69,7 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
           `Workspace isolation: ${capabilities.workspaceIsolation}`,
           `Workspace routing: ${capabilities.workspaceRouting}`,
           `Shadow Git object encryption: ${capabilities.shadowStoreEncryption ? 'enabled' : 'not available (objects are plaintext at rest)'}`,
+          `Shadow Git key rotation: ${capabilities.shadowStoreKeyRotation ? 'ready (current + previous keys configured)' : 'not configured'}`,
           `DAG/session metadata encryption: ${capabilities.dagStateEncryption ? 'enabled' : 'disabled (metadata is plaintext at rest)'}`,
           `DAG/session key rotation: ${capabilities.dagStateKeyRotation ? 'ready (current + previous keys configured)' : 'not configured'}`,
           `Web dashboard: ${service.config.enableWebUI === false ? 'disabled' : `available on ${service.config.webHost ?? '127.0.0.1'}:${service.config.webPort ?? 3088}`}`,
@@ -169,6 +170,21 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
           text: result.migrated
             ? `Encrypted quarantine backup ${key}: ${result.entryCount} ${result.entryCount === 1 ? 'entry' : 'entries'} rewritten (${formatBytes(result.bytesRewritten)}).`
             : `Quarantine backup ${key} is already encrypted or empty.`,
+        };
+      },
+    });
+
+    scope.commands.register({
+      name: 'tm-shadow-migrate',
+      description: 'Encrypt the existing plaintext Git shadow object store',
+      recordInput: false,
+      handler: async (): Promise<CommandResult> => {
+        const result = await service.migrateShadowStore();
+        return {
+          kind: 'success',
+          text: result.migrated
+            ? `Encrypted shadow store: ${result.entries} ${result.entries === 1 ? 'file' : 'files'} rewritten (${formatBytes(result.bytes)}).`
+            : 'Shadow store is empty or already encrypted.',
         };
       },
     });

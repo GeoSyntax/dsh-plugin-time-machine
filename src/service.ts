@@ -116,6 +116,8 @@ export class TimeMachineService {
       maxSnapshots: Math.max(0, Math.floor(options.config?.maxSnapshots ?? 0)),
       maxStorageBytes: Math.max(0, Math.floor(options.config?.maxStorageBytes ?? 0)),
       shadowStore: options.config?.shadowStore ?? false,
+      shadowStoreEncryptionKeyEnv: options.config?.shadowStoreEncryptionKeyEnv ?? '',
+      shadowStoreEncryptionPreviousKeyEnv: options.config?.shadowStoreEncryptionPreviousKeyEnv ?? '',
       autoPrune: options.config?.autoPrune ?? false,
       retentionMaxAgeMs: Math.max(0, Math.floor(options.config?.retentionMaxAgeMs ?? 0)),
       workspaceLockTimeoutMs: Math.max(0, Math.floor(options.config?.workspaceLockTimeoutMs ?? 30000)),
@@ -142,6 +144,12 @@ export class TimeMachineService {
       preservePaths: [this.storageDir, ...this.config.preservePaths],
       quarantineDir: path.join(this.storageDir, 'ignored-quarantine'),
       shadowObjectDir: this.config.shadowStore ? path.join(this.storageDir, 'git-shadow', 'objects') : undefined,
+      shadowEncryptionKey: this.config.shadowStoreEncryptionKeyEnv
+        ? process.env[this.config.shadowStoreEncryptionKeyEnv]
+        : undefined,
+      shadowEncryptionPreviousKey: this.config.shadowStoreEncryptionPreviousKeyEnv
+        ? process.env[this.config.shadowStoreEncryptionPreviousKeyEnv]
+        : undefined,
       maxQuarantineBytes: this.config.maxQuarantineBytes,
       quarantineEncryptionKey: this.config.quarantineEncryptionKeyEnv
         ? process.env[this.config.quarantineEncryptionKeyEnv]
@@ -931,10 +939,15 @@ export class TimeMachineService {
       checkpoints,
       pruneCandidates: leaves,
       gitObjectsShared: await this.gitEngine.isGitRepo() && !this.config.shadowStore,
-      gitObjectsEncrypted: false,
+      gitObjectsEncrypted: this.gitEngine.usesEncryptedShadowStore,
       dagStateEncrypted: Boolean(this.config.stateEncryptionKeyEnv && process.env[this.config.stateEncryptionKeyEnv]),
       quarantineEncrypted: Boolean(this.config.quarantineEncryptionKeyEnv && process.env[this.config.quarantineEncryptionKeyEnv]),
     };
+  }
+
+  /** Explicitly migrate a plaintext shadow object directory into the encrypted archive. */
+  async migrateShadowStore(): Promise<{ migrated: boolean; entries: number; bytes: number }> {
+    return this.runWorkspaceOperation(() => this.gitEngine.migrateShadowStore());
   }
 
   /** Enumerate persisted sessions without creating a new empty DAG. */
@@ -984,7 +997,8 @@ export class TimeMachineService {
     fallbackTextDiff: boolean;
     selectiveRestore: boolean;
     shadowStore: boolean;
-    shadowStoreEncryption: false;
+    shadowStoreEncryption: boolean;
+    shadowStoreKeyRotation: boolean;
     dagStateEncryption: boolean;
     dagStateKeyRotation: boolean;
     quarantineEncryption: boolean;
@@ -1038,7 +1052,11 @@ export class TimeMachineService {
       fallbackTextDiff: !git,
       selectiveRestore: usable || !git,
       shadowStore: git && this.config.shadowStore,
-      shadowStoreEncryption: false,
+      shadowStoreEncryption: git && this.gitEngine.usesEncryptedShadowStore,
+      shadowStoreKeyRotation: Boolean(
+        this.config.shadowStoreEncryptionKeyEnv && process.env[this.config.shadowStoreEncryptionKeyEnv]
+        && this.config.shadowStoreEncryptionPreviousKeyEnv && process.env[this.config.shadowStoreEncryptionPreviousKeyEnv],
+      ),
       dagStateEncryption: Boolean(this.config.stateEncryptionKeyEnv && process.env[this.config.stateEncryptionKeyEnv]),
       dagStateKeyRotation: Boolean(
         this.config.stateEncryptionKeyEnv && process.env[this.config.stateEncryptionKeyEnv]

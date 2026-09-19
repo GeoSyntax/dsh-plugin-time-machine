@@ -549,6 +549,34 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
     expect(prune.shadowObjectsReclaimedBytes).toBeDefined();
   });
 
+  it('reports and restores an encrypted shadow store through the service', async () => {
+    const envName = `DSH_TM_SHADOW_KEY_${process.pid}_${Date.now()}`;
+    const previous = process.env[envName];
+    process.env[envName] = 'service-shadow-secret';
+    try {
+      const encrypted = new TimeMachineService({
+        workDir: tmpDir,
+        storageDir: path.join(tmpDir, '.encrypted-shadow-service'),
+        config: { shadowStore: true, shadowStoreEncryptionKeyEnv: envName },
+      });
+      const sessionId = 'encrypted-shadow-service';
+      const file = path.join(tmpDir, 'encrypted-service.txt');
+      await fs.writeFile(file, 'before\n', 'utf8');
+      const checkpoint = await encrypted.createTurnCheckpoint({ sessionId, turnIndex: 1, prompt: 'encrypted', sessionState: { sessionId, messages: [] } });
+      await fs.writeFile(file, 'after\n', 'utf8');
+      await encrypted.rewindToCheckpoint(sessionId, checkpoint.id, { mode: 'force' });
+      expect(await fs.readFile(file, 'utf8')).toBe('before\n');
+      expect((await encrypted.getCapabilities()).shadowStoreEncryption).toBe(true);
+      expect((await encrypted.getStorageStatus(sessionId)).gitObjectsEncrypted).toBe(true);
+      expect(await fs.access(path.join(tmpDir, '.encrypted-shadow-service', 'git-shadow-encrypted', 'manifest.v1.json')).then(() => true, () => false)).toBe(true);
+      const prune = await encrypted.prune(sessionId, { keepLatest: 1, repackShadowObjects: true });
+      expect(prune.shadowRepackSkippedReason).toBeUndefined();
+    } finally {
+      if (previous === undefined) delete process.env[envName];
+      else process.env[envName] = previous;
+    }
+  });
+
   it('compacts old linear checkpoints only when explicitly requested', async () => {
     const sessionId = 'compact-session';
     const file = path.join(tmpDir, 'compact.txt');

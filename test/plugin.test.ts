@@ -133,6 +133,22 @@ describe('DSH Cordis plugin entry', () => {
         status: 'success',
         tags: ['pre-command', 'tool:bash'],
       });
+      session.events.push({ type: 'turn/start', seq: 3, data: { turn: 2 } });
+      await eventScope!.waterfall('agent/pre-step', {
+        agent,
+        turn: 2,
+        step: 1,
+        signal: new AbortController().signal,
+      }, async () => undefined);
+      await ctx.waterfall('tools/pre-execute', {
+        callId: 'high-risk-call',
+        name: 'bash',
+        arguments: { command: 'rm -rf build' },
+        agent,
+      }, async () => ({ kind: 'allow' }));
+      const nextNodes = Object.values((await (ctx.get('timeMachine') as TimeMachineService).getDAGManager(session.id)).tree.nodes);
+      expect(nextNodes).toHaveLength(4);
+      expect(nextNodes.filter(node => node.tags?.includes('pre-command'))).toHaveLength(2);
     } finally {
       await (ctx?.fiber?.dispose?.() ?? Promise.resolve());
       process.chdir(previousCwd);

@@ -3633,10 +3633,10 @@ function apply(ctx, config = {}) {
   const checkpoints = /* @__PURE__ */ new Map();
   const observedWrites = /* @__PURE__ */ new Map();
   const pendingLedgerWrites = /* @__PURE__ */ new Map();
+  const preCommandCalls = /* @__PURE__ */ new Set();
   let installAgentToolBoundary;
   if (service.config.autoPreCommandSnapshot) {
     const installedAgents = /* @__PURE__ */ new WeakSet();
-    const capturedCalls = /* @__PURE__ */ new Set();
     installAgentToolBoundary = (agent) => {
       const agentContext = agent.ctx;
       if (!agentContext || installedAgents.has(agent)) return;
@@ -3649,8 +3649,8 @@ function apply(ctx, config = {}) {
         const configured = service.config.preCommandTools ?? [];
         if (!session || !toolName || !configured.includes(toolName) || !turnCheckpoint) return;
         const callKey = `${session.id}\0${execution.callId ?? toolName}\0${turn}`;
-        if (capturedCalls.has(callKey)) return;
-        capturedCalls.add(callKey);
+        if (preCommandCalls.has(callKey)) return;
+        preCommandCalls.add(callKey);
         try {
           const boundary = await service.createTurnCheckpoint({
             sessionId: session.id,
@@ -3731,6 +3731,9 @@ function apply(ctx, config = {}) {
     const failedTools = collectFailedTools(getEvents(session), turn);
     const ledgerWrites = pendingLedgerWrites.get(key) ?? Promise.resolve();
     pendingLedgerWrites.delete(key);
+    for (const callKey of preCommandCalls) {
+      if (callKey.startsWith(`${session.id}\0`) && callKey.endsWith(`\0${turn}`)) preCommandCalls.delete(callKey);
+    }
     void ledgerWrites.then(() => service.finalizeTurnCheckpoint({
       sessionId: session.id,
       checkpointId,

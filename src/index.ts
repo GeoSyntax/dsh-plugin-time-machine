@@ -147,6 +147,7 @@ export function apply(ctx: Context, config: Config = {}): void {
   const checkpoints = new Map<string, string>();
   const observedWrites = new Map<string, { sessionId: string; turn: number; paths: Map<string, 'modify' | 'delete'> }>();
   const pendingLedgerWrites = new Map<string, Promise<void>>();
+  const preCommandCalls = new Set<string>();
 
   // Hermes-style pre-destructive boundaries. DSH's pre-execute/execute
   // waterfalls are the last reliable seams before a shell/PTC tool mutates the workspace. We
@@ -155,7 +156,6 @@ export function apply(ctx: Context, config: Config = {}): void {
   let installAgentToolBoundary: ((agent: AgentLike) => void) | undefined;
   if (service.config.autoPreCommandSnapshot) {
     const installedAgents = new WeakSet<object>();
-    const capturedCalls = new Set<string>();
     installAgentToolBoundary = (agent: AgentLike): void => {
       const agentContext = agent.ctx;
       if (!agentContext || installedAgents.has(agent)) return;
@@ -170,8 +170,8 @@ export function apply(ctx: Context, config: Config = {}): void {
         const configured = service.config.preCommandTools ?? [];
         if (!session || !toolName || !configured.includes(toolName) || !turnCheckpoint) return;
         const callKey = `${session.id}\0${execution.callId ?? toolName}\0${turn}`;
-        if (capturedCalls.has(callKey)) return;
-        capturedCalls.add(callKey);
+        if (preCommandCalls.has(callKey)) return;
+        preCommandCalls.add(callKey);
         try {
           const boundary = await service.createTurnCheckpoint({
             sessionId: session.id,
@@ -259,6 +259,9 @@ export function apply(ctx: Context, config: Config = {}): void {
     const failedTools = collectFailedTools(getEvents(session), turn as number);
     const ledgerWrites = pendingLedgerWrites.get(key) ?? Promise.resolve();
     pendingLedgerWrites.delete(key);
+    for (const callKey of preCommandCalls) {
+      if (callKey.startsWith(`${session.id}\0`) && callKey.endsWith(`\0${turn as number}`)) preCommandCalls.delete(callKey);
+    }
     void ledgerWrites.then(() => service.finalizeTurnCheckpoint({
       sessionId: session.id,
       checkpointId,

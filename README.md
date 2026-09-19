@@ -170,7 +170,7 @@ dsh plugin --profile web list --depth 0
     preCommandMaxPerTurn: 1
 ```
 
-Web dashboard 只绑定 loopback，并拒绝非本机 Host 和跨 origin 请求。若要让独立的 DSH client companion 跨端口调用 API，必须显式配置 `webAllowedOrigins`；该列表只允许精确的 `http(s)` Origin，默认为空。`/tm-rewind` 与 `/tm-fork` 需要宿主提供 `sessionController`，否则插件会拒绝只恢复文件的危险降级行为。
+Web dashboard 只绑定 loopback，并拒绝非本机 Host 和跨 origin 请求。若要让独立的 DSH client companion 跨端口调用 API，必须显式配置 `webAllowedOrigins`；该列表只允许精确的 `http(s)` Origin，默认为空。Dashboard 顶部提供 `Undo latest turn` 快捷操作，它调用与 CLI 相同的 `/api/undo` contract；需要查看冲突和 partial 路径时仍应使用时间线中的 preview/rewind。`/tm-rewind` 与 `/tm-fork` 需要宿主提供 `sessionController`，否则插件会拒绝只恢复文件的危险降级行为。
 集成方可读取带有 `version: 1` 的 `GET /api/capabilities`，提前判断当前工作区是否支持 Git 三方 merge、fallback 文本 diff、selective restore、shadow store、shadow 加密、quarantine 加密/迁移、外部副作用账本、增量捕获、Agent-write ledger、pre-command snapshots 和已注册的 compensation adapters，以及 sparse checkout/submodule/进行中操作限制；`handEditPolicy: reject-drift` 表示默认不会猜测文件作者，`ledger-opt-in` 表示已开启显式 Agent-write 账本但仍需传入 `--preserve-hand-edits`；返回的 `policies` 还公开 restore 模式、快照/存储/quarantine 配额、自动保留年龄、锁等待上限和前置高风险工具集合，便于 UI 在操作前解释边界；`workspaceIsolation: shared-lock` 明确表示当前是共享工作区加锁，不是独立 worktree/container。
 
 ## Verification

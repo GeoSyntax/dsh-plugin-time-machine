@@ -26,6 +26,11 @@ checkpoint cannot change the user's undo distance. Confirmation-oriented UIs
 should still use `timeline()` and a one-shot preview plan before calling the
 mutating `/api/rewind` route.
 
+The standalone Dashboard exposes the same relative operation as an explicit
+`Undo latest turn` action. It confirms before mutation, calls `/api/undo` with
+`count: 1`, and adopts the returned forked session identity; detailed timeline
+rewind remains available for preview-first conflict review.
+
 ## State model
 
 Each `CheckpointNode` records a parent, logical branch, pre-turn workspace object, Session boundary, turn outcome, and optional settled workspace signature. A pre-turn node therefore has two relevant signatures:

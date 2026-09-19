@@ -82,3 +82,5 @@ See [README.md](./README.md), [docs/COMPARISON.md](./docs/COMPARISON.md), and
 - Add the shared `POST /api/undo` and `TimeMachineClient.undo()` relative-turn
   contract for CLI-like companions; confirmation UIs should still use preview
   plans before mutation.
+- Add a Dashboard `Undo latest turn` action wired to the same REST contract,
+  with explicit confirmation and new-session feedback.

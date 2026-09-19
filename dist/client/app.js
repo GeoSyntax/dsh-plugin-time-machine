@@ -12,6 +12,7 @@ const sessionSelector = document.getElementById('session-selector');
 const inspectorContent = document.getElementById('inspector-content');
 const inspectorStatusBadge = document.getElementById('inspector-status-badge');
 const btnRefresh = document.getElementById('btn-refresh');
+const btnUndoLatest = document.getElementById('btn-undo-latest');
 const forkModal = document.getElementById('fork-modal');
 const modalForkFrom = document.getElementById('modal-fork-from');
 const forkBranchInput = document.getElementById('fork-branch-input');
@@ -67,6 +68,7 @@ function renderSessionSelector(sessions) {
     sessionSelector.append(option);
   }
   sessionSelector.disabled = sessions.length === 0;
+  btnUndoLatest.disabled = sessions.length === 0;
   if (currentSessionId && sessions.some(item => item.sessionId === currentSessionId)) {
     sessionSelector.value = currentSessionId;
   }
@@ -91,6 +93,27 @@ sessionSelector.addEventListener('change', async () => {
   selectedNodeId = null;
   syncSessionUrl();
   await loadDag();
+});
+
+btnUndoLatest.addEventListener('click', async () => {
+  if (!currentSessionId) return;
+  const confirmed = confirm('Undo the latest completed turn and continue in a new DSH session? A rescue point will be created first.');
+  if (!confirmed) return;
+  btnUndoLatest.disabled = true;
+  try {
+    const result = await requestJson(`${API_BASE}/api/undo`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: currentSessionId, count: 1 }),
+    });
+    adoptConversation(result);
+    await loadSessions();
+    alert(`✔ Undid the latest turn. Continue in DSH session: ${result.conversation.sessionId}`);
+  } catch (error) {
+    alert(`Undo failed: ${error.message}`);
+  } finally {
+    btnUndoLatest.disabled = !currentSessionId;
+  }
 });
 
 function adoptConversation(result) {

@@ -106,6 +106,16 @@ describe('registered DSH time-machine commands', () => {
     expect(result.text).toContain('Use /tm-undo N');
   });
 
+  it('does not treat a running turn checkpoint as an undo boundary', async () => {
+    const sessionId = 'cli-running-session';
+    const first = await service.createTurnCheckpoint({ sessionId, turnIndex: 1, prompt: 'completed', sessionState: { sessionId, messages: [] } });
+    await service.finalizeTurnCheckpoint({ sessionId, checkpointId: first.id, status: 'success' });
+    await service.createTurnCheckpoint({ sessionId, turnIndex: 2, prompt: 'still running', sessionState: { sessionId, messages: [] }, status: 'running' });
+    const result = await handlers['tm-undo']({ agent: { session: { id: sessionId } }, rawInput: '1' });
+    expect(result.kind).toBe('error');
+    expect(result.text).toContain('fewer than 2 completed turns');
+  });
+
   it('exposes a read-only Agent-write ledger view', async () => {
     (service.config as any).enableAgentWriteLedger = true;
     const checkpoint = await service.createTurnCheckpoint({

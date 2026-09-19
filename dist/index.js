@@ -3859,6 +3859,7 @@ function relativeTurnNodes(lineage) {
   const selected = [];
   const seenTurns = /* @__PURE__ */ new Set();
   for (const node of [...lineage].reverse()) {
+    if (node.status === "running") continue;
     if (node.tags?.includes("pre-command") || node.tags?.includes("rescue") || node.tags?.includes("selective-restore")) continue;
     if (seenTurns.has(node.turnIndex)) continue;
     seenTurns.add(node.turnIndex);

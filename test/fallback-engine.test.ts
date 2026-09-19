@@ -40,4 +40,18 @@ describe('FallbackSnapshotEngine', () => {
       .rejects.toMatchObject({ code: 'SNAPSHOT_SIZE_LIMIT' });
     await expect(fs.access(path.join(storage, 'limits'))).rejects.toThrow();
   });
+
+  it('inventories added, modified, and deleted files against a fallback manifest', async () => {
+    await fs.writeFile(path.join(root, 'modified.txt'), 'before\n', 'utf8');
+    await fs.writeFile(path.join(root, 'deleted.txt'), 'remove\n', 'utf8');
+    await engine.createSnapshot({ sessionId: 'inventory', checkpointId: 'base' });
+    await fs.writeFile(path.join(root, 'modified.txt'), 'after\n', 'utf8');
+    await fs.rm(path.join(root, 'deleted.txt'));
+    await fs.writeFile(path.join(root, 'added.txt'), 'new\n', 'utf8');
+    await expect(engine.getChangedFiles('inventory', 'base')).resolves.toEqual([
+      { path: 'added.txt', status: 'added' },
+      { path: 'deleted.txt', status: 'deleted' },
+      { path: 'modified.txt', status: 'modified' },
+    ]);
+  });
 });

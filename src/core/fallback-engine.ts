@@ -81,6 +81,35 @@ export class FallbackSnapshotEngine {
     return `fallback_${await hashSnapshot(this.workDir, entries)}`;
   }
 
+  /** Compare a persisted fallback manifest with the current workspace. */
+  async getChangedFiles(sessionId: string, checkpointId: string): Promise<FileChange[]> {
+    const snapshotDir = this.getCheckpointDir(sessionId, checkpointId);
+    const raw = await fs.readFile(path.join(snapshotDir, 'manifest.json'));
+    const manifest = parseManifest(raw.toString('utf8'));
+    const filesDir = path.join(snapshotDir, 'files');
+    const current = await this.scanTree(this.workDir);
+    const targetByPath = new Map(manifest.entries.filter(entry => entry.type !== 'directory').map(entry => [entry.path, entry]));
+    const currentByPath = new Map(current.filter(entry => entry.type !== 'directory').map(entry => [entry.path, entry]));
+    const paths = new Set([...targetByPath.keys(), ...currentByPath.keys()]);
+    const changes: FileChange[] = [];
+    for (const entryPath of [...paths].sort()) {
+      const target = targetByPath.get(entryPath);
+      const live = currentByPath.get(entryPath);
+      if (!target && live) {
+        changes.push({ path: entryPath, status: 'added' });
+        continue;
+      }
+      if (target && !live) {
+        changes.push({ path: entryPath, status: 'deleted' });
+        continue;
+      }
+      if (target && live && !(await this.entriesEqual(target, live, filesDir))) {
+        changes.push({ path: entryPath, status: 'modified' });
+      }
+    }
+    return changes;
+  }
+
   async restoreSnapshot(sessionId: string, checkpointId: string): Promise<void> {
     const snapshotDir = this.getCheckpointDir(sessionId, checkpointId);
     const raw = await fs.readFile(path.join(snapshotDir, 'manifest.json'), 'utf8').catch((error: any) => {
@@ -183,6 +212,15 @@ export class FallbackSnapshotEngine {
       }
     }
     return entries;
+  }
+
+  private async entriesEqual(target: SnapshotEntry, live: SnapshotEntry, filesDir: string): Promise<boolean> {
+    if (target.type !== live.type || target.mode !== live.mode) return false;
+    if (target.type === 'symlink') return target.linkTarget === live.linkTarget;
+    if (target.type !== 'file') return true;
+    const expected = await fs.readFile(path.join(filesDir, ...target.path.split('/'))).catch(() => undefined);
+    const actual = await fs.readFile(path.join(this.workDir, ...live.path.split('/'))).catch(() => undefined);
+    return Boolean(expected && actual && expected.equals(actual));
   }
 
   private async assertSnapshotSize(entries: SnapshotEntry[]): Promise<void> {

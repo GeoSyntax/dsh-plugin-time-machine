@@ -283,11 +283,12 @@ export class TimeMachineService {
         ? await this.gitEngine.inspectWorkspace({ omitPaths: current?.omittedPaths ?? [] })
         : { treeOid: await this.fallbackEngine.inspectWorkspace(), ignoredPaths: [] };
       const knownAgentPaths = new Set((current?.agentWrites ?? []).map(item => item.path));
-      const unattributedChanges = isGit && current
-        ? (await this.gitEngine.getDiffBetween(current.gitTreeOid, settled.treeOid))
-          .filter(change => !knownAgentPaths.has(change.file))
-          .map(change => ({ path: change.file, status: change.status }))
-        : [];
+      const changes = isGit && current
+        ? (await this.gitEngine.getDiffBetween(current.gitTreeOid, settled.treeOid)).map(change => ({ path: change.file, status: change.status }))
+        : current
+          ? await this.fallbackEngine.getChangedFiles(params.sessionId, params.checkpointId)
+          : [];
+      const unattributedChanges = changes.filter(change => !knownAgentPaths.has(change.path));
       return dag.updateNode(params.checkpointId, {
         status: params.status,
         errorMessage: params.errorMessage,
@@ -867,7 +868,7 @@ export class TimeMachineService {
       incrementalCapture: usable && this.config.maxSnapshotFileBytes === 0 && this.config.maxSnapshotBytes === 0,
       handEditPolicy: this.config.enableAgentWriteLedger ? 'ledger-opt-in' : 'reject-drift',
       agentWriteLedger: this.config.enableAgentWriteLedger,
-      unattributedMutationInventory: git,
+      unattributedMutationInventory: true,
       externalEffectLedger: true,
       externalEffectAdapters: this.listExternalEffectAdapters(),
       workspaceIsolation: 'shared-lock',

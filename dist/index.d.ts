@@ -762,6 +762,8 @@ declare class FallbackSnapshotEngine {
         changedFiles: FileChange[];
     }>;
     inspectWorkspace(): Promise<string>;
+    /** Compare a persisted fallback manifest with the current workspace. */
+    getChangedFiles(sessionId: string, checkpointId: string): Promise<FileChange[]>;
     restoreSnapshot(sessionId: string, checkpointId: string): Promise<void>;
     restoreSelectedPaths(sessionId: string, checkpointId: string, paths: string[], options?: {
         expectedCurrentTreeOid?: string;
@@ -769,6 +771,7 @@ declare class FallbackSnapshotEngine {
     }): Promise<string[]>;
     removeSnapshot(sessionId: string, checkpointId: string): Promise<number>;
     private captureTree;
+    private entriesEqual;
     private assertSnapshotSize;
     private scanTree;
     private isPreserved;

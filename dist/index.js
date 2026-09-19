@@ -1177,6 +1177,34 @@ var FallbackSnapshotEngine = class {
     const entries = await this.scanTree(this.workDir);
     return `fallback_${await hashSnapshot(this.workDir, entries)}`;
   }
+  /** Compare a persisted fallback manifest with the current workspace. */
+  async getChangedFiles(sessionId, checkpointId) {
+    const snapshotDir = this.getCheckpointDir(sessionId, checkpointId);
+    const raw = await fs2.readFile(path3.join(snapshotDir, "manifest.json"));
+    const manifest = parseManifest(raw.toString("utf8"));
+    const filesDir = path3.join(snapshotDir, "files");
+    const current = await this.scanTree(this.workDir);
+    const targetByPath = new Map(manifest.entries.filter((entry) => entry.type !== "directory").map((entry) => [entry.path, entry]));
+    const currentByPath = new Map(current.filter((entry) => entry.type !== "directory").map((entry) => [entry.path, entry]));
+    const paths = /* @__PURE__ */ new Set([...targetByPath.keys(), ...currentByPath.keys()]);
+    const changes = [];
+    for (const entryPath of [...paths].sort()) {
+      const target = targetByPath.get(entryPath);
+      const live = currentByPath.get(entryPath);
+      if (!target && live) {
+        changes.push({ path: entryPath, status: "added" });
+        continue;
+      }
+      if (target && !live) {
+        changes.push({ path: entryPath, status: "deleted" });
+        continue;
+      }
+      if (target && live && !await this.entriesEqual(target, live, filesDir)) {
+        changes.push({ path: entryPath, status: "modified" });
+      }
+    }
+    return changes;
+  }
   async restoreSnapshot(sessionId, checkpointId) {
     const snapshotDir = this.getCheckpointDir(sessionId, checkpointId);
     const raw = await fs2.readFile(path3.join(snapshotDir, "manifest.json"), "utf8").catch((error) => {
@@ -1268,6 +1296,14 @@ var FallbackSnapshotEngine = class {
       }
     }
     return entries;
+  }
+  async entriesEqual(target, live, filesDir) {
+    if (target.type !== live.type || target.mode !== live.mode) return false;
+    if (target.type === "symlink") return target.linkTarget === live.linkTarget;
+    if (target.type !== "file") return true;
+    const expected = await fs2.readFile(path3.join(filesDir, ...target.path.split("/"))).catch(() => void 0);
+    const actual = await fs2.readFile(path3.join(this.workDir, ...live.path.split("/"))).catch(() => void 0);
+    return Boolean(expected && actual && expected.equals(actual));
   }
   async assertSnapshotSize(entries) {
     if (this.maxSnapshotFileBytes <= 0 && this.maxSnapshotBytes <= 0) return;
@@ -2056,7 +2092,8 @@ var TimeMachineService = class {
       const isGit = await this.gitEngine.isGitRepo();
       const settled = isGit ? await this.gitEngine.inspectWorkspace({ omitPaths: current?.omittedPaths ?? [] }) : { treeOid: await this.fallbackEngine.inspectWorkspace(), ignoredPaths: [] };
       const knownAgentPaths = new Set((current?.agentWrites ?? []).map((item) => item.path));
-      const unattributedChanges = isGit && current ? (await this.gitEngine.getDiffBetween(current.gitTreeOid, settled.treeOid)).filter((change) => !knownAgentPaths.has(change.file)).map((change) => ({ path: change.file, status: change.status })) : [];
+      const changes = isGit && current ? (await this.gitEngine.getDiffBetween(current.gitTreeOid, settled.treeOid)).map((change) => ({ path: change.file, status: change.status })) : current ? await this.fallbackEngine.getChangedFiles(params.sessionId, params.checkpointId) : [];
+      const unattributedChanges = changes.filter((change) => !knownAgentPaths.has(change.path));
       return dag.updateNode(params.checkpointId, {
         status: params.status,
         errorMessage: params.errorMessage,
@@ -2532,7 +2569,7 @@ var TimeMachineService = class {
       incrementalCapture: usable && this.config.maxSnapshotFileBytes === 0 && this.config.maxSnapshotBytes === 0,
       handEditPolicy: this.config.enableAgentWriteLedger ? "ledger-opt-in" : "reject-drift",
       agentWriteLedger: this.config.enableAgentWriteLedger,
-      unattributedMutationInventory: git,
+      unattributedMutationInventory: true,
       externalEffectLedger: true,
       externalEffectAdapters: this.listExternalEffectAdapters(),
       workspaceIsolation: "shared-lock",

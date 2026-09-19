@@ -3205,7 +3205,10 @@ var TimeMachineWebServer = class {
         fromCheckpointId: checkpointId,
         newBranchName: branchName,
         description,
-        restore: { mode: body.force === true ? "force" : body.merge === true ? "merge" : void 0 }
+        restore: {
+          mode: body.force === true ? "force" : body.merge === true ? "merge" : void 0,
+          restorePlanId: typeof body.restorePlanId === "string" ? body.restorePlanId : void 0
+        }
       });
       let conversation;
       try {

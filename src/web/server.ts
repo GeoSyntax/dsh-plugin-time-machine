@@ -291,7 +291,10 @@ export class TimeMachineWebServer {
         fromCheckpointId: checkpointId,
         newBranchName: branchName,
         description,
-        restore: { mode: body.force === true ? 'force' : body.merge === true ? 'merge' : undefined },
+        restore: {
+          mode: body.force === true ? 'force' : body.merge === true ? 'merge' : undefined,
+          restorePlanId: typeof body.restorePlanId === 'string' ? body.restorePlanId : undefined,
+        },
       });
       let conversation: { sessionId: string };
       try {

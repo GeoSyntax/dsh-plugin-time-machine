@@ -52,11 +52,12 @@ ignored-path set, or staged index changed.
 100, 1k, and 10k-file fixtures; staged-index isolation and orphan cleanup tests
 remain green.
 
-Latest Windows Node 22 synthetic measurements are recorded in the README. The
-benchmark now commits a tracked baseline and exercises the incremental overlay
-path; 10k-file turns dropped from roughly 26s to roughly 2s in the fixture while
-retaining status-path validation. This is evidence for the narrow safe case, not
-a claim of parity with every path-identity cache in Change Ledger.
+Latest Windows Node 22 synthetic measurements are recorded in the README,
+including P50/P95. The benchmark now commits a tracked baseline and exercises
+the incremental overlay path; the current 10k-file fixture measured about
+2.14s P50 versus 11.44s for traditional copying across two turns while
+retaining status-path validation. This is evidence for the narrow safe case,
+not a claim of parity with every path-identity cache in Change Ledger.
 
 ### Native DSH timeline action — companion package implemented; cross-version matrix pending
 

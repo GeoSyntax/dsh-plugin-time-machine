@@ -296,7 +296,7 @@ artifacts/<run-id>/
 
 当前已经有证据：
 
-- 当前仓库全量自动化测试 103/103 通过；Web 23/23、CLI 13/13，companion client 5/5，覆盖 DSH durable `tool/call`/`tool/result` 失败配对、反思输入提取、失败 fork 点反思、消息级 checkpoint 映射，以及 Web fork 失败补偿测试。CLI 与 Web `/api/undo` 回归还验证了同一 turn 内 pre-command 节点不会改变按 turn 的回退距离，并且不会把 running checkpoint 当作已完成 turn；client timeline 回归锁定相同的 UI 安全规则。
+- 当前仓库全量自动化测试 116/116 通过；Web 27/27、CLI 16/16、companion client 7/7，另有 service 33/33、Git plumbing 18/18、plugin 5/5、fallback 4/4、DAG 3/3、lock 2/2、reflection 1/1。覆盖 DSH durable `tool/call`/`tool/result` 失败配对、反思输入提取、失败 fork 点反思、只读 `/api/reflection`、外部副作用 preview/listing、prune dry-run、消息级 checkpoint 映射，以及 Web fork 失败补偿测试。CLI 与 Web `/api/undo` 回归还验证了同一 turn 内 pre-command 节点不会改变按 turn 的回退距离，并且不会把 running checkpoint 当作已完成 turn；client timeline、prune 与 reflection 回归锁定相同的 UI 安全规则。
 - Windows Node 22 合成 benchmark 已实测 100/1,000/10,000 文件：Git 平均快照相对传统复制分别为 2.62×、0.50×、0.19×；对应 Git P50/P95 为 642/687ms、1,259/1,381ms、2,139/2,147ms。该数据只作为可复现实验基线，不替代真实仓库性能承诺。
 - 100 文件、100-turn 长会话基线已实测：Git 平均相对传统复制 2.76×，P50/P95 为 679/769ms，存储比例 0.038×；长期存储收益明显，但小仓库单轮 Git 进程开销仍存在。
 - `client-companion/` 已在实际安装的 DSH `0.1.6-alpha.2` 和隔离临时目录中的 `0.1.6-alpha.1` client 包上完成严格 typecheck、`tsdown` 构建和双 slot 注册 smoke；跨版本 `0.1.6-alpha.1/.2` slot CI 与独立 npm 发布流程已配置，仍需首次 GitHub runner/npm 发布证据。

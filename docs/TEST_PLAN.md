@@ -68,6 +68,7 @@
 | B-13 | 本地发布门禁包含跨进程锁回归和 shadow loose/packed-object 回收 | `pnpm test:release` |
 | B-14 | Git 三方合并恢复保留非冲突漂移并报告冲突路径 | `pnpm test -- --run test/git-plumbing.test.ts test/service.test.ts test/web-server.test.ts` |
 | B-15 | DSH 原生 write/edit 事件自动进入 Agent-write ledger，并在 turn/end 前完成落盘 | Cordis 事件级 fixture + 真实 DSH live fixture；后者强制原生 `write` 工具并检查持久化 checkpoint 的 `agentWrites` |
+| B-16 | 真实 DSH 高风险工具前置 checkpoint（包含参数预检失败边界） | `TM_DSH_LIVE=1 TM_DSH_LIVE_TOOL_FAILURE=1 TM_DSH_LIVE_PRECOMMAND=1 TM_GEMINI_API_KEY=... TM_GEMINI_BASE_URL=http://127.0.0.1:8081/v1 pnpm smoke:dsh:source`，检查 `pre-command` 节点 |
 
 ### L1：纯逻辑单元测试
 

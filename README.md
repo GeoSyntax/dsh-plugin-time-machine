@@ -171,7 +171,7 @@ TM_BENCH_FORMAT=json TM_BENCH_FILE_COUNT=1000 TM_BENCH_TURNS=5 pnpm benchmark
 TM_DSH_SOURCE=/path/to/deepseek-harness pnpm smoke:dsh:source
 ```
 
-要验证真实 OpenAI-compatible endpoint 的文件创建、Agent-write ledger、重启续接和工具失败记录，额外设置 `TM_DSH_LIVE=1`、`TM_DSH_LIVE_RESTART=1`、`TM_DSH_LIVE_TOOL_FAILURE=1`、`TM_GEMINI_BASE_URL`、`TM_GEMINI_MODEL` 和 `TM_GEMINI_API_KEY`。live fixture 会明确要求模型使用原生 `write` 工具；这只证明一方文件工具的自动归因，不代表 bash/PTC/子进程修改也会被自动归因。测试会使用临时 `DSH_HOME` 与临时工作区，不会修改当前仓库。
+要验证真实 OpenAI-compatible endpoint 的文件创建、Agent-write ledger、重启续接和工具失败记录，额外设置 `TM_DSH_LIVE=1`、`TM_DSH_LIVE_RESTART=1`、`TM_DSH_LIVE_TOOL_FAILURE=1`、`TM_GEMINI_BASE_URL`、`TM_GEMINI_MODEL` 和 `TM_GEMINI_API_KEY`。若要验证高风险工具前置 checkpoint，再设置 `TM_DSH_LIVE_PRECOMMAND=1`；source smoke 会启用 `autoPreCommandSnapshot` 并要求失败 shell turn 持久化 `pre-command` 节点。live fixture 会明确要求模型使用原生 `write` 工具；这只证明一方文件工具的自动归因，不代表 bash/PTC/子进程修改也会被自动归因。测试会使用临时 `DSH_HOME` 与临时工作区，不会修改当前仓库。
 
 ## Notes
 

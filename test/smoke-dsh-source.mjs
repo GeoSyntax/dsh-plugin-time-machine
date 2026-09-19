@@ -78,6 +78,7 @@ try {
 - id: time-machine
   config:
     enableAgentWriteLedger: true
+    autoPreCommandSnapshot: ${process.env.TM_DSH_LIVE_PRECOMMAND === '1'}
 `, 'utf8');
 
   const config = run(['--profile', profile, '--patch', patchFile, '--dump-config']);
@@ -156,7 +157,11 @@ try {
       if (!failureNodes.some((node) => (node.failedTools?.length ?? 0) > 0)) {
         throw new Error('Live DSH tool-failure turn did not persist failedTools evidence.');
       }
+      if (process.env.TM_DSH_LIVE_PRECOMMAND === '1' && !failureNodes.some((node) => Array.isArray(node.tags) && node.tags.includes('pre-command'))) {
+        throw new Error('Live DSH pre-command mode did not persist a pre-command checkpoint.');
+      }
       console.log('Source DSH live tool failure persisted failedTools evidence.');
+      if (process.env.TM_DSH_LIVE_PRECOMMAND === '1') console.log('Source DSH pre-command checkpoint was captured before the shell tool.');
     }
     console.log('Source DSH live model turn passed.');
   }

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Preserve legacy plaintext Shadow objects when encrypted capability discovery
+  detects that explicit migration is required; expose a fail-closed
+  `shadowStoreMigrationRequired` state instead of deleting the migration source.
 - Add opt-in AES-256-GCM encryption for plugin-owned Git shadow objects via
   `shadowStoreEncryptionKeyEnv`. Git receives a disposable runtime object
   directory; durable payloads are authenticated, explicit `/tm-shadow-migrate`

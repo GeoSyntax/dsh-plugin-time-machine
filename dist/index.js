@@ -2380,6 +2380,7 @@ var TimeMachineService = class {
     return this.runWorkspaceOperation(async () => {
       const dag = await this.getDAGManager(params.sessionId);
       const baseNode = dag.validateFork(params.fromCheckpointId, params.newBranchName);
+      await this.consumeRestorePlan(params.sessionId, params.fromCheckpointId, params.restore?.restorePlanId, dag);
       const restored = await this.restoreWithRescue(dag, baseNode, params.restore ?? {}, "fork");
       let forkedNode;
       try {

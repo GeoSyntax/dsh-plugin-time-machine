@@ -143,8 +143,9 @@ export class TimeMachineClient {
     return buildCompanionTimeline(await this.dag(sessionId), limit);
   }
 
-  async preview(sessionId: string, checkpointId: string): Promise<PreviewBoundAction> {
-    const body = await this.get(`/api/preview?sessionId=${encodeURIComponent(sessionId)}&checkpoint=${encodeURIComponent(checkpointId)}`);
+  async preview(sessionId: string, checkpointId: string, options: { preserveVerifiedHandEdits?: boolean } = {}): Promise<PreviewBoundAction> {
+    const preserve = options.preserveVerifiedHandEdits === undefined ? '' : `&preserveHandEdits=${String(options.preserveVerifiedHandEdits)}`;
+    const body = await this.get(`/api/preview?sessionId=${encodeURIComponent(sessionId)}&checkpoint=${encodeURIComponent(checkpointId)}${preserve}`);
     const preview = objectField(body, 'preview') as unknown as RestorePreview;
     if (preview.sessionId !== sessionId || preview.checkpointId !== checkpointId || typeof preview.restorePlanId !== 'string' || !preview.restorePlanId) {
       throw new Error('Time Machine returned an invalid restore preview binding.');

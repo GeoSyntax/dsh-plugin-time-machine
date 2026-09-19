@@ -2402,8 +2402,9 @@ var TimeMachineService = class {
       const dag = await this.getDAGManager(sessionId);
       const target = dag.getNode(checkpointId);
       if (!target) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
-      await this.consumeRestorePlan(sessionId, checkpointId, options.restorePlanId, dag);
-      const restored = await this.restoreWithRescue(dag, target, options);
+      const reviewedPreserve = await this.consumeRestorePlan(sessionId, checkpointId, options.restorePlanId, dag);
+      const effectiveOptions = this.applyReviewedRestorePolicy(options, reviewedPreserve);
+      const restored = await this.restoreWithRescue(dag, target, effectiveOptions);
       try {
         await dag.rewindTo(checkpointId);
       } catch (error) {
@@ -2510,8 +2511,9 @@ var TimeMachineService = class {
     return this.runWorkspaceOperation(async () => {
       const dag = await this.getDAGManager(params.sessionId);
       const baseNode = dag.validateFork(params.fromCheckpointId, params.newBranchName);
-      await this.consumeRestorePlan(params.sessionId, params.fromCheckpointId, params.restore?.restorePlanId, dag);
-      const restored = await this.restoreWithRescue(dag, baseNode, params.restore ?? {}, "fork");
+      const reviewedPreserve = await this.consumeRestorePlan(params.sessionId, params.fromCheckpointId, params.restore?.restorePlanId, dag);
+      const effectiveRestore = this.applyReviewedRestorePolicy(params.restore ?? {}, reviewedPreserve);
+      const restored = await this.restoreWithRescue(dag, baseNode, effectiveRestore, "fork");
       let forkedNode;
       try {
         forkedNode = await dag.forkBranch(params.fromCheckpointId, params.newBranchName, params.description);
@@ -2563,7 +2565,7 @@ var TimeMachineService = class {
    * Produce a read-only impact report before a rewind/fork. This deliberately
    * does not create a rescue point, mutate the DAG, or touch workspace files.
    */
-  async previewRestore(sessionId, checkpointId) {
+  async previewRestore(sessionId, checkpointId, options = {}) {
     return this.runWorkspaceOperation(async () => {
       const dag = await this.getDAGManager(sessionId);
       const target = dag.getNode(checkpointId);
@@ -2581,7 +2583,8 @@ var TimeMachineService = class {
       }));
       const expectedTree = current?.settledGitTreeOid ?? current?.gitTreeOid;
       const expectedIgnored = current?.settledIgnoredPaths ?? current?.ignoredPaths ?? [];
-      const preservedHandEditPaths = this.config.preserveVerifiedHandEditsByDefault && current ? await this.findVerifiedHandEdits(current) : [];
+      const preserveHandEdits = options.preserveVerifiedHandEdits === true || options.preserveVerifiedHandEdits === void 0 && this.config.preserveVerifiedHandEditsByDefault;
+      const preservedHandEditPaths = preserveHandEdits && current ? await this.findVerifiedHandEdits(current) : [];
       const driftDiffs = isGit && current && expectedTree && currentState.treeOid !== expectedTree ? await this.gitEngine.getDiffBetween(expectedTree, currentState.treeOid) : !isGit && current && expectedTree && currentState.treeOid !== expectedTree ? (await this.fallbackEngine.getChangedFiles(sessionId, current.id)).map((item) => ({ file: item.path })) : [];
       const allConflictingPaths = [.../* @__PURE__ */ new Set([
         ...driftDiffs.map((diff) => diff.file),
@@ -2604,7 +2607,8 @@ var TimeMachineService = class {
         branch: controlPlane.branch,
         operation: controlPlane.operation,
         createdAt,
-        expiresAt
+        expiresAt,
+        preserveVerifiedHandEdits: preserveHandEdits
       });
       return {
         sessionId,
@@ -2633,7 +2637,7 @@ var TimeMachineService = class {
   }
   /** Consume a preview token and fail closed if the reviewed workspace changed. */
   async consumeRestorePlan(sessionId, checkpointId, planId, dag) {
-    if (!planId) return;
+    if (!planId) return void 0;
     this.expireRestorePlans();
     const plan = this.restorePlans.get(planId);
     this.restorePlans.delete(planId);
@@ -2653,6 +2657,14 @@ var TimeMachineService = class {
     if (controlPlane.headOid !== plan.headOid || controlPlane.branch !== plan.branch || controlPlane.operation !== plan.operation) {
       throw new RestorePlanError("Git HEAD, branch, or in-progress operation changed after preview; run preview again.");
     }
+    return plan.preserveVerifiedHandEdits;
+  }
+  applyReviewedRestorePolicy(options, reviewedPreserve) {
+    if (reviewedPreserve === void 0) return options;
+    if (options.preserveVerifiedHandEdits !== void 0 && options.preserveVerifiedHandEdits !== reviewedPreserve) {
+      throw new RestorePlanError("Restore request hand-edit policy differs from the reviewed preview; run preview again.");
+    }
+    return options.preserveVerifiedHandEdits === void 0 ? { ...options, preserveVerifiedHandEdits: reviewedPreserve } : options;
   }
   async inspectWorkspaceSignature(omitPaths = []) {
     return await this.gitEngine.isGitRepo() ? await this.gitEngine.inspectWorkspace({ omitPaths }) : { treeOid: await this.fallbackEngine.inspectWorkspace(), ignoredPaths: [] };
@@ -3252,7 +3264,11 @@ var TimeMachineWebServer = class {
       const checkpointId = query.get("checkpoint") || "";
       if (!checkpointId) throw Object.assign(new Error("Missing checkpoint query parameter"), { code: "BAD_REQUEST" });
       await this.requirePersistedSession(sessionId);
-      const preview = await this.service.previewRestore(sessionId, checkpointId);
+      const preserveHandEdits = query.get("preserveHandEdits");
+      if (preserveHandEdits !== null && preserveHandEdits !== "true" && preserveHandEdits !== "false") {
+        throw Object.assign(new Error("preserveHandEdits must be true or false"), { code: "BAD_REQUEST" });
+      }
+      const preview = await this.service.previewRestore(sessionId, checkpointId, preserveHandEdits === null ? {} : { preserveVerifiedHandEdits: preserveHandEdits === "true" });
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ preview }));
       return;
@@ -3877,18 +3893,21 @@ ${changes.map((item) => `${item.status} ${item.path}`).join("\n")}` };
     scope.commands.register({
       name: "tm-preview",
       description: "Preview workspace changes before a rewind or fork",
-      input: { hint: "<checkpoint>" },
+      input: { hint: "<checkpoint> [--preserve-hand-edits|--no-preserve-hand-edits]" },
       handler: async ({ agent, rawInput }) => {
-        const checkpointId = rawInput.trim().split(/\s+/).filter(Boolean)[0];
-        if (!checkpointId) return { kind: "error", text: "Usage: /tm-preview <checkpoint>" };
-        const preview = await service.previewRestore(agent.session.id, checkpointId);
+        const args = rawInput.trim().split(/\s+/).filter(Boolean);
+        const checkpointId = args.find((arg) => !arg.startsWith("--"));
+        if (!checkpointId) return { kind: "error", text: "Usage: /tm-preview <checkpoint> [--preserve-hand-edits|--no-preserve-hand-edits]" };
+        const preserveVerifiedHandEdits = args.includes("--preserve-hand-edits") ? true : args.includes("--no-preserve-hand-edits") ? false : void 0;
+        const preview = await service.previewRestore(agent.session.id, checkpointId, { preserveVerifiedHandEdits });
         const drift = preview.requiresForce ? "workspace drift detected; --force may be required" : "workspace matches active checkpoint";
         const files = preview.diffs.length ? preview.diffs.map((item) => `${item.status} ${item.file}`).join(", ") : "no managed file changes";
         const ignored = preview.ignoredPathsToDelete.length ? ` Ignored paths to delete: ${preview.ignoredPathsToDelete.join(", ")}.` : "";
         const omitted = preview.targetOmittedPaths?.length ? ` INCOMPLETE checkpoint: omitted paths preserved live: ${preview.targetOmittedPaths.join(", ")}.` : "";
         const conflicts = preview.conflictingPaths.length ? ` Conflicting paths: ${preview.conflictingPaths.join(", ")}.` : "";
+        const preserved = preview.preservedHandEditPaths?.length ? ` Preserved hand-edits: ${preview.preservedHandEditPaths.join(", ")}.` : "";
         const plan = ` Restore plan: ${preview.restorePlanId}${preview.restorePlanExpiresAt ? ` (expires ${new Date(preview.restorePlanExpiresAt).toISOString()})` : " (no expiry)"}.`;
-        return { kind: "success", text: `Preview ${checkpointId}: ${drift}. Changes: ${files}.${ignored}${omitted}${conflicts}${plan}` };
+        return { kind: "success", text: `Preview ${checkpointId}: ${drift}. Changes: ${files}.${ignored}${omitted}${conflicts}${preserved}${plan}` };
       }
     });
     scope.commands.register({
@@ -4032,8 +4051,9 @@ var TimeMachineClient = class {
     if (!Number.isInteger(limit) || limit < 1 || limit > 500) throw new Error("timeline limit must be an integer between 1 and 500.");
     return buildCompanionTimeline(await this.dag(sessionId), limit);
   }
-  async preview(sessionId, checkpointId) {
-    const body = await this.get(`/api/preview?sessionId=${encodeURIComponent(sessionId)}&checkpoint=${encodeURIComponent(checkpointId)}`);
+  async preview(sessionId, checkpointId, options = {}) {
+    const preserve = options.preserveVerifiedHandEdits === void 0 ? "" : `&preserveHandEdits=${String(options.preserveVerifiedHandEdits)}`;
+    const body = await this.get(`/api/preview?sessionId=${encodeURIComponent(sessionId)}&checkpoint=${encodeURIComponent(checkpointId)}${preserve}`);
     const preview = objectField(body, "preview");
     if (preview.sessionId !== sessionId || preview.checkpointId !== checkpointId || typeof preview.restorePlanId !== "string" || !preview.restorePlanId) {
       throw new Error("Time Machine returned an invalid restore preview binding.");

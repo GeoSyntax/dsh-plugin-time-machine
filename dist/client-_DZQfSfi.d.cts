@@ -365,7 +365,9 @@ declare class TimeMachineClient {
     checkpointForMessage(sessionId: string, messageId: string): Promise<CheckpointNode>;
     /** Build a bounded, newest-first timeline without coupling consumers to React or DSH slots. */
     timeline(sessionId: string, limit?: number): Promise<CompanionTimelineEntry[]>;
-    preview(sessionId: string, checkpointId: string): Promise<PreviewBoundAction>;
+    preview(sessionId: string, checkpointId: string, options?: {
+        preserveVerifiedHandEdits?: boolean;
+    }): Promise<PreviewBoundAction>;
     rewind(action: PreviewBoundAction, options?: Omit<RewindRequest, 'sessionId' | 'checkpointId' | 'restorePlanId'>): Promise<unknown>;
     /** Direct relative-turn undo for CLI-like companions; preview-first UIs may use timeline()+preview()+rewind(). */
     undo(request: UndoRequest): Promise<unknown>;

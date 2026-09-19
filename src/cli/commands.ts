@@ -294,11 +294,15 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
     scope.commands.register({
       name: 'tm-preview',
       description: 'Preview workspace changes before a rewind or fork',
-      input: { hint: '<checkpoint>' },
+      input: { hint: '<checkpoint> [--preserve-hand-edits|--no-preserve-hand-edits]' },
       handler: async ({ agent, rawInput }: CommandInvocationLike): Promise<CommandResult> => {
-        const checkpointId = rawInput.trim().split(/\s+/).filter(Boolean)[0];
-        if (!checkpointId) return { kind: 'error', text: 'Usage: /tm-preview <checkpoint>' };
-        const preview = await service.previewRestore(agent.session.id, checkpointId);
+        const args = rawInput.trim().split(/\s+/).filter(Boolean);
+        const checkpointId = args.find(arg => !arg.startsWith('--'));
+        if (!checkpointId) return { kind: 'error', text: 'Usage: /tm-preview <checkpoint> [--preserve-hand-edits|--no-preserve-hand-edits]' };
+        const preserveVerifiedHandEdits = args.includes('--preserve-hand-edits')
+          ? true
+          : args.includes('--no-preserve-hand-edits') ? false : undefined;
+        const preview = await service.previewRestore(agent.session.id, checkpointId, { preserveVerifiedHandEdits });
         const drift = preview.requiresForce ? 'workspace drift detected; --force may be required' : 'workspace matches active checkpoint';
         const files = preview.diffs.length ? preview.diffs.map(item => `${item.status} ${item.file}`).join(', ') : 'no managed file changes';
         const ignored = preview.ignoredPathsToDelete.length ? ` Ignored paths to delete: ${preview.ignoredPathsToDelete.join(', ')}.` : '';
@@ -306,8 +310,9 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
           ? ` INCOMPLETE checkpoint: omitted paths preserved live: ${preview.targetOmittedPaths.join(', ')}.`
           : '';
         const conflicts = preview.conflictingPaths.length ? ` Conflicting paths: ${preview.conflictingPaths.join(', ')}.` : '';
+        const preserved = preview.preservedHandEditPaths?.length ? ` Preserved hand-edits: ${preview.preservedHandEditPaths.join(', ')}.` : '';
         const plan = ` Restore plan: ${preview.restorePlanId}${preview.restorePlanExpiresAt ? ` (expires ${new Date(preview.restorePlanExpiresAt).toISOString()})` : ' (no expiry)'}.`;
-        return { kind: 'success', text: `Preview ${checkpointId}: ${drift}. Changes: ${files}.${ignored}${omitted}${conflicts}${plan}` };
+        return { kind: 'success', text: `Preview ${checkpointId}: ${drift}. Changes: ${files}.${ignored}${omitted}${conflicts}${preserved}${plan}` };
       },
     });
 

@@ -64,6 +64,7 @@ interface RestorePlan {
   operation: string | null;
   createdAt: number;
   expiresAt: number | null;
+  preserveVerifiedHandEdits: boolean;
 }
 
 interface RestoreJournal {
@@ -543,8 +544,9 @@ export class TimeMachineService {
       const dag = await this.getDAGManager(sessionId);
       const target = dag.getNode(checkpointId);
       if (!target) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
-      await this.consumeRestorePlan(sessionId, checkpointId, options.restorePlanId, dag);
-      const restored = await this.restoreWithRescue(dag, target, options);
+      const reviewedPreserve = await this.consumeRestorePlan(sessionId, checkpointId, options.restorePlanId, dag);
+      const effectiveOptions = this.applyReviewedRestorePolicy(options, reviewedPreserve);
+      const restored = await this.restoreWithRescue(dag, target, effectiveOptions);
       try {
         await dag.rewindTo(checkpointId);
       } catch (error) {
@@ -660,8 +662,9 @@ export class TimeMachineService {
     return this.runWorkspaceOperation(async () => {
       const dag = await this.getDAGManager(params.sessionId);
       const baseNode = dag.validateFork(params.fromCheckpointId, params.newBranchName);
-      await this.consumeRestorePlan(params.sessionId, params.fromCheckpointId, params.restore?.restorePlanId, dag);
-      const restored = await this.restoreWithRescue(dag, baseNode, params.restore ?? {}, 'fork');
+      const reviewedPreserve = await this.consumeRestorePlan(params.sessionId, params.fromCheckpointId, params.restore?.restorePlanId, dag);
+      const effectiveRestore = this.applyReviewedRestorePolicy(params.restore ?? {}, reviewedPreserve);
+      const restored = await this.restoreWithRescue(dag, baseNode, effectiveRestore, 'fork');
       let forkedNode: CheckpointNode;
       try {
         forkedNode = await dag.forkBranch(params.fromCheckpointId, params.newBranchName, params.description);
@@ -724,7 +727,7 @@ export class TimeMachineService {
    * Produce a read-only impact report before a rewind/fork. This deliberately
    * does not create a rescue point, mutate the DAG, or touch workspace files.
    */
-  async previewRestore(sessionId: string, checkpointId: string): Promise<RestorePreview> {
+  async previewRestore(sessionId: string, checkpointId: string, options: { preserveVerifiedHandEdits?: boolean } = {}): Promise<RestorePreview> {
     return this.runWorkspaceOperation(async () => {
       const dag = await this.getDAGManager(sessionId);
       const target = dag.getNode(checkpointId);
@@ -750,7 +753,9 @@ export class TimeMachineService {
           }));
       const expectedTree = current?.settledGitTreeOid ?? current?.gitTreeOid;
       const expectedIgnored = current?.settledIgnoredPaths ?? current?.ignoredPaths ?? [];
-      const preservedHandEditPaths = this.config.preserveVerifiedHandEditsByDefault && current
+      const preserveHandEdits = options.preserveVerifiedHandEdits === true
+        || (options.preserveVerifiedHandEdits === undefined && this.config.preserveVerifiedHandEditsByDefault);
+      const preservedHandEditPaths = preserveHandEdits && current
         ? await this.findVerifiedHandEdits(current)
         : [];
       const driftDiffs = isGit && current && expectedTree && currentState.treeOid !== expectedTree
@@ -782,6 +787,7 @@ export class TimeMachineService {
         operation: controlPlane.operation,
         createdAt,
         expiresAt,
+        preserveVerifiedHandEdits: preserveHandEdits,
       });
       return {
         sessionId,
@@ -816,8 +822,8 @@ export class TimeMachineService {
     checkpointId: string,
     planId: string | undefined,
     dag: DAGStateManager,
-  ): Promise<void> {
-    if (!planId) return;
+  ): Promise<boolean | undefined> {
+    if (!planId) return undefined;
     this.expireRestorePlans();
     const plan = this.restorePlans.get(planId);
     this.restorePlans.delete(planId);
@@ -837,6 +843,17 @@ export class TimeMachineService {
     if (controlPlane.headOid !== plan.headOid || controlPlane.branch !== plan.branch || controlPlane.operation !== plan.operation) {
       throw new RestorePlanError('Git HEAD, branch, or in-progress operation changed after preview; run preview again.');
     }
+    return plan.preserveVerifiedHandEdits;
+  }
+
+  private applyReviewedRestorePolicy(options: RestoreOptions, reviewedPreserve: boolean | undefined): RestoreOptions {
+    if (reviewedPreserve === undefined) return options;
+    if (options.preserveVerifiedHandEdits !== undefined && options.preserveVerifiedHandEdits !== reviewedPreserve) {
+      throw new RestorePlanError('Restore request hand-edit policy differs from the reviewed preview; run preview again.');
+    }
+    return options.preserveVerifiedHandEdits === undefined
+      ? { ...options, preserveVerifiedHandEdits: reviewedPreserve }
+      : options;
   }
 
   private async inspectWorkspaceSignature(omitPaths: string[] = []): Promise<{ treeOid: string; ignoredPaths: string[] }> {

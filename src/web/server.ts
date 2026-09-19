@@ -189,7 +189,11 @@ export class TimeMachineWebServer {
       const checkpointId = query.get('checkpoint') || '';
       if (!checkpointId) throw Object.assign(new Error('Missing checkpoint query parameter'), { code: 'BAD_REQUEST' });
       await this.requirePersistedSession(sessionId);
-      const preview = await this.service.previewRestore(sessionId, checkpointId);
+      const preserveHandEdits = query.get('preserveHandEdits');
+      if (preserveHandEdits !== null && preserveHandEdits !== 'true' && preserveHandEdits !== 'false') {
+        throw Object.assign(new Error('preserveHandEdits must be true or false'), { code: 'BAD_REQUEST' });
+      }
+      const preview = await this.service.previewRestore(sessionId, checkpointId, preserveHandEdits === null ? {} : { preserveVerifiedHandEdits: preserveHandEdits === 'true' });
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ preview }));
       return;

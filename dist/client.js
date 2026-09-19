@@ -48,8 +48,9 @@ var TimeMachineClient = class {
     if (!Number.isInteger(limit) || limit < 1 || limit > 500) throw new Error("timeline limit must be an integer between 1 and 500.");
     return buildCompanionTimeline(await this.dag(sessionId), limit);
   }
-  async preview(sessionId, checkpointId) {
-    const body = await this.get(`/api/preview?sessionId=${encodeURIComponent(sessionId)}&checkpoint=${encodeURIComponent(checkpointId)}`);
+  async preview(sessionId, checkpointId, options = {}) {
+    const preserve = options.preserveVerifiedHandEdits === void 0 ? "" : `&preserveHandEdits=${String(options.preserveVerifiedHandEdits)}`;
+    const body = await this.get(`/api/preview?sessionId=${encodeURIComponent(sessionId)}&checkpoint=${encodeURIComponent(checkpointId)}${preserve}`);
     const preview = objectField(body, "preview");
     if (preview.sessionId !== sessionId || preview.checkpointId !== checkpointId || typeof preview.restorePlanId !== "string" || !preview.restorePlanId) {
       throw new Error("Time Machine returned an invalid restore preview binding.");

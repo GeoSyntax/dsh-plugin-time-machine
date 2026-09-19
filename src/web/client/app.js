@@ -85,11 +85,13 @@ function createTimelineCard(node) {
   const files = Array.isArray(node.changedFiles) ? node.changedFiles : [];
   const omitted = Array.isArray(node.omittedPaths) ? node.omittedPaths : [];
   const agentWrites = Array.isArray(node.agentWrites) ? node.agentWrites : [];
+  const unattributed = Array.isArray(node.unattributedChanges) ? node.unattributedChanges : [];
   const meta = element('div', 'card-meta');
   meta.append(
     element('span', '', `🕒 ${new Date(node.timestamp).toLocaleTimeString()}`),
     element('span', '', `📁 ${files.length} file(s) changed`),
     ...(agentWrites.length ? [element('span', 'badge badge-success', `✎ ${agentWrites.length} Agent write(s)`)] : []),
+    ...(unattributed.length ? [element('span', 'badge badge-warning', `? ${unattributed.length} unattributed`)] : []),
     ...(omitted.length ? [element('span', 'badge badge-warning', `⚠ ${omitted.length} omitted`)] : []),
   );
   card.append(top, element('div', 'card-prompt', String(node.prompt || '')), meta);
@@ -119,6 +121,7 @@ function selectNode(nodeId) {
   );
   if (node.summary) inspectorContent.append(infoGroup('Execution Summary', String(node.summary)));
   inspectorContent.append(agentWritesGroup(node));
+  inspectorContent.append(unattributedChangesGroup(node));
   inspectorContent.append(fileChangesGroup(node));
 }
 
@@ -144,6 +147,21 @@ function agentWritesGroup(node) {
     list.append(item);
   }
   return group(`Agent Write Ledger (${writes.length})`, list);
+}
+
+function unattributedChangesGroup(node) {
+  const changes = Array.isArray(node.unattributedChanges) ? node.unattributedChanges : [];
+  if (changes.length === 0) return group('Unattributed Turn Changes (0)', element('p', '', 'No workspace changes lack Agent-write evidence.'));
+  const body = element('div');
+  body.append(element('div', 'info-box', 'These paths changed during the turn but were not attributed to a native Agent write event. Review before preserving hand edits.'));
+  const list = element('ul', 'file-list');
+  for (const change of changes) {
+    const item = element('li', 'file-item');
+    item.append(element('span', '', `? ${String(change.path)}`), element('span', 'badge badge-warning', String(change.status).toUpperCase()));
+    list.append(item);
+  }
+  body.append(list);
+  return group(`Unattributed Turn Changes (${changes.length})`, body);
 }
 
 function metadataGroup(node) {

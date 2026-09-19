@@ -112,6 +112,8 @@ export interface CheckpointNode {
   externalEffects?: ExternalEffectRecord[];
   /** Explicit Agent-write evidence used by opt-in hand-edit preservation. */
   agentWrites?: AgentWriteRecord[];
+  /** Git changes observed at turn finalization that lack Agent-write evidence. */
+  unattributedChanges?: FileChange[];
 }
 
 export interface DAGTree {

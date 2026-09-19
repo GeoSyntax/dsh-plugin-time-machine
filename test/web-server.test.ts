@@ -57,6 +57,7 @@ describe('TimeMachineWebServer', () => {
     expect(capabilities.quarantineEncryption).toBe(false);
     expect(capabilities.quarantineMigration).toBe(false);
     expect(capabilities.externalEffectLedger).toBe(true);
+    expect(capabilities.unattributedMutationInventory).toBe(true);
     expect(capabilities.externalEffectAdapters).toEqual([]);
     expect(capabilities.workspaceIsolation).toBe('shared-lock');
     expect(capabilities.incrementalCapture).toBe(false);

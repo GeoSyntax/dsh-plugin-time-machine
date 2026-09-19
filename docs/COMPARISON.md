@@ -18,6 +18,7 @@ supported only when it is covered by the current implementation and tests.
 | Conversation/session alignment | DSH `sessionController` fork | Product-specific | Product-specific | Usually undo/redo or same window |
 | Agent-write ledger / hand-edit preservation | Explicit opt-in `enableAgentWriteLedger`; native `write`/`edit`/`str_replace_editor` events auto-record, other integrations use `recordAgentWrite()`; `--preserve-hand-edits` remains fail-closed without evidence | Hermes records hashes of agent writes and keeps later hand-edits by default; `--all` opts into overwrite | Product-specific | Varies |
 | Ledger audit surface | `/tm-agent-writes <checkpoint>` and `GET /api/agent-writes` expose path, operation, hash, and timestamp before a restore | Checkpoint UI/CLI exposes write evidence | Product-specific | Varies |
+| Unknown mutation visibility | Turn-finalization inventory records `unattributedChanges` and surfaces them in the dashboard instead of guessing authorship | Product-specific | Usually not exposed | Varies |
 | DAG branches | Yes, persistent | No user-facing DAG | Ledger history | Usually linear |
 | Failed-tool reflection | Yes | No equivalent | No equivalent | No equivalent |
 | Rescue/compensation | Yes | Snapshot-oriented | Journal-oriented | Varies |

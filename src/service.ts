@@ -276,15 +276,24 @@ export class TimeMachineService {
   }): Promise<CheckpointNode> {
     return this.runWorkspaceOperation(async () => {
       const dag = await this.getDAGManager(params.sessionId);
-      const settled = await this.gitEngine.isGitRepo()
-        ? await this.gitEngine.inspectWorkspace({ omitPaths: dag.getNode(params.checkpointId)?.omittedPaths ?? [] })
+      const current = dag.getNode(params.checkpointId);
+      const isGit = await this.gitEngine.isGitRepo();
+      const settled = isGit
+        ? await this.gitEngine.inspectWorkspace({ omitPaths: current?.omittedPaths ?? [] })
         : { treeOid: await this.fallbackEngine.inspectWorkspace(), ignoredPaths: [] };
+      const knownAgentPaths = new Set((current?.agentWrites ?? []).map(item => item.path));
+      const unattributedChanges = isGit && current
+        ? (await this.gitEngine.getDiffBetween(current.gitTreeOid, settled.treeOid))
+          .filter(change => !knownAgentPaths.has(change.file))
+          .map(change => ({ path: change.file, status: change.status }))
+        : [];
       return dag.updateNode(params.checkpointId, {
         status: params.status,
         errorMessage: params.errorMessage,
         failedTools: params.failedTools,
         settledGitTreeOid: settled?.treeOid,
         settledIgnoredPaths: settled?.ignoredPaths,
+        unattributedChanges,
       });
     });
   }
@@ -813,6 +822,7 @@ export class TimeMachineService {
     /** Current restore semantics; ledger mode is explicit and opt-in. */
     handEditPolicy: 'reject-drift' | 'ledger-opt-in';
     agentWriteLedger: boolean;
+    unattributedMutationInventory: boolean;
     externalEffectLedger: true;
     externalEffectAdapters: string[];
     workspaceIsolation: 'shared-lock';
@@ -849,6 +859,7 @@ export class TimeMachineService {
       incrementalCapture: usable && this.config.maxSnapshotFileBytes === 0 && this.config.maxSnapshotBytes === 0,
       handEditPolicy: this.config.enableAgentWriteLedger ? 'ledger-opt-in' : 'reject-drift',
       agentWriteLedger: this.config.enableAgentWriteLedger,
+      unattributedMutationInventory: true,
       externalEffectLedger: true,
       externalEffectAdapters: this.listExternalEffectAdapters(),
       workspaceIsolation: 'shared-lock',

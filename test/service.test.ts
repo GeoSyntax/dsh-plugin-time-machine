@@ -158,6 +158,15 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
     expect(await fs.readFile(right, 'utf8')).toBe('live-right\n');
   });
 
+  it('inventories turn-end changes that have no Agent-write evidence', async () => {
+    const sessionId = 'unattributed-mutation-session';
+    const file = path.join(tmpDir, 'shell-created.txt');
+    const checkpoint = await service.createTurnCheckpoint({ sessionId, turnIndex: 1, prompt: 'baseline', sessionState: { sessionId, messages: [] } });
+    await fs.writeFile(file, 'created by shell\n', 'utf8');
+    const finalized = await service.finalizeTurnCheckpoint({ sessionId, checkpointId: checkpoint.id, status: 'success' });
+    expect(finalized.unattributedChanges).toEqual([{ path: 'shell-created.txt', status: 'added' }]);
+  });
+
   it('preserves a verified hand-edit when an integration supplies the Agent-write ledger', async () => {
     const ledgerService = new TimeMachineService({
       workDir: tmpDir,

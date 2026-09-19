@@ -111,6 +111,8 @@ interface CheckpointNode {
     externalEffects?: ExternalEffectRecord[];
     /** Explicit Agent-write evidence used by opt-in hand-edit preservation. */
     agentWrites?: AgentWriteRecord[];
+    /** Git changes observed at turn finalization that lack Agent-write evidence. */
+    unattributedChanges?: FileChange[];
 }
 interface DAGTree {
     sessionId: string;
@@ -281,7 +283,7 @@ declare class DAGStateManager {
      * 获取指定 ID 的节点
      */
     getNode(checkpointId: string): CheckpointNode | null;
-    updateNode(checkpointId: string, patch: Partial<Pick<CheckpointNode, 'status' | 'errorMessage' | 'failedTools' | 'summary' | 'settledGitTreeOid' | 'settledIgnoredPaths' | 'ignoredBackupKey' | 'externalEffects' | 'agentWrites'>>): Promise<CheckpointNode>;
+    updateNode(checkpointId: string, patch: Partial<Pick<CheckpointNode, 'status' | 'errorMessage' | 'failedTools' | 'summary' | 'settledGitTreeOid' | 'settledIgnoredPaths' | 'ignoredBackupKey' | 'externalEffects' | 'agentWrites' | 'unattributedChanges'>>): Promise<CheckpointNode>;
     /** Remove only leaf checkpoints that are not current or a branch head. */
     removeLeafNodes(checkpointIds: string[]): Promise<CheckpointNode[]>;
     /** Remove historical nodes while reparenting surviving children to the nearest ancestor. */
@@ -477,6 +479,7 @@ declare class TimeMachineService {
         /** Current restore semantics; ledger mode is explicit and opt-in. */
         handEditPolicy: 'reject-drift' | 'ledger-opt-in';
         agentWriteLedger: boolean;
+        unattributedMutationInventory: boolean;
         externalEffectLedger: true;
         externalEffectAdapters: string[];
         workspaceIsolation: 'shared-lock';

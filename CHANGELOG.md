@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Cap the optional companion's DSH client peer range at `>=0.1.6-alpha.1 <0.2.0`
+  (and Cordis at 4.x) until a new host API matrix is verified; sync the lockfile
+  and document the tested `.1/.2` slot matrix.
 - Version persisted DAG history and add an atomic legacy migration path; future
   formats fail closed without rewriting user history, and capabilities expose
   `dagStorageFormatVersion` for client compatibility checks.

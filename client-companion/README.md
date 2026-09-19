@@ -28,5 +28,7 @@ point at files included in the built package. This catches publish metadata erro
 that a source-only typecheck cannot detect.
 
 Install the published package alongside the core service and matching DSH Web
-client packages. The companion is opt-in; it does not change the service
+client packages. Supported peer range is DSH client `>=0.1.6-alpha.1 <0.2.0`
+and Cordis `>=4.0.0 <5.0.0`; the repository CI checks client `0.1.6-alpha.1`
+and `0.1.6-alpha.2`. The companion is opt-in; it does not change the service
 plugin's manifest or silently add UI dependencies to a headless profile.

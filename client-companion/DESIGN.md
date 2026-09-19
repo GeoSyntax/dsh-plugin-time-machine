@@ -19,7 +19,9 @@ drift checks, rescue compensation, and session creation.
 
 ## Compatibility boundary
 
-DSH client UI packages are peer dependencies. The source is typechecked against
-the local DSH alpha package declarations, while publish/build verification and
-a cross-version slot matrix remain release prerequisites. The companion is
-therefore opt-in and cannot silently change the main service's dependency graph.
+DSH client UI packages are peer dependencies constrained to the tested DSH
+0.1.x line (`>=0.1.6-alpha.1 <0.2.0`); Cordis is constrained to 4.x. The source
+is typechecked against the local DSH alpha package declarations, and CI runs a
+slot matrix for `0.1.6-alpha.1` and `0.1.6-alpha.2`. A future DSH 0.2 release
+must widen the range only after a new matrix result. The companion is therefore
+opt-in and cannot silently change the main service's dependency graph.

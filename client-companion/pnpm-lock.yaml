@@ -9,28 +9,28 @@ importers:
   .:
     dependencies:
       '@deepseek-ai/cordis':
-        specifier: '>=4.0.0'
+        specifier: '>=4.0.0 <5.0.0'
         version: 4.0.2
       '@deepseek-ai/dsh-client-ui-chat':
-        specifier: '>=0.1.6-alpha.1'
+        specifier: '>=0.1.6-alpha.1 <0.2.0'
         version: 0.1.6-alpha.2(@deepseek-ai/cordis@4.0.2)
       '@deepseek-ai/dsh-client-ui-conversation':
-        specifier: '>=0.1.6-alpha.1'
+        specifier: '>=0.1.6-alpha.1 <0.2.0'
         version: 0.1.6-alpha.2(@deepseek-ai/cordis@4.0.2)
       '@deepseek-ai/dsh-client-ui-renderer':
-        specifier: '>=0.1.6-alpha.1'
+        specifier: '>=0.1.6-alpha.1 <0.2.0'
         version: 0.1.6-alpha.2(@deepseek-ai/cordis@4.0.2)
       '@deepseek-ai/dsh-client-ui-session':
-        specifier: '>=0.1.6-alpha.1'
+        specifier: '>=0.1.6-alpha.1 <0.2.0'
         version: 0.1.6-alpha.2(@deepseek-ai/cordis@4.0.2)
       '@deepseek-ai/dsh-client-ui-slots':
-        specifier: '>=0.1.6-alpha.1'
+        specifier: '>=0.1.6-alpha.1 <0.2.0'
         version: 0.1.6-alpha.2(@deepseek-ai/cordis@4.0.2)
       '@deepseek-ai/dsh-client-ui-workspace':
-        specifier: '>=0.1.6-alpha.1'
+        specifier: '>=0.1.6-alpha.1 <0.2.0'
         version: 0.1.6-alpha.2(@deepseek-ai/cordis@4.0.2)
       '@deepseek-ai/dsh-session':
-        specifier: '>=0.1.6-alpha.1'
+        specifier: '>=0.1.6-alpha.1 <0.2.0'
         version: 0.1.6-alpha.2(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/dsh-scope@0.1.6-alpha.2(@deepseek-ai/cordis@4.0.2)(@deepseek-ai/dsh-invariants@0.1.6-alpha.2(@deepseek-ai/cordis@4.0.2)))
       react:
         specifier: '>=18.2.0'

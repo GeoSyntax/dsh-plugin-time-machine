@@ -72,12 +72,15 @@ status-path validation. This is evidence for the narrow safe case, not a claim
 of parity with every path-identity cache in Change Ledger; absolute latency
 varies with machine load.
 
-### Native DSH timeline action — companion package implemented; cross-version matrix pending
+### Native DSH timeline action — companion package and matrix configured
 
 The optional `client-companion/` package now exposes preview/confirmation and
 fork navigation from both the session header and finalized assistant-message
-action slots. The remaining parity work is a cross-version host matrix and a
-published package. Keep the standalone dashboard and CLI as the portable fallback.
+action slots. CI has a cross-version slot matrix for DSH client
+`0.1.6-alpha.1/.2`, and the package peer range is capped at `<0.2.0` until a
+new host contract is verified. A first hosted GitHub-run result and a published
+package remain release evidence tasks. Keep the standalone dashboard and CLI as
+the portable fallback.
 
 **Acceptance:** the action carries the session-bound restore-plan token, shows
 conflict paths before mutation, and reports the new forked session id.

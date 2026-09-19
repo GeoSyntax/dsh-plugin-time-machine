@@ -254,8 +254,9 @@ Git status 报告的变更路径。小仓库仍有 Git 进程启动开销，但�
 DSH 原生消息操作的扩展边界和 companion package 验收条件见
 [docs/DSH_NATIVE_UI.md](docs/DSH_NATIVE_UI.md)。主服务包不会把 React client
 slot 集成伪装成默认能力；仓库同时提供可选的 `client-companion/` React/slot
-包源码。它需要与目标 DSH Web 版本匹配的 client peer dependencies，尚未随
-主服务包自动安装；匹配的 DSH alpha client 还会提供 finalized assistant message
+包源码。它需要与目标 DSH Web 版本匹配的 client peer dependencies（当前支持
+`>=0.1.6-alpha.1 <0.2.0`，Cordis 4.x），尚未随主服务包自动安装；仓库 CI
+会对 DSH alpha client `0.1.6-alpha.1/.2` 做 slot 矩阵检查；匹配的 DSH alpha client 还会提供 finalized assistant message
 上的消息级回滚按钮，无法映射到 checkpoint 的旧消息会自动隐藏。
 
 如果要开发自己的原生 UI companion，可直接复用无依赖的

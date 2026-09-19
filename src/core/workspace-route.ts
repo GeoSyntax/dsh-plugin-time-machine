@@ -24,5 +24,7 @@ export async function validateWorkspaceRoute(route: WorkspaceRoute): Promise<Wor
   if (!['shared-lock', 'isolated-worktree', 'isolated-container'].includes(route.isolation)) {
     throw Object.assign(new Error('Workspace route isolation is invalid.'), { code: 'BAD_REQUEST' });
   }
-  return { ...route, cwd: canonicalPath };
+  // Preserve the host's spelling for adapter compatibility; callers that
+  // compare roots must compare realpaths rather than lexical strings.
+  return route;
 }

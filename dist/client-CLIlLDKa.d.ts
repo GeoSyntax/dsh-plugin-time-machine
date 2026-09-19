@@ -88,6 +88,8 @@ interface CheckpointNode {
     sessionState: SessionState;
     changedFiles: FileChange[];
     status: 'running' | 'success' | 'failed' | 'aborted';
+    /** Durable assistant message produced by this turn, when the host exposes one. */
+    assistantMessageId?: string;
     errorMessage?: string;
     failedTools?: Array<{
         toolName: string;
@@ -353,6 +355,8 @@ declare class TimeMachineClient {
     storage(sessionId?: string): Promise<Record<string, unknown>>;
     dag(sessionId: string): Promise<DAGTree>;
     sessions(): Promise<SessionSummary[]>;
+    /** Resolve the checkpoint anchored to a finalized assistant message. */
+    checkpointForMessage(sessionId: string, messageId: string): Promise<CheckpointNode>;
     /** Build a bounded, newest-first timeline without coupling consumers to React or DSH slots. */
     timeline(sessionId: string, limit?: number): Promise<CompanionTimelineEntry[]>;
     preview(sessionId: string, checkpointId: string): Promise<PreviewBoundAction>;

@@ -303,6 +303,7 @@ export class TimeMachineService {
     status: 'success' | 'failed' | 'aborted';
     errorMessage?: string;
     failedTools?: Array<{ toolName: string; input: any; error: string }>;
+    assistantMessageId?: string;
   }): Promise<CheckpointNode> {
     return this.runWorkspaceOperation(async () => {
       const dag = await this.getDAGManager(params.sessionId);
@@ -322,11 +323,22 @@ export class TimeMachineService {
         status: params.status,
         errorMessage: params.errorMessage,
         failedTools: params.failedTools,
+        ...(params.assistantMessageId ? { assistantMessageId: params.assistantMessageId } : {}),
         settledGitTreeOid: settled?.treeOid,
         settledIgnoredPaths: settled?.ignoredPaths,
         unattributedChanges,
       });
     });
+  }
+
+  /** Resolve a finalized assistant message to its turn checkpoint for message actions. */
+  async findCheckpointByAssistantMessage(sessionId: string, messageId: string): Promise<CheckpointNode | null> {
+    if (!messageId.trim()) return null;
+    const dag = await this.getDAGManager(sessionId);
+    const matches = Object.values(dag.tree.nodes)
+      .filter(node => node.assistantMessageId === messageId)
+      .sort((left, right) => right.timestamp - left.timestamp);
+    return matches[0] ? cloneJson(matches[0]) : null;
   }
 
   /**

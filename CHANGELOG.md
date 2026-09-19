@@ -68,6 +68,9 @@ See [README.md](./README.md), [docs/COMPARISON.md](./docs/COMPARISON.md), and
 [docs/ROADMAP.md](./docs/ROADMAP.md) for configuration and upgrade guidance.
 ## Unreleased
 
+- Add finalized assistant-message checkpoint mapping and a native
+  `conversation.chat.assistant-actions` companion action. Messages without a
+  durable checkpoint remain hidden instead of offering an unsafe guess.
 - Expose `rewindSessionMode: fork` in capability discovery and surface the
   shared-lock/new-session semantics in the native client companion, so users
   cannot mistake this append-only-safe rewind for in-place context undo.

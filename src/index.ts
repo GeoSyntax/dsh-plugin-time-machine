@@ -296,6 +296,7 @@ export function apply(ctx: Context, config: Config = {}): void {
       status: kind === 'completed' ? 'success' : kind === 'aborted' || kind === 'interrupted' ? 'aborted' : 'failed',
       errorMessage: typeof failure?.message === 'string' ? failure.message : kind === 'completed' ? undefined : `Turn ended: ${kind}`,
       failedTools: failedTools.length > 0 ? failedTools : undefined,
+      assistantMessageId: latestAssistantMessageId(getMessages(session)),
     })).catch((error: unknown) => {
       ctx.logger.error(`[time-machine] could not finalize ${checkpointId}: ${errorMessage(error)}`);
     });
@@ -427,6 +428,14 @@ function getEvents(session: SessionLike): readonly SessionEventLike[] {
 function getMessages(session: SessionLike): SessionMessage[] {
   if (typeof session.deriveMessages !== 'function') return [];
   return session.deriveMessages().map(message => message as SessionMessage);
+}
+
+function latestAssistantMessageId(messages: readonly SessionMessage[]): string | undefined {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index] as SessionMessage & { id?: unknown };
+    if (message.role === 'assistant' && typeof message.id === 'string' && message.id.trim()) return message.id;
+  }
+  return undefined;
 }
 
 function findLastEvent(

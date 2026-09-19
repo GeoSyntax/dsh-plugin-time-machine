@@ -340,6 +340,9 @@ export class DAGStateManager {
       if (!Array.isArray(node.sessionState.messages) || !Array.isArray(node.changedFiles)) {
         throw new Error(`DAG checkpoint '${id}' has invalid session or file state.`);
       }
+      if (node.assistantMessageId !== undefined && (typeof node.assistantMessageId !== 'string' || !node.assistantMessageId.trim())) {
+        throw new Error(`DAG checkpoint '${id}' has an invalid assistant message id.`);
+      }
       if (node.parentId !== null && !tree.nodes[node.parentId]) {
         throw new Error(`DAG checkpoint '${id}' references missing parent '${node.parentId}'.`);
       }

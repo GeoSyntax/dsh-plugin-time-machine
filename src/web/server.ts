@@ -60,7 +60,7 @@ export class TimeMachineWebServer {
           // 静态资源处理
           await this.handleStatic(res, pathname);
         } catch (err: any) {
-          const status = err?.code === 'BAD_REQUEST' ? 400 : err?.code === 'SESSION_NOT_FOUND' || err?.code === 'UNDO_TARGET_NOT_FOUND' ? 404 : err?.code === 'RESTORE_PLAN_INVALID' || err?.code === 'RESTORE_MERGE_CONFLICT' || err?.code === 'QUARANTINE_KEY_INVALID' || err?.code === 'EXTERNAL_COMPENSATION_UNKNOWN' || err?.code === 'EXTERNAL_ADAPTER_UNAVAILABLE' || err?.code === 'EXTERNAL_EFFECT_DUPLICATE' ? 409 : err?.code === 'UNSUPPORTED_WORKSPACE_STATE' ? 422 : err?.code === 'SNAPSHOT_SIZE_LIMIT' ? 413 : 500;
+          const status = err?.code === 'BAD_REQUEST' ? 400 : err?.code === 'SESSION_NOT_FOUND' || err?.code === 'UNDO_TARGET_NOT_FOUND' || err?.code === 'CHECKPOINT_NOT_FOUND' ? 404 : err?.code === 'RESTORE_PLAN_INVALID' || err?.code === 'RESTORE_MERGE_CONFLICT' || err?.code === 'QUARANTINE_KEY_INVALID' || err?.code === 'EXTERNAL_COMPENSATION_UNKNOWN' || err?.code === 'EXTERNAL_ADAPTER_UNAVAILABLE' || err?.code === 'EXTERNAL_EFFECT_DUPLICATE' ? 409 : err?.code === 'UNSUPPORTED_WORKSPACE_STATE' ? 422 : err?.code === 'SNAPSHOT_SIZE_LIMIT' ? 413 : 500;
           res.writeHead(status, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
             error: err.message || 'Internal Server Error',
@@ -117,6 +117,18 @@ export class TimeMachineWebServer {
       const sessions = await this.listAvailableSessions();
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ sessions }));
+      return;
+    }
+
+    if (pathname === '/api/checkpoint-for-message' && req.method === 'GET') {
+      const sessionId = this.requireSessionId(query.get('sessionId'));
+      const messageId = query.get('messageId') || '';
+      if (!messageId.trim()) throw Object.assign(new Error('Missing messageId query parameter'), { code: 'BAD_REQUEST' });
+      await this.requirePersistedSession(sessionId);
+      const checkpoint = await this.service.findCheckpointByAssistantMessage(sessionId, messageId);
+      if (!checkpoint) throw Object.assign(new Error('No checkpoint is associated with this assistant message.'), { code: 'CHECKPOINT_NOT_FOUND' });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ sessionId, messageId, checkpoint }));
       return;
     }
 

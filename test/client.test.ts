@@ -40,6 +40,17 @@ describe('TimeMachineClient companion contract', () => {
     await expect(client.sessions()).resolves.toEqual([expect.objectContaining({ sessionId: 's', checkpointCount: 2 })]);
   });
 
+  it('resolves a finalized assistant message to its checkpoint', async () => {
+    const client = new TimeMachineClient({
+      baseUrl: 'http://127.0.0.1:3088',
+      fetch: async (url) => {
+        expect(String(url)).toContain('/api/checkpoint-for-message?sessionId=s&messageId=m-1');
+        return new Response(JSON.stringify({ checkpoint: { id: 'c-1', turnIndex: 2 } }), { status: 200 });
+      },
+    });
+    await expect(client.checkpointForMessage('s', 'm-1')).resolves.toMatchObject({ id: 'c-1', turnIndex: 2 });
+  });
+
   it('projects a safe native-companion timeline across internal checkpoints', async () => {
     const node = (id: string, parentId: string | null, turnIndex: number, tags: string[] = [], status: string = 'success') => ({
       id, parentId, branch: 'main', turnIndex, timestamp: turnIndex, prompt: `turn ${turnIndex}`, summary: '',

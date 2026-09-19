@@ -21,6 +21,7 @@
     "@deepseek-ai/cordis": ">=4.0.0",
     "@deepseek-ai/dsh-client-ui-session": ">=0.1.6-alpha.1",
     "@deepseek-ai/dsh-client-ui-conversation": ">=0.1.6-alpha.1",
+    "@deepseek-ai/dsh-client-ui-chat": ">=0.1.6-alpha.1",
     "@deepseek-ai/dsh-client-ui-slots": ">=0.1.6-alpha.1",
     "@deepseek-ai/dsh-client-ui-renderer": ">=0.1.6-alpha.1",
     "@deepseek-ai/dsh-client-ui-workspace": ">=0.1.6-alpha.1",
@@ -34,6 +35,6 @@
     "tsdown": "^0.15.0",
     "typescript": "^5.7.0"
   },
-  "dsh": { "client": { "inject": ["@deepseek-ai/dsh-client-ui-session", "@deepseek-ai/dsh-client-ui-conversation", "@deepseek-ai/dsh-client-ui-slots", "@deepseek-ai/dsh-client-ui-workspace"], "platform": "web" } },
+  "dsh": { "client": { "inject": ["@deepseek-ai/dsh-client-ui-session", "@deepseek-ai/dsh-client-ui-conversation", "@deepseek-ai/dsh-client-ui-chat", "@deepseek-ai/dsh-client-ui-slots", "@deepseek-ai/dsh-client-ui-workspace"], "platform": "web" } },
   "scripts": { "build": "tsdown", "typecheck": "tsc --noEmit", "test:smoke": "pnpm build && node test/slot-smoke.mjs", "prepack": "pnpm build" }
 }

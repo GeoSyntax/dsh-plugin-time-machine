@@ -8,11 +8,12 @@ assistant 的 `messageId`，并且按 session 注入；它不是一个可以从�
 
 ## 当前状态
 
-- 已支持：`GET /api/capabilities`、`/api/preview`、
+- 已支持：`GET /api/capabilities`、`/api/checkpoint-for-message`、`/api/preview`、
   `/api/rewind`、`/api/external-effects/compensate`。
 - 已支持：CLI `/tm-preview`、`/tm-rewind`、`/tm-fork`。
-- 当前不注入 transcript assistant action strip；可选 companion 先贡献
-  `conversation.session.header.actions`，避免依赖 assistant message owner 的版本耦合。
+- 可选 companion 同时贡献 `conversation.session.header.actions` 和
+  `conversation.chat.assistant-actions`：后者只在服务端能把 finalized assistant
+  message 映射到 checkpoint 时出现，旧消息/内部消息会自动隐藏。
 - 兼容回退：用户可以从 DSH 打开独立 Dashboard，或执行 CLI 命令。
 - 已提供：无 React/浏览器依赖的 `TimeMachineClient` companion contract（npm 子路径
   `dsh-plugin-time-machine/client`）；它封装
@@ -32,7 +33,7 @@ assistant 的 `messageId`，并且按 session 注入；它不是一个可以从�
 - 已提供：`webAllowedOrigins` 精确 Origin allowlist 和 CORS 响应头；默认仍拒绝跨源请求，
   只有部署者明确列出可信的本地 DSH client origin 后，companion 才能跨端口调用 REST API。
 - 已加入：`client-companion/` 独立 React/slot 包源码，使用 `TimeMachineClient`
-  timeline、确认后的相对 undo 和 `uiWorkspace.openSession()` 导航；它只声明 DSH
+  timeline、消息级 preview、确认后的相对 undo 和 `uiWorkspace.openSession()` 导航；它只声明 DSH
   client peer dependencies，不会被主服务包加载。当前已用 DSH `0.1.6-alpha.2`
   依赖完成 typecheck、构建和 pack dry-run；npm 发布和跨版本 slot CI 仍是下一步门禁。
 

@@ -58,12 +58,12 @@ path; 10k-file turns dropped from roughly 26s to roughly 2s in the fixture while
 retaining status-path validation. This is evidence for the narrow safe case, not
 a claim of parity with every path-identity cache in Change Ledger.
 
-### Native DSH timeline action — companion package implemented; message-anchored slot pending
+### Native DSH timeline action — companion package implemented; cross-version matrix pending
 
 The optional `client-companion/` package now exposes preview/confirmation and
-fork navigation from the session header action slot. The remaining parity work
-is a host message-anchored action when DSH provides a stable assistant-owner
-extension point. Keep the standalone dashboard and CLI as the portable fallback.
+fork navigation from both the session header and finalized assistant-message
+action slots. The remaining parity work is a cross-version host matrix and a
+published package. Keep the standalone dashboard and CLI as the portable fallback.
 
 **Acceptance:** the action carries the session-bound restore-plan token, shows
 conflict paths before mutation, and reports the new forked session id.

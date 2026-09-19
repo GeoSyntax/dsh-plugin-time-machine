@@ -129,6 +129,13 @@ export class TimeMachineClient {
     return objectField(body, 'sessions') as SessionSummary[];
   }
 
+  /** Resolve the checkpoint anchored to a finalized assistant message. */
+  async checkpointForMessage(sessionId: string, messageId: string): Promise<CheckpointNode> {
+    if (!sessionId.trim() || !messageId.trim()) throw new Error('checkpointForMessage requires sessionId and messageId.');
+    const body = await this.get(`/api/checkpoint-for-message?sessionId=${encodeURIComponent(sessionId)}&messageId=${encodeURIComponent(messageId)}`);
+    return objectField(body, 'checkpoint') as CheckpointNode;
+  }
+
   /** Build a bounded, newest-first timeline without coupling consumers to React or DSH slots. */
   async timeline(sessionId: string, limit = 50): Promise<CompanionTimelineEntry[]> {
     if (!sessionId.trim()) throw new Error('timeline requires a non-empty sessionId.');

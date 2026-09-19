@@ -239,7 +239,8 @@ DSH 原生消息操作的扩展边界和 companion package 验收条件见
 [docs/DSH_NATIVE_UI.md](docs/DSH_NATIVE_UI.md)。主服务包不会把 React client
 slot 集成伪装成默认能力；仓库同时提供可选的 `client-companion/` React/slot
 包源码。它需要与目标 DSH Web 版本匹配的 client peer dependencies，尚未随
-主服务包自动安装。
+主服务包自动安装；匹配的 DSH alpha client 还会提供 finalized assistant message
+上的消息级回滚按钮，无法映射到 checkpoint 的旧消息会自动隐藏。
 
 如果要开发自己的原生 UI companion，可直接复用无依赖的
 `TimeMachineClient`（`import { TimeMachineClient } from 'dsh-plugin-time-machine/client'`）。

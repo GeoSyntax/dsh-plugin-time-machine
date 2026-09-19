@@ -1781,6 +1781,9 @@ var DAGStateManager = class {
       if (!Array.isArray(node.sessionState.messages) || !Array.isArray(node.changedFiles)) {
         throw new Error(`DAG checkpoint '${id}' has invalid session or file state.`);
       }
+      if (node.assistantMessageId !== void 0 && (typeof node.assistantMessageId !== "string" || !node.assistantMessageId.trim())) {
+        throw new Error(`DAG checkpoint '${id}' has an invalid assistant message id.`);
+      }
       if (node.parentId !== null && !tree.nodes[node.parentId]) {
         throw new Error(`DAG checkpoint '${id}' references missing parent '${node.parentId}'.`);
       }
@@ -2195,11 +2198,19 @@ var TimeMachineService = class {
         status: params.status,
         errorMessage: params.errorMessage,
         failedTools: params.failedTools,
+        ...params.assistantMessageId ? { assistantMessageId: params.assistantMessageId } : {},
         settledGitTreeOid: settled?.treeOid,
         settledIgnoredPaths: settled?.ignoredPaths,
         unattributedChanges
       });
     });
+  }
+  /** Resolve a finalized assistant message to its turn checkpoint for message actions. */
+  async findCheckpointByAssistantMessage(sessionId, messageId) {
+    if (!messageId.trim()) return null;
+    const dag = await this.getDAGManager(sessionId);
+    const matches = Object.values(dag.tree.nodes).filter((node) => node.assistantMessageId === messageId).sort((left, right) => right.timestamp - left.timestamp);
+    return matches[0] ? cloneJson2(matches[0]) : null;
   }
   /**
    * Record a successful Agent write. This is deliberately an integration API:
@@ -3105,7 +3116,7 @@ var TimeMachineWebServer = class {
           }
           await this.handleStatic(res, pathname);
         } catch (err) {
-          const status = err?.code === "BAD_REQUEST" ? 400 : err?.code === "SESSION_NOT_FOUND" || err?.code === "UNDO_TARGET_NOT_FOUND" ? 404 : err?.code === "RESTORE_PLAN_INVALID" || err?.code === "RESTORE_MERGE_CONFLICT" || err?.code === "QUARANTINE_KEY_INVALID" || err?.code === "EXTERNAL_COMPENSATION_UNKNOWN" || err?.code === "EXTERNAL_ADAPTER_UNAVAILABLE" || err?.code === "EXTERNAL_EFFECT_DUPLICATE" ? 409 : err?.code === "UNSUPPORTED_WORKSPACE_STATE" ? 422 : err?.code === "SNAPSHOT_SIZE_LIMIT" ? 413 : 500;
+          const status = err?.code === "BAD_REQUEST" ? 400 : err?.code === "SESSION_NOT_FOUND" || err?.code === "UNDO_TARGET_NOT_FOUND" || err?.code === "CHECKPOINT_NOT_FOUND" ? 404 : err?.code === "RESTORE_PLAN_INVALID" || err?.code === "RESTORE_MERGE_CONFLICT" || err?.code === "QUARANTINE_KEY_INVALID" || err?.code === "EXTERNAL_COMPENSATION_UNKNOWN" || err?.code === "EXTERNAL_ADAPTER_UNAVAILABLE" || err?.code === "EXTERNAL_EFFECT_DUPLICATE" ? 409 : err?.code === "UNSUPPORTED_WORKSPACE_STATE" ? 422 : err?.code === "SNAPSHOT_SIZE_LIMIT" ? 413 : 500;
           res.writeHead(status, { "Content-Type": "application/json" });
           res.end(JSON.stringify({
             error: err.message || "Internal Server Error",
@@ -3156,6 +3167,17 @@ var TimeMachineWebServer = class {
       const sessions = await this.listAvailableSessions();
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ sessions }));
+      return;
+    }
+    if (pathname === "/api/checkpoint-for-message" && req.method === "GET") {
+      const sessionId = this.requireSessionId(query.get("sessionId"));
+      const messageId = query.get("messageId") || "";
+      if (!messageId.trim()) throw Object.assign(new Error("Missing messageId query parameter"), { code: "BAD_REQUEST" });
+      await this.requirePersistedSession(sessionId);
+      const checkpoint = await this.service.findCheckpointByAssistantMessage(sessionId, messageId);
+      if (!checkpoint) throw Object.assign(new Error("No checkpoint is associated with this assistant message."), { code: "CHECKPOINT_NOT_FOUND" });
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ sessionId, messageId, checkpoint }));
       return;
     }
     if (pathname === "/api/storage" && req.method === "GET") {
@@ -3972,6 +3994,12 @@ var TimeMachineClient = class {
     const body = await this.get("/api/sessions");
     return objectField(body, "sessions");
   }
+  /** Resolve the checkpoint anchored to a finalized assistant message. */
+  async checkpointForMessage(sessionId, messageId) {
+    if (!sessionId.trim() || !messageId.trim()) throw new Error("checkpointForMessage requires sessionId and messageId.");
+    const body = await this.get(`/api/checkpoint-for-message?sessionId=${encodeURIComponent(sessionId)}&messageId=${encodeURIComponent(messageId)}`);
+    return objectField(body, "checkpoint");
+  }
   /** Build a bounded, newest-first timeline without coupling consumers to React or DSH slots. */
   async timeline(sessionId, limit = 50) {
     if (!sessionId.trim()) throw new Error("timeline requires a non-empty sessionId.");
@@ -4292,7 +4320,8 @@ function apply(ctx, config = {}) {
       checkpointId,
       status: kind === "completed" ? "success" : kind === "aborted" || kind === "interrupted" ? "aborted" : "failed",
       errorMessage: typeof failure?.message === "string" ? failure.message : kind === "completed" ? void 0 : `Turn ended: ${kind}`,
-      failedTools: failedTools.length > 0 ? failedTools : void 0
+      failedTools: failedTools.length > 0 ? failedTools : void 0,
+      assistantMessageId: latestAssistantMessageId(getMessages(session))
     })).catch((error) => {
       ctx.logger.error(`[time-machine] could not finalize ${checkpointId}: ${errorMessage(error)}`);
     });
@@ -4394,6 +4423,13 @@ function getEvents(session) {
 function getMessages(session) {
   if (typeof session.deriveMessages !== "function") return [];
   return session.deriveMessages().map((message) => message);
+}
+function latestAssistantMessageId(messages) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role === "assistant" && typeof message.id === "string" && message.id.trim()) return message.id;
+  }
+  return void 0;
 }
 function findLastEvent(events, predicate) {
   for (let index = events.length - 1; index >= 0; index -= 1) {

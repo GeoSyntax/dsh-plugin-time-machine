@@ -2144,6 +2144,12 @@ var TimeMachineService = class {
     if (!node) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
     return cloneJson2(node.agentWrites ?? []);
   }
+  async getUnattributedChanges(sessionId, checkpointId) {
+    const dag = await this.getDAGManager(sessionId);
+    const node = dag.getNode(checkpointId);
+    if (!node) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
+    return cloneJson2(node.unattributedChanges ?? []);
+  }
   /**
    * Record an external mutation against a checkpoint. The core deliberately
    * does not execute compensation; an adapter can later use this declaration
@@ -3048,6 +3054,15 @@ var TimeMachineWebServer = class {
       res.end(JSON.stringify({ sessionId, checkpointId, enabled: this.service.config.enableAgentWriteLedger === true, writes }));
       return;
     }
+    if (pathname === "/api/unattributed-changes" && req.method === "GET") {
+      const sessionId = query.get("sessionId") || "default";
+      const checkpointId = query.get("checkpoint") || "";
+      if (!checkpointId) throw Object.assign(new Error("Missing checkpoint query parameter"), { code: "BAD_REQUEST" });
+      const changes = await this.service.getUnattributedChanges(sessionId, checkpointId);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ sessionId, checkpointId, changes }));
+      return;
+    }
     if (pathname === "/api/diff" && req.method === "GET") {
       const sessionId = query.get("sessionId") || "default";
       const baseId = query.get("base") || "";
@@ -3314,6 +3329,19 @@ function registerCliCommands(ctx, service) {
         const lines = writes.map((item) => `${item.operation ?? "modify"} ${item.path} sha256=${item.sha256} (${new Date(item.recordedAt).toISOString()})`);
         return { kind: "success", text: `Verified Agent writes for ${checkpointId}:
 ${lines.join("\n")}` };
+      }
+    });
+    scope.commands.register({
+      name: "tm-unattributed",
+      description: "Show workspace changes without Agent-write evidence",
+      input: { hint: "<checkpoint>" },
+      handler: async ({ agent, rawInput }) => {
+        const checkpointId = rawInput.trim().split(/\s+/).filter(Boolean)[0];
+        if (!checkpointId) return { kind: "error", text: "Usage: /tm-unattributed <checkpoint>" };
+        const changes = await service.getUnattributedChanges(agent.session.id, checkpointId);
+        if (changes.length === 0) return { kind: "success", text: `No unattributed workspace changes for ${checkpointId}.` };
+        return { kind: "success", text: `Unattributed workspace changes for ${checkpointId}:
+${changes.map((item) => `${item.status} ${item.path}`).join("\n")}` };
       }
     });
     scope.commands.register({

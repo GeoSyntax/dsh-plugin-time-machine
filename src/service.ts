@@ -13,6 +13,7 @@ import type {
   ExternalEffectAdapter,
   ExternalEffectCompensationResult,
   AgentWriteRecord,
+  FileChange,
   DAGTree,
   DiffResult,
   ReflectionSummary,
@@ -332,6 +333,13 @@ export class TimeMachineService {
     const node = dag.getNode(checkpointId);
     if (!node) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
     return cloneJson(node.agentWrites ?? []);
+  }
+
+  async getUnattributedChanges(sessionId: string, checkpointId: string): Promise<FileChange[]> {
+    const dag = await this.getDAGManager(sessionId);
+    const node = dag.getNode(checkpointId);
+    if (!node) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
+    return cloneJson(node.unattributedChanges ?? []);
   }
 
   /**

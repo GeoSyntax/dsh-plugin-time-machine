@@ -165,6 +165,7 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
     await fs.writeFile(file, 'created by shell\n', 'utf8');
     const finalized = await service.finalizeTurnCheckpoint({ sessionId, checkpointId: checkpoint.id, status: 'success' });
     expect(finalized.unattributedChanges).toEqual([{ path: 'shell-created.txt', status: 'added' }]);
+    expect(await service.getUnattributedChanges(sessionId, checkpoint.id)).toEqual([{ path: 'shell-created.txt', status: 'added' }]);
   });
 
   it('preserves a verified hand-edit when an integration supplies the Agent-write ledger', async () => {

@@ -391,6 +391,7 @@ declare class TimeMachineService {
         sha256?: string;
     }): Promise<CheckpointNode>;
     getAgentWriteLedger(sessionId: string, checkpointId: string): Promise<AgentWriteRecord[]>;
+    getUnattributedChanges(sessionId: string, checkpointId: string): Promise<FileChange[]>;
     /**
      * Record an external mutation against a checkpoint. The core deliberately
      * does not execute compensation; an adapter can later use this declaration

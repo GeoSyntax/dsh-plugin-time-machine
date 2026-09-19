@@ -112,6 +112,19 @@ describe('TimeMachineWebServer', () => {
     expect(body.writes).toEqual([expect.objectContaining({ path: 'ledger.txt', operation: 'create', sha256: expect.any(String) })]);
   });
 
+  it('exposes a read-only unattributed mutation endpoint', async () => {
+    const sessionId = 'unattributed-web-session';
+    await execAsync('git', ['init'], { cwd: tmpDir });
+    await execAsync('git', ['config', 'user.name', 'WebTest'], { cwd: tmpDir });
+    await execAsync('git', ['config', 'user.email', 'web@test.com'], { cwd: tmpDir });
+    const checkpoint = await service.createTurnCheckpoint({ sessionId, turnIndex: 1, prompt: 'base', sessionState: { sessionId, messages: [] } });
+    await fs.writeFile(path.join(tmpDir, 'shell.txt'), 'shell\n', 'utf8');
+    await service.finalizeTurnCheckpoint({ sessionId, checkpointId: checkpoint.id, status: 'success' });
+    const response = await fetch(`http://localhost:${testPort}/api/unattributed-changes?sessionId=${sessionId}&checkpoint=${encodeURIComponent(checkpoint.id)}`);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ sessionId, checkpointId: checkpoint.id, changes: [{ path: 'shell.txt', status: 'added' }] });
+  });
+
   it('exposes external compensation as a dry-run first and an explicit idempotent action', async () => {
     const sessionId = 'web-effects';
     const checkpoint = await service.createTurnCheckpoint({

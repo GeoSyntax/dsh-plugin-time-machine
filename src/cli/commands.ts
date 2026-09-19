@@ -53,6 +53,19 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
     });
 
     scope.commands.register({
+      name: 'tm-unattributed',
+      description: 'Show workspace changes without Agent-write evidence',
+      input: { hint: '<checkpoint>' },
+      handler: async ({ agent, rawInput }: CommandInvocationLike): Promise<CommandResult> => {
+        const checkpointId = rawInput.trim().split(/\s+/).filter(Boolean)[0];
+        if (!checkpointId) return { kind: 'error', text: 'Usage: /tm-unattributed <checkpoint>' };
+        const changes = await service.getUnattributedChanges(agent.session.id, checkpointId);
+        if (changes.length === 0) return { kind: 'success', text: `No unattributed workspace changes for ${checkpointId}.` };
+        return { kind: 'success', text: `Unattributed workspace changes for ${checkpointId}:\n${changes.map(item => `${item.status} ${item.path}`).join('\n')}` };
+      },
+    });
+
+    scope.commands.register({
       name: 'tm-prune',
       description: 'Prune old non-head Time Machine checkpoints',
       input: { hint: '[keep-latest] [--older-than=<duration>] [--abandoned-branches] [--compact-history] [--repack-shadow]' },

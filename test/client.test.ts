@@ -43,6 +43,17 @@ describe('TimeMachineClient companion contract', () => {
     await expect(client.sessions()).resolves.toEqual([expect.objectContaining({ sessionId: 's', checkpointCount: 2 })]);
   });
 
+  it('reads the canonical workspace route for a session', async () => {
+    const client = new TimeMachineClient({
+      baseUrl: 'http://127.0.0.1:3088',
+      fetch: async (url) => {
+        expect(String(url)).toContain('/api/workspace-route?sessionId=s');
+        return new Response(JSON.stringify({ route: { workspaceId: 'root', cwd: 'C:/repo', isolation: 'shared-lock' } }), { status: 200 });
+      },
+    });
+    await expect(client.workspaceRoute('s')).resolves.toMatchObject({ route: { workspaceId: 'root', isolation: 'shared-lock' } });
+  });
+
   it('exposes explicit shadow-store migration to companion clients', async () => {
     const client = new TimeMachineClient({
       baseUrl: 'http://127.0.0.1:3088',

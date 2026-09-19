@@ -66,6 +66,10 @@ var TimeMachineClient = class {
     const body = await this.get("/api/sessions");
     return objectField(body, "sessions");
   }
+  async workspaceRoute(sessionId) {
+    if (!sessionId.trim()) throw new Error("workspaceRoute requires sessionId.");
+    return this.get(`/api/workspace-route?sessionId=${encodeURIComponent(sessionId)}`);
+  }
   /** Resolve the checkpoint anchored to a finalized assistant message. */
   async checkpointForMessage(sessionId, messageId) {
     if (!sessionId.trim() || !messageId.trim()) throw new Error("checkpointForMessage requires sessionId and messageId.");

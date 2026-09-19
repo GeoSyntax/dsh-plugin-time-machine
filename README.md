@@ -123,6 +123,7 @@ dsh plugin --profile web list --depth 0
 - **消息锚点:** `GET /api/checkpoint-for-message` 与 `TimeMachineClient.checkpointForMessage()` 同时支持 finalized assistant message 和开启 turn 的 user message；旧的 assistant-only 服务方法仍保留兼容性。
 - `GET /api/capabilities` 的 `messageAnchors` 会声明当前可解析的消息类型（目前为 `assistant` 与 `user`），便于第三方 UI 在宿主没有 user-message slot 时仍使用 REST contract。
 - `GET /api/capabilities` 的 `toolMutationLedger` 会声明高风险工具变更归因是否启用；归因事件即使晚于 `turn/end` 到达也会按 callId/执行对象关联，最多保留 5 分钟等待窗口。
+- `GET /api/workspace-route?sessionId=...` 返回 session 当前的规范工作区、隔离模式和是否由宿主适配器解析；没有适配器时明确返回 `configured-root`/`shared-lock`，不会把单根工作区伪装成多 workspace。
 - **安全清理预览:** `/tm-prune --dry-run` 或 Web API `dryRun: true` 只计算将被删除的 checkpoint，不修改 DAG、quarantine 或 Git objects。
 - **Companion 清理 API:** `TimeMachineClient.prune({ sessionId, dryRun: true })` 提供与 CLI/Web 相同的类型化 retention 预览与执行入口。
 

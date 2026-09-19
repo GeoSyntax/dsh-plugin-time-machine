@@ -8,6 +8,12 @@ of being attached to the wrong repository.
 This document defines the smallest host extension needed to support multiple
 workspaces and isolated forked sessions without weakening that safety rule.
 
+The portable plugin now exposes `GET /api/workspace-route?sessionId=...` and
+`TimeMachineClient.workspaceRoute()` so a companion can inspect the current
+route. Without a host adapter the response is explicitly
+`configured-root`/`shared-lock`; an adapter-provided route is validated before
+it is returned, and invalid relative paths fail closed.
+
 ## Required host surface
 
 The host adapter should provide all of the following operations as one atomic

@@ -3,7 +3,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { URL } from 'node:url';
 import type { TimeMachineService } from '../service.js';
-import type { CheckpointNode, WorkspaceIsolation } from '../types.js';
+import type { CheckpointNode, WorkspaceIsolation, WorkspaceRoute } from '../types.js';
 
 export interface TimeMachineWebHooks {
   restartConversation?: (sourceSessionId: string, checkpoint: CheckpointNode) => Promise<{ sessionId: string }>;
@@ -13,6 +13,8 @@ export interface TimeMachineWebHooks {
   workspaceIsolation?: () => WorkspaceIsolation;
   /** Optional host-side session authority (for profiles exposing inspect()). */
   sessionExists?: (sessionId: string) => Promise<boolean>;
+  /** Optional host route resolver; when absent, the configured root is reported. */
+  workspaceRoute?: (sessionId: string) => Promise<WorkspaceRoute>;
 }
 
 export class TimeMachineWebServer {
@@ -165,6 +167,18 @@ export class TimeMachineWebServer {
       const reflection = await this.service.getReflection(sessionId, checkpointId);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ sessionId, checkpointId, reflection }));
+      return;
+    }
+
+    if (pathname === '/api/workspace-route' && req.method === 'GET') {
+      const sessionId = this.requireSessionId(query.get('sessionId'));
+      await this.requirePersistedSession(sessionId);
+      const route = this.hooks.workspaceRoute
+        ? await this.hooks.workspaceRoute(sessionId)
+        : { workspaceId: 'configured-root', cwd: this.service.workDir, isolation: 'shared-lock' as const };
+      validateWorkspaceRoute(route);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ sessionId, route, adapter: Boolean(this.hooks.workspaceRoute) }));
       return;
     }
 
@@ -629,4 +643,16 @@ function effectivePort(hostHeader: string, protocol: string): string {
     : hostHeader.split(':').slice(1).join(':');
   if (explicit) return explicit;
   return protocol === 'https:' ? '443' : '80';
+}
+
+function validateWorkspaceRoute(route: WorkspaceRoute): void {
+  if (!route || typeof route.workspaceId !== 'string' || !route.workspaceId.trim() || /[\0\r\n]/.test(route.workspaceId)) {
+    throw Object.assign(new Error('Workspace route workspaceId is invalid.'), { code: 'BAD_REQUEST' });
+  }
+  if (typeof route.cwd !== 'string' || !path.isAbsolute(route.cwd) || /[\0\r\n]/.test(route.cwd)) {
+    throw Object.assign(new Error('Workspace route cwd must be an absolute path.'), { code: 'BAD_REQUEST' });
+  }
+  if (!['shared-lock', 'isolated-worktree', 'isolated-container'].includes(route.isolation)) {
+    throw Object.assign(new Error('Workspace route isolation is invalid.'), { code: 'BAD_REQUEST' });
+  }
 }

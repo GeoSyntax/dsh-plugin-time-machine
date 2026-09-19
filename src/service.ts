@@ -1069,6 +1069,7 @@ export class TimeMachineService {
     externalEffectAdapters: string[];
     /** Session routing is intentionally single-root until DSH exposes a host router contract. */
     workspaceRouting: 'single-root';
+    workspaceRouteInspection: true;
     /** Message kinds that can resolve to a persisted checkpoint. */
     messageAnchors: Array<'assistant' | 'user'>;
     workspaceIsolation: WorkspaceIsolation;
@@ -1137,6 +1138,7 @@ export class TimeMachineService {
       externalEffectLedger: true,
       externalEffectAdapters: this.listExternalEffectAdapters(),
       workspaceRouting: 'single-root',
+      workspaceRouteInspection: true,
       messageAnchors: ['assistant', 'user'],
       workspaceIsolation: 'shared-lock',
       rewindSessionMode: 'fork',

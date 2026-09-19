@@ -302,6 +302,24 @@ export interface StorageStatus {
 /** Host-reported workspace isolation mode; shared-lock is the honest fallback. */
 export type WorkspaceIsolation = 'shared-lock' | 'isolated-worktree' | 'isolated-container';
 
+/** Canonical workspace route reported by a host integration. */
+export interface WorkspaceRoute {
+  workspaceId: string;
+  cwd: string;
+  isolation: WorkspaceIsolation;
+}
+
+/** Optional DSH host surface for multi-workspace and isolated fork support. */
+export interface TimeMachineWorkspaceHost {
+  resolveSessionWorkspace(sessionId: string): Promise<WorkspaceRoute>;
+  forkSession(request: {
+    sourceSessionId: string;
+    atSeq?: number;
+    workspaceId: string;
+    cwd: string;
+  }): Promise<{ sessionId: string; workspaceId: string; cwd: string }>;
+}
+
 export interface PruneResult {
   sessionId: string;
   /** True when this result is an audit-only plan and no checkpoints were removed. */

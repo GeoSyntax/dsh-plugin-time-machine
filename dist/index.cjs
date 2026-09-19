@@ -3306,6 +3306,7 @@ var TimeMachineService = class {
       externalEffectLedger: true,
       externalEffectAdapters: this.listExternalEffectAdapters(),
       workspaceRouting: "single-root",
+      workspaceRouteInspection: true,
       messageAnchors: ["assistant", "user"],
       workspaceIsolation: "shared-lock",
       rewindSessionMode: "fork",
@@ -3821,6 +3822,15 @@ var TimeMachineWebServer = class {
       res.end(JSON.stringify({ sessionId, checkpointId, reflection }));
       return;
     }
+    if (pathname === "/api/workspace-route" && req.method === "GET") {
+      const sessionId = this.requireSessionId(query.get("sessionId"));
+      await this.requirePersistedSession(sessionId);
+      const route = this.hooks.workspaceRoute ? await this.hooks.workspaceRoute(sessionId) : { workspaceId: "configured-root", cwd: this.service.workDir, isolation: "shared-lock" };
+      validateWorkspaceRoute(route);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ sessionId, route, adapter: Boolean(this.hooks.workspaceRoute) }));
+      return;
+    }
     if (pathname === "/api/agent-writes" && req.method === "GET") {
       const sessionId = this.requireSessionId(query.get("sessionId"));
       const checkpointId = query.get("checkpoint") || "";
@@ -4247,6 +4257,17 @@ function effectivePort(hostHeader, protocol) {
   const explicit = hostHeader.startsWith("[") ? hostHeader.slice(hostHeader.indexOf("]") + 2) : hostHeader.split(":").slice(1).join(":");
   if (explicit) return explicit;
   return protocol === "https:" ? "443" : "80";
+}
+function validateWorkspaceRoute(route) {
+  if (!route || typeof route.workspaceId !== "string" || !route.workspaceId.trim() || /[\0\r\n]/.test(route.workspaceId)) {
+    throw Object.assign(new Error("Workspace route workspaceId is invalid."), { code: "BAD_REQUEST" });
+  }
+  if (typeof route.cwd !== "string" || !import_node_path7.default.isAbsolute(route.cwd) || /[\0\r\n]/.test(route.cwd)) {
+    throw Object.assign(new Error("Workspace route cwd must be an absolute path."), { code: "BAD_REQUEST" });
+  }
+  if (!["shared-lock", "isolated-worktree", "isolated-container"].includes(route.isolation)) {
+    throw Object.assign(new Error("Workspace route isolation is invalid."), { code: "BAD_REQUEST" });
+  }
 }
 
 // src/cli/commands.ts
@@ -4736,6 +4757,10 @@ var TimeMachineClient = class {
     const body = await this.get("/api/sessions");
     return objectField(body, "sessions");
   }
+  async workspaceRoute(sessionId) {
+    if (!sessionId.trim()) throw new Error("workspaceRoute requires sessionId.");
+    return this.get(`/api/workspace-route?sessionId=${encodeURIComponent(sessionId)}`);
+  }
   /** Resolve the checkpoint anchored to a finalized assistant message. */
   async checkpointForMessage(sessionId, messageId) {
     if (!sessionId.trim() || !messageId.trim()) throw new Error("checkpointForMessage requires sessionId and messageId.");
@@ -4951,6 +4976,12 @@ function apply(ctx, config = {}) {
   const workDir = import_node_path8.default.resolve(process.cwd());
   const service = new TimeMachineService({ workDir, storageDir: config.storageDir, config });
   ctx.provide("timeMachine", service);
+  let workspaceHost;
+  try {
+    workspaceHost = ctx.get("workspaceHost");
+  } catch {
+    workspaceHost = void 0;
+  }
   registerCliCommands(ctx, service);
   if (config.enableWebUI !== false) {
     const webServer = new TimeMachineWebServer(service, config.webPort ?? 3088, config.webHost ?? "127.0.0.1", {
@@ -4980,7 +5011,8 @@ function apply(ctx, config = {}) {
         } catch {
           return false;
         }
-      }
+      },
+      ...workspaceHost ? { workspaceRoute: async (sessionId) => workspaceHost.resolveSessionWorkspace(sessionId) } : {}
     }, config.webAllowedOrigins ?? []);
     ctx.effect(() => {
       void webServer.start().then((url) => {

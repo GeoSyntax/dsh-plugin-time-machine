@@ -66,6 +66,7 @@ describe('TimeMachineWebServer', () => {
     expect(capabilities.preCommandTools).toEqual(expect.arrayContaining(['write', 'edit', 'str_replace_editor', 'bash']));
     expect(capabilities.workspaceIsolation).toBe('shared-lock');
     expect(capabilities.workspaceRouting).toBe('single-root');
+    expect(capabilities.workspaceRouteInspection).toBe(true);
     expect(capabilities.rewindSessionMode).toBe('fork');
     expect(capabilities.incrementalCapture).toBe(false);
     expect(capabilities.handEditPolicy).toBe('reject-drift');
@@ -146,6 +147,23 @@ describe('TimeMachineWebServer', () => {
     const unknownStorage = await fetch(`http://localhost:${testPort}/api/storage?sessionId=does-not-exist`);
     expect(unknownStorage.status).toBe(404);
     expect((await unknownStorage.json()).code).toBe('SESSION_NOT_FOUND');
+  });
+
+  it('exposes a validated canonical workspace route and rejects unsafe host routes', async () => {
+    const sessionId = 'route-session';
+    await service.createTurnCheckpoint({ sessionId, turnIndex: 1, prompt: 'route', sessionState: { sessionId, messages: [] } });
+    const response = await fetch(`http://localhost:${testPort}/api/workspace-route?sessionId=${sessionId}`);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ sessionId, adapter: false, route: { isolation: 'shared-lock', workspaceId: 'configured-root' } });
+
+    await server.stop();
+    server = new TimeMachineWebServer(service, testPort, '127.0.0.1', {
+      workspaceRoute: async () => ({ workspaceId: 'isolated', cwd: 'relative/path', isolation: 'isolated-worktree' }),
+    });
+    await server.start();
+    const invalid = await fetch(`http://localhost:${testPort}/api/workspace-route?sessionId=${sessionId}`);
+    expect(invalid.status).toBe(400);
+    expect((await invalid.json()).code).toBe('BAD_REQUEST');
   });
 
   it('resolves assistant message actions to finalized checkpoints', async () => {

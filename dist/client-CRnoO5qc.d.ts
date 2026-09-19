@@ -286,6 +286,26 @@ interface StorageStatus {
 }
 /** Host-reported workspace isolation mode; shared-lock is the honest fallback. */
 type WorkspaceIsolation = 'shared-lock' | 'isolated-worktree' | 'isolated-container';
+/** Canonical workspace route reported by a host integration. */
+interface WorkspaceRoute {
+    workspaceId: string;
+    cwd: string;
+    isolation: WorkspaceIsolation;
+}
+/** Optional DSH host surface for multi-workspace and isolated fork support. */
+interface TimeMachineWorkspaceHost {
+    resolveSessionWorkspace(sessionId: string): Promise<WorkspaceRoute>;
+    forkSession(request: {
+        sourceSessionId: string;
+        atSeq?: number;
+        workspaceId: string;
+        cwd: string;
+    }): Promise<{
+        sessionId: string;
+        workspaceId: string;
+        cwd: string;
+    }>;
+}
 interface PruneResult {
     sessionId: string;
     /** True when this result is an audit-only plan and no checkpoints were removed. */
@@ -406,6 +426,7 @@ declare class TimeMachineClient {
     migrateShadowStore(): Promise<Record<string, unknown>>;
     dag(sessionId: string): Promise<DAGTree>;
     sessions(): Promise<SessionSummary[]>;
+    workspaceRoute(sessionId: string): Promise<unknown>;
     /** Resolve the checkpoint anchored to a finalized assistant message. */
     checkpointForMessage(sessionId: string, messageId: string): Promise<CheckpointNode>;
     /** Build a bounded, newest-first timeline without coupling consumers to React or DSH slots. */
@@ -439,4 +460,4 @@ declare class TimeMachineClient {
 /** Pure timeline projection shared by browser clients and tests. */
 declare function buildCompanionTimeline(dag: DAGTree, limit?: number): CompanionTimelineEntry[];
 
-export { type AgentWriteRecord as A, type CheckpointNode as C, type DAGTree as D, type ExternalEffectRecord as E, type FileChange as F, type PruneResult as P, type RestoreOptions as R, type SessionState as S, type TimeMachineConfig as T, type UndoRequest as U, type WorkspaceIsolation as W, type ToolMutationRecord as a, type ExternalEffectAdapter as b, type ExternalEffectCompensationResult as c, type RestoreResult as d, type SelectiveRestoreResult as e, type ReflectionSummary as f, type DiffResult as g, type RestorePreview as h, type StorageStatus as i, type SessionSummary as j, type CompanionTimelineEntry as k, type ExternalCompensationRequest as l, type ExternalEffectCompensationContext as m, type ExternalEffectRequest as n, type ForkRequest as o, type PreviewBoundAction as p, type PruneRequest as q, type RestoreFilesRequest as r, type RestoreWorkspaceRequest as s, type RewindRequest as t, type SessionMessage as u, TimeMachineClient as v, TimeMachineClientError as w, type TimeMachineClientOptions as x, buildCompanionTimeline as y };
+export { type AgentWriteRecord as A, buildCompanionTimeline as B, type CheckpointNode as C, type DAGTree as D, type ExternalEffectRecord as E, type FileChange as F, type PruneResult as P, type RestoreOptions as R, type SessionState as S, type TimeMachineConfig as T, type UndoRequest as U, type WorkspaceIsolation as W, type ToolMutationRecord as a, type ExternalEffectAdapter as b, type ExternalEffectCompensationResult as c, type RestoreResult as d, type SelectiveRestoreResult as e, type ReflectionSummary as f, type DiffResult as g, type RestorePreview as h, type StorageStatus as i, type SessionSummary as j, type TimeMachineWorkspaceHost as k, type CompanionTimelineEntry as l, type ExternalCompensationRequest as m, type ExternalEffectCompensationContext as n, type ExternalEffectRequest as o, type ForkRequest as p, type PreviewBoundAction as q, type PruneRequest as r, type RestoreFilesRequest as s, type RestoreWorkspaceRequest as t, type RewindRequest as u, type SessionMessage as v, TimeMachineClient as w, TimeMachineClientError as x, type TimeMachineClientOptions as y, type WorkspaceRoute as z };

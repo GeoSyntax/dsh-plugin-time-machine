@@ -6,7 +6,7 @@ import pc from 'picocolors';
 import { TimeMachineService } from './service.js';
 import { TimeMachineWebServer } from './web/server.js';
 import { registerCliCommands } from './cli/commands.js';
-import type { SessionMessage, TimeMachineConfig } from './types.js';
+import type { SessionMessage, TimeMachineConfig, TimeMachineWorkspaceHost, WorkspaceRoute } from './types.js';
 
 export { TimeMachineService } from './service.js';
 
@@ -125,6 +125,7 @@ declare module '@deepseek-ai/cordis' {
     tools: unknown;
     commands: CommandRuntimeLike;
     sessionController: SessionControllerLike;
+    workspaceHost: TimeMachineWorkspaceHost;
   }
 
   interface Events {
@@ -145,6 +146,9 @@ export function apply(ctx: Context, config: Config = {}): void {
   const workDir = path.resolve(process.cwd());
   const service = new TimeMachineService({ workDir, storageDir: config.storageDir, config });
   ctx.provide('timeMachine', service);
+
+  let workspaceHost: TimeMachineWorkspaceHost | undefined;
+  try { workspaceHost = ctx.get('workspaceHost') as TimeMachineWorkspaceHost | undefined; } catch { workspaceHost = undefined; }
 
   registerCliCommands(ctx, service);
 
@@ -179,6 +183,7 @@ export function apply(ctx: Context, config: Config = {}): void {
           return false;
         }
       },
+      ...(workspaceHost ? { workspaceRoute: async (sessionId: string): Promise<WorkspaceRoute> => workspaceHost!.resolveSessionWorkspace(sessionId) } : {}),
     }, config.webAllowedOrigins ?? []);
     ctx.effect(() => {
       void webServer.start().then((url) => {

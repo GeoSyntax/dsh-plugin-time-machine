@@ -53,6 +53,8 @@ describe('registered DSH time-machine commands', () => {
     expect(result.kind).toBe('success');
     expect(result.text).toContain('Conversation fork/rewind: available');
     expect(result.text).toContain('Workspace isolation: shared-lock');
+    expect(result.text).toContain('Workspace routing: single-root');
+    expect(result.text).toContain('Sessions whose cwd differs from the configured workspace are skipped');
     expect(result.text).toContain('Shadow Git object encryption: not available');
     expect(result.text).toContain('Forked sessions share the configured workspace');
     expect(result.text).toContain('Pre-command checkpoints: disabled');

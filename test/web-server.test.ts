@@ -64,6 +64,7 @@ describe('TimeMachineWebServer', () => {
     expect(capabilities.externalEffectAdapters).toEqual([]);
     expect(capabilities.preCommandTools).toEqual(expect.arrayContaining(['write', 'edit', 'str_replace_editor', 'bash']));
     expect(capabilities.workspaceIsolation).toBe('shared-lock');
+    expect(capabilities.workspaceRouting).toBe('single-root');
     expect(capabilities.rewindSessionMode).toBe('fork');
     expect(capabilities.incrementalCapture).toBe(false);
     expect(capabilities.handEditPolicy).toBe('reject-drift');

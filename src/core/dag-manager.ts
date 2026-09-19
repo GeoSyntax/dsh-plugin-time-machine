@@ -136,7 +136,7 @@ export class DAGStateManager {
     return this.tree.nodes[checkpointId] || null;
   }
 
-  async updateNode(checkpointId: string, patch: Partial<Pick<CheckpointNode, 'status' | 'errorMessage' | 'failedTools' | 'summary' | 'settledGitTreeOid' | 'settledIgnoredPaths' | 'ignoredBackupKey' | 'externalEffects' | 'agentWrites' | 'unattributedChanges'>>): Promise<CheckpointNode> {
+  async updateNode(checkpointId: string, patch: Partial<Pick<CheckpointNode, 'status' | 'errorMessage' | 'failedTools' | 'summary' | 'settledGitTreeOid' | 'settledIgnoredPaths' | 'ignoredBackupKey' | 'externalEffects' | 'agentWrites' | 'unattributedChanges' | 'toolMutations'>>): Promise<CheckpointNode> {
     const node = this.getNode(checkpointId);
     if (!node) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
     const updated = { ...node, ...cloneJson(patch) };
@@ -382,6 +382,9 @@ export class DAGStateManager {
       }
       if (node.assistantMessageIds !== undefined && (!Array.isArray(node.assistantMessageIds) || node.assistantMessageIds.some(messageId => typeof messageId !== 'string' || !messageId.trim()))) {
         throw new Error(`DAG checkpoint '${id}' has invalid assistant message ids.`);
+      }
+      if (node.toolMutations !== undefined && (!Array.isArray(node.toolMutations) || node.toolMutations.some(item => !item || typeof item.toolName !== 'string' || !item.toolName.trim() || !['success', 'error'].includes(item.status) || !Array.isArray(item.changedFiles) || !Number.isFinite(item.recordedAt)))) {
+        throw new Error(`DAG checkpoint '${id}' has invalid tool mutation evidence.`);
       }
       if (node.parentId !== null && !tree.nodes[node.parentId]) {
         throw new Error(`DAG checkpoint '${id}' references missing parent '${node.parentId}'.`);

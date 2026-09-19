@@ -190,6 +190,17 @@ export class TimeMachineWebServer {
       return;
     }
 
+    if (pathname === '/api/tool-mutations' && req.method === 'GET') {
+      const sessionId = this.requireSessionId(query.get('sessionId'));
+      const checkpointId = query.get('checkpoint') || '';
+      if (!checkpointId) throw Object.assign(new Error('Missing checkpoint query parameter'), { code: 'BAD_REQUEST' });
+      await this.requirePersistedSession(sessionId);
+      const mutations = await this.service.getToolMutationLedger(sessionId, checkpointId);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ sessionId, checkpointId, enabled: this.service.config.autoPreCommandSnapshot === true, mutations }));
+      return;
+    }
+
     if (pathname === '/api/external-effects' && req.method === 'GET') {
       const sessionId = this.requireSessionId(query.get('sessionId'));
       const checkpointId = query.get('checkpoint') || undefined;

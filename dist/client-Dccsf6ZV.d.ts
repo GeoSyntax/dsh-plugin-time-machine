@@ -75,6 +75,14 @@ interface AgentWriteRecord {
     recordedAt: number;
     operation?: 'create' | 'modify' | 'delete';
 }
+/** Evidence linking a high-risk tool invocation to the workspace paths it changed. */
+interface ToolMutationRecord {
+    toolName: string;
+    status: 'success' | 'error';
+    changedFiles: FileChange[];
+    recordedAt: number;
+    callId?: string;
+}
 interface CheckpointNode {
     id: string;
     parentId: string | null;
@@ -116,6 +124,8 @@ interface CheckpointNode {
     agentWrites?: AgentWriteRecord[];
     /** Git changes observed at turn finalization that lack Agent-write evidence. */
     unattributedChanges?: FileChange[];
+    /** Per-tool workspace delta observed between a pre-command boundary and its result. */
+    toolMutations?: ToolMutationRecord[];
 }
 interface DAGTree {
     /** Persisted DAG schema version. Legacy files may omit this until init migrates them. */
@@ -426,4 +436,4 @@ declare class TimeMachineClient {
 /** Pure timeline projection shared by browser clients and tests. */
 declare function buildCompanionTimeline(dag: DAGTree, limit?: number): CompanionTimelineEntry[];
 
-export { type AgentWriteRecord as A, type CheckpointNode as C, type DAGTree as D, type ExternalEffectRecord as E, type FileChange as F, type PruneResult as P, type RestoreOptions as R, type SessionState as S, type TimeMachineConfig as T, type UndoRequest as U, type WorkspaceIsolation as W, type ExternalEffectAdapter as a, type ExternalEffectCompensationResult as b, type RestoreResult as c, type SelectiveRestoreResult as d, type ReflectionSummary as e, type DiffResult as f, type RestorePreview as g, type StorageStatus as h, type SessionSummary as i, type CompanionTimelineEntry as j, type ExternalCompensationRequest as k, type ExternalEffectCompensationContext as l, type ExternalEffectRequest as m, type ForkRequest as n, type PreviewBoundAction as o, type PruneRequest as p, type RestoreFilesRequest as q, type RestoreWorkspaceRequest as r, type RewindRequest as s, type SessionMessage as t, TimeMachineClient as u, TimeMachineClientError as v, type TimeMachineClientOptions as w, buildCompanionTimeline as x };
+export { type AgentWriteRecord as A, type CheckpointNode as C, type DAGTree as D, type ExternalEffectRecord as E, type FileChange as F, type PruneResult as P, type RestoreOptions as R, type SessionState as S, type TimeMachineConfig as T, type UndoRequest as U, type WorkspaceIsolation as W, type ToolMutationRecord as a, type ExternalEffectAdapter as b, type ExternalEffectCompensationResult as c, type RestoreResult as d, type SelectiveRestoreResult as e, type ReflectionSummary as f, type DiffResult as g, type RestorePreview as h, type StorageStatus as i, type SessionSummary as j, type CompanionTimelineEntry as k, type ExternalCompensationRequest as l, type ExternalEffectCompensationContext as m, type ExternalEffectRequest as n, type ForkRequest as o, type PreviewBoundAction as p, type PruneRequest as q, type RestoreFilesRequest as r, type RestoreWorkspaceRequest as s, type RewindRequest as t, type SessionMessage as u, TimeMachineClient as v, TimeMachineClientError as w, type TimeMachineClientOptions as x, buildCompanionTimeline as y };

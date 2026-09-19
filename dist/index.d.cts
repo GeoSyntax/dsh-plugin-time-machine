@@ -1,7 +1,7 @@
 import { Context } from '@deepseek-ai/cordis';
 import Schema from '@deepseek-ai/schemastery';
-import { D as DAGTree, C as CheckpointNode, T as TimeMachineConfig, S as SessionState, A as AgentWriteRecord, F as FileChange, E as ExternalEffectRecord, a as ExternalEffectAdapter, b as ExternalEffectCompensationResult, R as RestoreOptions, c as RestoreResult, d as SelectiveRestoreResult, e as ReflectionSummary, f as DiffResult, g as RestorePreview, h as StorageStatus, i as SessionSummary, W as WorkspaceIsolation, P as PruneResult } from './client-P21icVUu.cjs';
-export { j as CompanionTimelineEntry, k as ExternalCompensationRequest, l as ExternalEffectCompensationContext, m as ExternalEffectRequest, n as ForkRequest, o as PreviewBoundAction, p as PruneRequest, q as RestoreFilesRequest, r as RestoreWorkspaceRequest, s as RewindRequest, t as SessionMessage, u as TimeMachineClient, v as TimeMachineClientError, w as TimeMachineClientOptions, U as UndoRequest, x as buildCompanionTimeline } from './client-P21icVUu.cjs';
+import { D as DAGTree, C as CheckpointNode, T as TimeMachineConfig, S as SessionState, A as AgentWriteRecord, F as FileChange, a as ToolMutationRecord, E as ExternalEffectRecord, b as ExternalEffectAdapter, c as ExternalEffectCompensationResult, R as RestoreOptions, d as RestoreResult, e as SelectiveRestoreResult, f as ReflectionSummary, g as DiffResult, h as RestorePreview, i as StorageStatus, j as SessionSummary, W as WorkspaceIsolation, P as PruneResult } from './client-Dccsf6ZV.cjs';
+export { k as CompanionTimelineEntry, l as ExternalCompensationRequest, m as ExternalEffectCompensationContext, n as ExternalEffectRequest, o as ForkRequest, p as PreviewBoundAction, q as PruneRequest, r as RestoreFilesRequest, s as RestoreWorkspaceRequest, t as RewindRequest, u as SessionMessage, v as TimeMachineClient, w as TimeMachineClientError, x as TimeMachineClientOptions, U as UndoRequest, y as buildCompanionTimeline } from './client-Dccsf6ZV.cjs';
 
 /** Current on-disk DAG schema. Bump only with an explicit migration path. */
 declare const DAG_FORMAT_VERSION: 1;
@@ -44,7 +44,7 @@ declare class DAGStateManager {
      * 获取指定 ID 的节点
      */
     getNode(checkpointId: string): CheckpointNode | null;
-    updateNode(checkpointId: string, patch: Partial<Pick<CheckpointNode, 'status' | 'errorMessage' | 'failedTools' | 'summary' | 'settledGitTreeOid' | 'settledIgnoredPaths' | 'ignoredBackupKey' | 'externalEffects' | 'agentWrites' | 'unattributedChanges'>>): Promise<CheckpointNode>;
+    updateNode(checkpointId: string, patch: Partial<Pick<CheckpointNode, 'status' | 'errorMessage' | 'failedTools' | 'summary' | 'settledGitTreeOid' | 'settledIgnoredPaths' | 'ignoredBackupKey' | 'externalEffects' | 'agentWrites' | 'unattributedChanges' | 'toolMutations'>>): Promise<CheckpointNode>;
     /** Remove only leaf checkpoints that are not current or a branch head. */
     removeLeafNodes(checkpointIds: string[]): Promise<CheckpointNode[]>;
     /** Remove historical nodes while reparenting surviving children to the nearest ancestor. */
@@ -168,6 +168,9 @@ declare class TimeMachineService {
     }): Promise<CheckpointNode>;
     getAgentWriteLedger(sessionId: string, checkpointId: string): Promise<AgentWriteRecord[]>;
     getUnattributedChanges(sessionId: string, checkpointId: string): Promise<FileChange[]>;
+    inspectCheckpointDelta(sessionId: string, checkpointId: string): Promise<FileChange[]>;
+    recordToolMutation(sessionId: string, checkpointId: string, mutation: Omit<ToolMutationRecord, 'recordedAt'>): Promise<CheckpointNode>;
+    getToolMutationLedger(sessionId: string, checkpointId: string): Promise<ToolMutationRecord[]>;
     /**
      * Record an external mutation against a checkpoint. The core deliberately
      * does not execute compensation; an adapter can later use this declaration
@@ -730,4 +733,4 @@ declare class TimeMachinePlugin {
     constructor(ctx: Context, config?: Config);
 }
 
-export { AgentWriteRecord, CheckpointNode, Config, type DAGManagerOptions, DAGStateKeyError, DAGStateManager, DAGTree, DAG_FORMAT_VERSION, DiffResult, ExternalEffectAdapter, ExternalEffectCompensationResult, ExternalEffectRecord, type FallbackOptions, FallbackSnapshotEngine, FileChange, GitPlumbingEngine, type GitPlumbingOptions, type GitRestoreOptions, type GitSelectiveRestoreOptions, type GitSnapshot, PruneResult, QuarantineKeyError, type QuarantineMigrationResult, QuarantineQuotaError, ReflectionAdvisor, ReflectionSummary, RestoreOptions, RestorePlanError, RestorePreview, RestoreResult, SelectiveRestoreResult, SessionState, SessionSummary, type ShadowGcResult, type ShadowRepackResult, SnapshotSizeError, StorageQuotaError, StorageStatus, TimeMachineConfig, TimeMachinePlugin, TimeMachineService, type TimeMachineServiceOptions, UnsupportedWorkspaceStateError, type WorkspaceCapabilities, WorkspaceDriftError, WorkspaceIsolation, WorkspaceMergeConflictError, WorkspaceRestoreConflictError, apply, collectFailedTools, TimeMachinePlugin as default, name };
+export { AgentWriteRecord, CheckpointNode, Config, type DAGManagerOptions, DAGStateKeyError, DAGStateManager, DAGTree, DAG_FORMAT_VERSION, DiffResult, ExternalEffectAdapter, ExternalEffectCompensationResult, ExternalEffectRecord, type FallbackOptions, FallbackSnapshotEngine, FileChange, GitPlumbingEngine, type GitPlumbingOptions, type GitRestoreOptions, type GitSelectiveRestoreOptions, type GitSnapshot, PruneResult, QuarantineKeyError, type QuarantineMigrationResult, QuarantineQuotaError, ReflectionAdvisor, ReflectionSummary, RestoreOptions, RestorePlanError, RestorePreview, RestoreResult, SelectiveRestoreResult, SessionState, SessionSummary, type ShadowGcResult, type ShadowRepackResult, SnapshotSizeError, StorageQuotaError, StorageStatus, TimeMachineConfig, TimeMachinePlugin, TimeMachineService, type TimeMachineServiceOptions, ToolMutationRecord, UnsupportedWorkspaceStateError, type WorkspaceCapabilities, WorkspaceDriftError, WorkspaceIsolation, WorkspaceMergeConflictError, WorkspaceRestoreConflictError, apply, collectFailedTools, TimeMachinePlugin as default, name };

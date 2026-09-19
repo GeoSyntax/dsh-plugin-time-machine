@@ -131,6 +131,20 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
     });
 
     scope.commands.register({
+      name: 'tm-tool-mutations',
+      description: 'Show per-tool workspace mutation evidence for a checkpoint',
+      input: { hint: '<checkpoint>' },
+      handler: async ({ agent, rawInput }: CommandInvocationLike): Promise<CommandResult> => {
+        const checkpointId = rawInput.trim().split(/\s+/).filter(Boolean)[0];
+        if (!checkpointId) return { kind: 'error', text: 'Usage: /tm-tool-mutations <checkpoint>' };
+        const records = await service.getToolMutationLedger(agent.session.id, checkpointId);
+        if (records.length === 0) return { kind: 'success', text: `No tool mutation evidence recorded for ${checkpointId}.` };
+        const lines = records.map(item => `${item.status} ${item.toolName}${item.callId ? ` [${item.callId}]` : ''}: ${item.changedFiles.map(change => `${change.status} ${change.path}`).join(', ') || 'no workspace delta'}`);
+        return { kind: 'success', text: `Tool mutation evidence for ${checkpointId}:\n${lines.join('\n')}` };
+      },
+    });
+
+    scope.commands.register({
       name: 'tm-prune',
       description: 'Prune old non-head Time Machine checkpoints',
       input: { hint: '[keep-latest] [--older-than=<duration>] [--abandoned-branches] [--compact-history] [--repack-shadow] [--dry-run]' },

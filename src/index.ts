@@ -180,12 +180,18 @@ export function apply(ctx: Context, config: Config = {}): void {
   const observedWrites = new Map<string, { sessionId: string; turn: number; paths: Map<string, 'modify' | 'delete'> }>();
   const pendingLedgerWrites = new Map<string, Promise<void>>();
   const preCommandCalls = new Set<string>();
+  const preCommandCheckpoints = new Map<string, { sessionId: string; turn: number; checkpointId: string; toolName: string; callId?: string }>();
   const preCommandCounts = new Map<string, number>();
   // Some host adapters omit callId. Keep identity-based deduplication for the
   // same execution object crossing both waterfalls, without collapsing two
   // distinct anonymous calls that happen to use the same tool name.
   const anonymousExecutionIds = new WeakMap<object, number>();
   let nextAnonymousExecutionId = 0;
+  const preCommandCallKey = (execution: ToolExecutionLike, sessionId: string, turn: number): { key: string; callId?: string } => {
+    const callId = execution.callId?.trim() || undefined;
+    const identity = callId || `anonymous:${executionIdentity(execution, anonymousExecutionIds, () => nextAnonymousExecutionId++)}`;
+    return { key: `${sessionId}\0${identity}\0${turn}`, callId };
+  };
 
   // Hermes-style pre-destructive boundaries. DSH's pre-execute/execute
   // waterfalls are the last reliable seams before a shell/PTC tool mutates the workspace. We
@@ -207,8 +213,7 @@ export function apply(ctx: Context, config: Config = {}): void {
           : undefined;
         const configured = service.config.preCommandTools ?? [];
         if (!session || !toolName || !configured.includes(toolName) || !turnCheckpoint) return;
-        const callIdentity = execution.callId?.trim() || `anonymous:${executionIdentity(execution, anonymousExecutionIds, () => nextAnonymousExecutionId++)}`;
-        const callKey = `${session.id}\0${callIdentity}\0${turn}`;
+        const { key: callKey, callId } = preCommandCallKey(execution, session.id, turn as number);
         if (preCommandCalls.has(callKey)) return;
         const turnKey = `${session.id}\0${turn}`;
         const maxPerTurn = service.config.preCommandMaxPerTurn;
@@ -229,9 +234,11 @@ export function apply(ctx: Context, config: Config = {}): void {
             status: 'success',
             tags: ['pre-command', `tool:${toolName}`],
           });
+          preCommandCheckpoints.set(callKey, { sessionId: session.id, turn: turn as number, checkpointId: boundary.id, toolName, ...(callId ? { callId } : {}) });
           ctx.logger.info(`[time-machine] captured pre-command checkpoint ${boundary.id} before ${toolName}`);
         } catch (error) {
           preCommandCalls.delete(callKey);
+          preCommandCheckpoints.delete(callKey);
           const nextCount = (preCommandCounts.get(turnKey) ?? 1) - 1;
           if (nextCount > 0) preCommandCounts.set(turnKey, nextCount); else preCommandCounts.delete(turnKey);
           ctx.logger.warn(`[time-machine] pre-command checkpoint skipped for ${toolName}: ${errorMessage(error)}`);
@@ -247,6 +254,26 @@ export function apply(ctx: Context, config: Config = {}): void {
       }, { prepend: true });
     };
     ctx.on('agent/created', ({ agent }) => { installAgentToolBoundary?.(agent); return undefined; });
+  }
+
+  if (service.config.autoPreCommandSnapshot) {
+    ctx.on('tools/result', (execution, result) => {
+      const session = execution.agent?.session;
+      const turn = session ? currentSessionTurn(session) : undefined;
+      if (!session || !Number.isSafeInteger(turn)) return;
+      const { key } = preCommandCallKey(execution, session.id, turn as number);
+      const boundary = preCommandCheckpoints.get(key);
+      if (!boundary) return;
+      preCommandCheckpoints.delete(key);
+      void service.inspectCheckpointDelta(boundary.sessionId, boundary.checkpointId)
+        .then(changedFiles => service.recordToolMutation(boundary.sessionId, boundary.checkpointId, {
+          toolName: boundary.toolName,
+          callId: boundary.callId,
+          status: result?.isError === true ? 'error' : 'success',
+          changedFiles,
+        }))
+        .catch((error: unknown) => ctx.logger.warn(`[time-machine] could not record tool mutation for ${boundary.toolName}: ${errorMessage(error)}`));
+    });
   }
 
   // These are global lifecycle observations. Register them on the plugin root
@@ -309,6 +336,9 @@ export function apply(ctx: Context, config: Config = {}): void {
     pendingLedgerWrites.delete(key);
     for (const callKey of preCommandCalls) {
       if (callKey.startsWith(`${session.id}\0`) && callKey.endsWith(`\0${turn as number}`)) preCommandCalls.delete(callKey);
+    }
+    for (const callKey of preCommandCheckpoints.keys()) {
+      if (callKey.startsWith(`${session.id}\0`) && callKey.endsWith(`\0${turn as number}`)) preCommandCheckpoints.delete(callKey);
     }
     preCommandCounts.delete(`${session.id}\0${turn as number}`);
     const assistantMessageIds = assistantMessageIdsForTurn(getMessages(session), baseline);

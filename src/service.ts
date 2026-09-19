@@ -13,6 +13,7 @@ import type {
   ExternalEffectAdapter,
   ExternalEffectCompensationResult,
   AgentWriteRecord,
+  ToolMutationRecord,
   FileChange,
   DAGTree,
   DiffResult,
@@ -409,6 +410,45 @@ export class TimeMachineService {
     const node = dag.getNode(checkpointId);
     if (!node) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
     return cloneJson(node.unattributedChanges ?? []);
+  }
+
+  async inspectCheckpointDelta(sessionId: string, checkpointId: string): Promise<FileChange[]> {
+    return this.runWorkspaceOperation(async () => {
+      const dag = await this.getDAGManager(sessionId);
+      const node = dag.getNode(checkpointId);
+      if (!node) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
+      if (await this.gitEngine.isGitRepo()) {
+        const settled = await this.gitEngine.inspectWorkspace({ omitPaths: node.omittedPaths ?? [] });
+        return (await this.gitEngine.getDiffBetween(node.gitTreeOid, settled.treeOid)).map(item => ({ path: item.file, status: item.status }));
+      }
+      return this.fallbackEngine.getChangedFiles(sessionId, checkpointId);
+    });
+  }
+
+  async recordToolMutation(
+    sessionId: string,
+    checkpointId: string,
+    mutation: Omit<ToolMutationRecord, 'recordedAt'>,
+  ): Promise<CheckpointNode> {
+    return this.runWorkspaceOperation(async () => {
+      const toolName = mutation.toolName.trim();
+      if (!toolName) throw new Error('Tool mutation toolName is required.');
+      if (mutation.status !== 'success' && mutation.status !== 'error') throw new Error('Tool mutation status must be success or error.');
+      const dag = await this.getDAGManager(sessionId);
+      const node = dag.getNode(checkpointId);
+      if (!node) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
+      const changedFiles = [...new Map(mutation.changedFiles.map(item => [item.path, { path: item.path, status: item.status }])).values()]
+        .sort((a, b) => a.path.localeCompare(b.path));
+      const record: ToolMutationRecord = { toolName, status: mutation.status, changedFiles, recordedAt: Date.now(), ...(mutation.callId?.trim() ? { callId: mutation.callId.trim() } : {}) };
+      return dag.updateNode(checkpointId, { toolMutations: [...(node.toolMutations ?? []), record] });
+    });
+  }
+
+  async getToolMutationLedger(sessionId: string, checkpointId: string): Promise<ToolMutationRecord[]> {
+    const dag = await this.getDAGManager(sessionId);
+    const node = dag.getNode(checkpointId);
+    if (!node) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
+    return cloneJson(node.toolMutations ?? []);
   }
 
   /**
@@ -1022,6 +1062,7 @@ export class TimeMachineService {
     preCommandSnapshots: boolean;
     preCommandTools: string[];
     preCommandMaxPerTurn: number;
+    toolMutationLedger: boolean;
     unattributedMutationInventory: boolean;
     externalEffectLedger: true;
     externalEffectAdapters: string[];
@@ -1090,6 +1131,7 @@ export class TimeMachineService {
       preCommandSnapshots: this.config.autoPreCommandSnapshot,
       preCommandTools: [...this.config.preCommandTools],
       preCommandMaxPerTurn: this.config.preCommandMaxPerTurn,
+      toolMutationLedger: this.config.autoPreCommandSnapshot,
       unattributedMutationInventory: true,
       externalEffectLedger: true,
       externalEffectAdapters: this.listExternalEffectAdapters(),

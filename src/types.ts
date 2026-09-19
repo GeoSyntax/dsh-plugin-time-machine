@@ -83,6 +83,15 @@ export interface AgentWriteRecord {
   operation?: 'create' | 'modify' | 'delete';
 }
 
+/** Evidence linking a high-risk tool invocation to the workspace paths it changed. */
+export interface ToolMutationRecord {
+  toolName: string;
+  status: 'success' | 'error';
+  changedFiles: FileChange[];
+  recordedAt: number;
+  callId?: string;
+}
+
 export interface CheckpointNode {
   id: string;
   parentId: string | null;
@@ -120,6 +129,8 @@ export interface CheckpointNode {
   agentWrites?: AgentWriteRecord[];
   /** Git changes observed at turn finalization that lack Agent-write evidence. */
   unattributedChanges?: FileChange[];
+  /** Per-tool workspace delta observed between a pre-command boundary and its result. */
+  toolMutations?: ToolMutationRecord[];
 }
 
 export interface DAGTree {

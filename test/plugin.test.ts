@@ -164,7 +164,17 @@ describe('DSH Cordis plugin entry', () => {
         name: 'bash',
         arguments: { command: 'rm -rf build' },
         agent,
-      }, async () => ({ isError: false }));
+      }, async () => { await fs.writeFile(path.join(workDir, 'tool-created.txt'), 'created by bash\n', 'utf8'); return { isError: false }; });
+      ctx.emit('tools/result', { callId: 'high-risk-call', name: 'bash', agent }, { isError: false });
+      const service = ctx.get('timeMachine') as TimeMachineService;
+      let firstNode = Object.values((await service.getDAGManager(session.id)).tree.nodes).find(node => node.tags?.includes('pre-command'));
+      for (let attempt = 0; attempt < 50 && !firstNode?.toolMutations?.length; attempt += 1) {
+        await new Promise(resolve => setTimeout(resolve, 10));
+        firstNode = Object.values((await service.getDAGManager(session.id)).tree.nodes).find(node => node.tags?.includes('pre-command'));
+      }
+      expect(firstNode?.toolMutations).toEqual(expect.arrayContaining([
+        expect.objectContaining({ toolName: 'bash', status: 'success', changedFiles: expect.arrayContaining([{ path: 'tool-created.txt', status: 'added' }]) }),
+      ]));
       await ctx.waterfall('tools/pre-execute', {
         callId: 'second-high-risk-call',
         name: 'bash',

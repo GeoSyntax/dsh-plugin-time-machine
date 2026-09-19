@@ -159,12 +159,14 @@ function createTimelineCard(node) {
   const omitted = Array.isArray(node.omittedPaths) ? node.omittedPaths : [];
   const agentWrites = Array.isArray(node.agentWrites) ? node.agentWrites : [];
   const unattributed = Array.isArray(node.unattributedChanges) ? node.unattributedChanges : [];
+  const toolMutations = Array.isArray(node.toolMutations) ? node.toolMutations : [];
   const meta = element('div', 'card-meta');
   meta.append(
     element('span', '', `🕒 ${new Date(node.timestamp).toLocaleTimeString()}`),
     element('span', '', `📁 ${files.length} file(s) changed`),
     ...(agentWrites.length ? [element('span', 'badge badge-success', `✎ ${agentWrites.length} Agent write(s)`)] : []),
     ...(unattributed.length ? [element('span', 'badge badge-warning', `? ${unattributed.length} unattributed`)] : []),
+    ...(toolMutations.length ? [element('span', 'badge badge-info', `⚙ ${toolMutations.length} tool mutation(s)`)] : []),
     ...(omitted.length ? [element('span', 'badge badge-warning', `⚠ ${omitted.length} omitted`)] : []),
   );
   card.append(top, element('div', 'card-prompt', String(node.prompt || '')), meta);
@@ -195,6 +197,7 @@ function selectNode(nodeId) {
   if (node.summary) inspectorContent.append(infoGroup('Execution Summary', String(node.summary)));
   inspectorContent.append(agentWritesGroup(node));
   inspectorContent.append(unattributedChangesGroup(node));
+  inspectorContent.append(toolMutationsGroup(node));
   inspectorContent.append(fileChangesGroup(node));
 }
 
@@ -235,6 +238,19 @@ function unattributedChangesGroup(node) {
   }
   body.append(list);
   return group(`Unattributed Turn Changes (${changes.length})`, body);
+}
+
+function toolMutationsGroup(node) {
+  const records = Array.isArray(node.toolMutations) ? node.toolMutations : [];
+  if (records.length === 0) return group('Tool Mutation Ledger (0)', element('p', '', 'No pre-command tool mutation evidence recorded.'));
+  const list = element('ul', 'file-list');
+  for (const record of records) {
+    const item = element('li', 'file-item');
+    const files = Array.isArray(record.changedFiles) ? record.changedFiles : [];
+    item.append(element('span', '', `⚙ ${String(record.toolName)}`), element('span', `badge ${record.status === 'error' ? 'badge-warning' : 'badge-success'}`, String(record.status).toUpperCase()), element('code', '', files.map(file => `${file.status} ${file.path}`).join(', ') || 'no workspace delta'));
+    list.append(item);
+  }
+  return group(`Tool Mutation Ledger (${records.length})`, list);
 }
 
 function metadataGroup(node) {

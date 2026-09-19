@@ -2136,6 +2136,9 @@ var DAGStateManager = class {
       if (node.assistantMessageIds !== void 0 && (!Array.isArray(node.assistantMessageIds) || node.assistantMessageIds.some((messageId) => typeof messageId !== "string" || !messageId.trim()))) {
         throw new Error(`DAG checkpoint '${id}' has invalid assistant message ids.`);
       }
+      if (node.toolMutations !== void 0 && (!Array.isArray(node.toolMutations) || node.toolMutations.some((item) => !item || typeof item.toolName !== "string" || !item.toolName.trim() || !["success", "error"].includes(item.status) || !Array.isArray(item.changedFiles) || !Number.isFinite(item.recordedAt)))) {
+        throw new Error(`DAG checkpoint '${id}' has invalid tool mutation evidence.`);
+      }
       if (node.parentId !== null && !tree.nodes[node.parentId]) {
         throw new Error(`DAG checkpoint '${id}' references missing parent '${node.parentId}'.`);
       }
@@ -2682,6 +2685,37 @@ var TimeMachineService = class {
     const node = dag.getNode(checkpointId);
     if (!node) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
     return cloneJson2(node.unattributedChanges ?? []);
+  }
+  async inspectCheckpointDelta(sessionId, checkpointId) {
+    return this.runWorkspaceOperation(async () => {
+      const dag = await this.getDAGManager(sessionId);
+      const node = dag.getNode(checkpointId);
+      if (!node) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
+      if (await this.gitEngine.isGitRepo()) {
+        const settled = await this.gitEngine.inspectWorkspace({ omitPaths: node.omittedPaths ?? [] });
+        return (await this.gitEngine.getDiffBetween(node.gitTreeOid, settled.treeOid)).map((item) => ({ path: item.file, status: item.status }));
+      }
+      return this.fallbackEngine.getChangedFiles(sessionId, checkpointId);
+    });
+  }
+  async recordToolMutation(sessionId, checkpointId, mutation) {
+    return this.runWorkspaceOperation(async () => {
+      const toolName = mutation.toolName.trim();
+      if (!toolName) throw new Error("Tool mutation toolName is required.");
+      if (mutation.status !== "success" && mutation.status !== "error") throw new Error("Tool mutation status must be success or error.");
+      const dag = await this.getDAGManager(sessionId);
+      const node = dag.getNode(checkpointId);
+      if (!node) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
+      const changedFiles = [...new Map(mutation.changedFiles.map((item) => [item.path, { path: item.path, status: item.status }])).values()].sort((a, b) => a.path.localeCompare(b.path));
+      const record = { toolName, status: mutation.status, changedFiles, recordedAt: Date.now(), ...mutation.callId?.trim() ? { callId: mutation.callId.trim() } : {} };
+      return dag.updateNode(checkpointId, { toolMutations: [...node.toolMutations ?? [], record] });
+    });
+  }
+  async getToolMutationLedger(sessionId, checkpointId) {
+    const dag = await this.getDAGManager(sessionId);
+    const node = dag.getNode(checkpointId);
+    if (!node) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
+    return cloneJson2(node.toolMutations ?? []);
   }
   /**
    * Record an external mutation against a checkpoint. The core deliberately
@@ -3753,6 +3787,16 @@ var TimeMachineWebServer = class {
       res.end(JSON.stringify({ sessionId, checkpointId, changes }));
       return;
     }
+    if (pathname === "/api/tool-mutations" && req.method === "GET") {
+      const sessionId = this.requireSessionId(query.get("sessionId"));
+      const checkpointId = query.get("checkpoint") || "";
+      if (!checkpointId) throw Object.assign(new Error("Missing checkpoint query parameter"), { code: "BAD_REQUEST" });
+      await this.requirePersistedSession(sessionId);
+      const mutations = await this.service.getToolMutationLedger(sessionId, checkpointId);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ sessionId, checkpointId, enabled: this.service.config.autoPreCommandSnapshot === true, mutations }));
+      return;
+    }
     if (pathname === "/api/external-effects" && req.method === "GET") {
       const sessionId = this.requireSessionId(query.get("sessionId"));
       const checkpointId = query.get("checkpoint") || void 0;
@@ -4264,6 +4308,20 @@ ${lines.join("\n")}` };
         if (changes.length === 0) return { kind: "success", text: `No unattributed workspace changes for ${checkpointId}.` };
         return { kind: "success", text: `Unattributed workspace changes for ${checkpointId}:
 ${changes.map((item) => `${item.status} ${item.path}`).join("\n")}` };
+      }
+    });
+    scope.commands.register({
+      name: "tm-tool-mutations",
+      description: "Show per-tool workspace mutation evidence for a checkpoint",
+      input: { hint: "<checkpoint>" },
+      handler: async ({ agent, rawInput }) => {
+        const checkpointId = rawInput.trim().split(/\s+/).filter(Boolean)[0];
+        if (!checkpointId) return { kind: "error", text: "Usage: /tm-tool-mutations <checkpoint>" };
+        const records = await service.getToolMutationLedger(agent.session.id, checkpointId);
+        if (records.length === 0) return { kind: "success", text: `No tool mutation evidence recorded for ${checkpointId}.` };
+        const lines = records.map((item) => `${item.status} ${item.toolName}${item.callId ? ` [${item.callId}]` : ""}: ${item.changedFiles.map((change) => `${change.status} ${change.path}`).join(", ") || "no workspace delta"}`);
+        return { kind: "success", text: `Tool mutation evidence for ${checkpointId}:
+${lines.join("\n")}` };
       }
     });
     scope.commands.register({
@@ -4869,9 +4927,15 @@ function apply(ctx, config = {}) {
   const observedWrites = /* @__PURE__ */ new Map();
   const pendingLedgerWrites = /* @__PURE__ */ new Map();
   const preCommandCalls = /* @__PURE__ */ new Set();
+  const preCommandCheckpoints = /* @__PURE__ */ new Map();
   const preCommandCounts = /* @__PURE__ */ new Map();
   const anonymousExecutionIds = /* @__PURE__ */ new WeakMap();
   let nextAnonymousExecutionId = 0;
+  const preCommandCallKey = (execution, sessionId, turn) => {
+    const callId = execution.callId?.trim() || void 0;
+    const identity = callId || `anonymous:${executionIdentity(execution, anonymousExecutionIds, () => nextAnonymousExecutionId++)}`;
+    return { key: `${sessionId}\0${identity}\0${turn}`, callId };
+  };
   let installAgentToolBoundary;
   if (service.config.autoPreCommandSnapshot) {
     const installedAgents = /* @__PURE__ */ new WeakSet();
@@ -4886,8 +4950,7 @@ function apply(ctx, config = {}) {
         const turnCheckpoint = session && Number.isSafeInteger(turn) ? checkpoints.get(checkpointKey(session.id, turn)) : void 0;
         const configured = service.config.preCommandTools ?? [];
         if (!session || !toolName || !configured.includes(toolName) || !turnCheckpoint) return;
-        const callIdentity = execution.callId?.trim() || `anonymous:${executionIdentity(execution, anonymousExecutionIds, () => nextAnonymousExecutionId++)}`;
-        const callKey = `${session.id}\0${callIdentity}\0${turn}`;
+        const { key: callKey, callId } = preCommandCallKey(execution, session.id, turn);
         if (preCommandCalls.has(callKey)) return;
         const turnKey = `${session.id}\0${turn}`;
         const maxPerTurn = service.config.preCommandMaxPerTurn;
@@ -4908,9 +4971,11 @@ function apply(ctx, config = {}) {
             status: "success",
             tags: ["pre-command", `tool:${toolName}`]
           });
+          preCommandCheckpoints.set(callKey, { sessionId: session.id, turn, checkpointId: boundary.id, toolName, ...callId ? { callId } : {} });
           ctx.logger.info(`[time-machine] captured pre-command checkpoint ${boundary.id} before ${toolName}`);
         } catch (error) {
           preCommandCalls.delete(callKey);
+          preCommandCheckpoints.delete(callKey);
           const nextCount = (preCommandCounts.get(turnKey) ?? 1) - 1;
           if (nextCount > 0) preCommandCounts.set(turnKey, nextCount);
           else preCommandCounts.delete(turnKey);
@@ -4929,6 +4994,23 @@ function apply(ctx, config = {}) {
     ctx.on("agent/created", ({ agent }) => {
       installAgentToolBoundary?.(agent);
       return void 0;
+    });
+  }
+  if (service.config.autoPreCommandSnapshot) {
+    ctx.on("tools/result", (execution, result) => {
+      const session = execution.agent?.session;
+      const turn = session ? currentSessionTurn(session) : void 0;
+      if (!session || !Number.isSafeInteger(turn)) return;
+      const { key } = preCommandCallKey(execution, session.id, turn);
+      const boundary = preCommandCheckpoints.get(key);
+      if (!boundary) return;
+      preCommandCheckpoints.delete(key);
+      void service.inspectCheckpointDelta(boundary.sessionId, boundary.checkpointId).then((changedFiles) => service.recordToolMutation(boundary.sessionId, boundary.checkpointId, {
+        toolName: boundary.toolName,
+        callId: boundary.callId,
+        status: result?.isError === true ? "error" : "success",
+        changedFiles
+      })).catch((error) => ctx.logger.warn(`[time-machine] could not record tool mutation for ${boundary.toolName}: ${errorMessage(error)}`));
     });
   }
   if (service.config.enableAgentWriteLedger) {
@@ -4982,6 +5064,9 @@ function apply(ctx, config = {}) {
     pendingLedgerWrites.delete(key);
     for (const callKey of preCommandCalls) {
       if (callKey.startsWith(`${session.id}\0`) && callKey.endsWith(`\0${turn}`)) preCommandCalls.delete(callKey);
+    }
+    for (const callKey of preCommandCheckpoints.keys()) {
+      if (callKey.startsWith(`${session.id}\0`) && callKey.endsWith(`\0${turn}`)) preCommandCheckpoints.delete(callKey);
     }
     preCommandCounts.delete(`${session.id}\0${turn}`);
     const assistantMessageIds = assistantMessageIdsForTurn(getMessages(session), baseline);

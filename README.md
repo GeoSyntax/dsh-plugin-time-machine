@@ -125,7 +125,7 @@ pnpm benchmark
 
 真实 DSH source smoke 需要设置 `TM_DSH_SOURCE`；真实模型 smoke 还需要 `TM_GEMINI_BASE_URL`、`TM_GEMINI_MODEL` 和 `TM_GEMINI_API_KEY`。测试使用临时工作区和临时 DSH_HOME，不修改当前仓库。
 
-更多资料：[`docs/COMPARISON.md`](docs/COMPARISON.md)（同类对照）、[`docs/ROADMAP.md`](docs/ROADMAP.md)（路线图）、[`docs/HOST_WORKSPACE_ROUTING.md`](docs/HOST_WORKSPACE_ROUTING.md)（多 workspace 契约）、[`docs/DSH_NATIVE_UI.md`](docs/DSH_NATIVE_UI.md)（Web companion）和 [`docs/RELEASING.md`](docs/RELEASING.md)（发布）。
+更多资料：[`docs/COMPARISON.md`](docs/COMPARISON.md)（同类对照）、[`docs/ROADMAP.md`](docs/ROADMAP.md)（路线图）、[`docs/HOST_WORKSPACE_ROUTING.md`](docs/HOST_WORKSPACE_ROUTING.md)（多 workspace 契约）、[`docs/DSH_NATIVE_UI.md`](docs/DSH_NATIVE_UI.md)（Web companion）、[`docs/RELEASING.md`](docs/RELEASING.md)（发布）和 [`docs/COMMUNITY_SUBMISSION.md`](docs/COMMUNITY_SUBMISSION.md)（社区提交模板与证据清单）。
 
 ## License
 

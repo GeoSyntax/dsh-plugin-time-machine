@@ -262,6 +262,32 @@ describe('TimeMachineWebServer', () => {
     expect(calls).toBe(1);
   });
 
+  it('exposes unresolved effects in preview and blocks strict workspace restore', async () => {
+    const sessionId = 'web-strict-effects';
+    const file = path.join(tmpDir, 'strict-effects.txt');
+    await fs.writeFile(file, 'base\n', 'utf8');
+    const base = await service.createTurnCheckpoint({ sessionId, turnIndex: 1, prompt: 'base', sessionState: { sessionId, messages: [] } });
+    await fs.writeFile(file, 'changed\n', 'utf8');
+    const current = await service.createTurnCheckpoint({ sessionId, turnIndex: 2, prompt: 'remote mutation', sessionState: { sessionId, messages: [] } });
+    await service.recordExternalEffect(sessionId, current.id, {
+      adapter: 'remote', operation: 'create-resource', reversible: true,
+      failureSemantics: 'manual verification', status: 'unresolved',
+    });
+    const preview = await fetch(`http://localhost:${testPort}/api/preview?sessionId=${sessionId}&checkpoint=${encodeURIComponent(base.id)}`);
+    expect(preview.status).toBe(200);
+    const previewBody = await preview.json();
+    expect(previewBody.preview.requiresExternalEffectsReview).toBe(true);
+    expect(previewBody.preview.unresolvedExternalEffectIds).toHaveLength(1);
+
+    const response = await fetch(`http://localhost:${testPort}/api/restore-workspace`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId, checkpointId: base.id, requireExternalEffectsResolved: true }),
+    });
+    expect(response.status).toBe(409);
+    expect((await response.json()).code).toBe('EXTERNAL_EFFECTS_UNRESOLVED');
+    expect(await fs.readFile(file, 'utf8')).toBe('changed\n');
+  });
+
   it('records external effects through the Web API without invoking an adapter', async () => {
     const sessionId = 'web-record-effect';
     const checkpoint = await service.createTurnCheckpoint({

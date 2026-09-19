@@ -123,7 +123,9 @@ export class TimeMachineService {
       maxSnapshotFileBytes: Math.max(0, Math.floor(options.config?.maxSnapshotFileBytes ?? 0)),
       maxSnapshotBytes: Math.max(0, Math.floor(options.config?.maxSnapshotBytes ?? 0)),
       allowPartialSnapshots: options.config?.allowPartialSnapshots ?? false,
-      enableAgentWriteLedger: options.config?.enableAgentWriteLedger ?? options.config?.preserveVerifiedHandEditsByDefault ?? false,
+      enableAgentWriteLedger: options.config?.preserveVerifiedHandEditsByDefault
+        ? true
+        : options.config?.enableAgentWriteLedger ?? false,
       preserveVerifiedHandEditsByDefault: options.config?.preserveVerifiedHandEditsByDefault ?? false,
       autoPreCommandSnapshot: options.config?.autoPreCommandSnapshot ?? false,
       preCommandTools: [...(options.config?.preCommandTools ?? ['write', 'edit', 'str_replace_editor', 'bash', 'shell', 'pwsh', 'powershell', 'terminal_bash', 'terminal_exec', 'run_code', 'python'])],

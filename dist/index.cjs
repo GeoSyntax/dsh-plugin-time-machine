@@ -2100,7 +2100,7 @@ var TimeMachineService = class {
       maxSnapshotFileBytes: Math.max(0, Math.floor(options.config?.maxSnapshotFileBytes ?? 0)),
       maxSnapshotBytes: Math.max(0, Math.floor(options.config?.maxSnapshotBytes ?? 0)),
       allowPartialSnapshots: options.config?.allowPartialSnapshots ?? false,
-      enableAgentWriteLedger: options.config?.enableAgentWriteLedger ?? options.config?.preserveVerifiedHandEditsByDefault ?? false,
+      enableAgentWriteLedger: options.config?.preserveVerifiedHandEditsByDefault ? true : options.config?.enableAgentWriteLedger ?? false,
       preserveVerifiedHandEditsByDefault: options.config?.preserveVerifiedHandEditsByDefault ?? false,
       autoPreCommandSnapshot: options.config?.autoPreCommandSnapshot ?? false,
       preCommandTools: [...options.config?.preCommandTools ?? ["write", "edit", "str_replace_editor", "bash", "shell", "pwsh", "powershell", "terminal_bash", "terminal_exec", "run_code", "python"]],
@@ -3698,7 +3698,7 @@ Use /tm-undo N to restore and fork from the numbered active-lineage checkpoint.`
           `Conversation fork/rewind: ${sessionController ? "available" : "unavailable (no sessionController)"}`,
           `Web dashboard: ${service.config.enableWebUI === false ? "disabled" : `available on ${service.config.webHost ?? "127.0.0.1"}:${service.config.webPort ?? 3088}`}`,
           `Pre-command checkpoints: ${service.config.autoPreCommandSnapshot ? "enabled" : "disabled"}`,
-          `Agent-write ledger: ${service.config.enableAgentWriteLedger ? "enabled" : "disabled"}`,
+          `Agent-write ledger: ${service.config.enableAgentWriteLedger ? service.config.preserveVerifiedHandEditsByDefault ? "enabled (preserve hand-edits by default)" : "enabled" : "disabled"}`,
           `Storage: ${formatBytes(storage.bytes)} in ${storage.files} files; ${storage.checkpoints} checkpoints`
         ];
         const warnings = [];

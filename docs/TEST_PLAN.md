@@ -305,10 +305,17 @@ artifacts/<run-id>/
 - finalized assistant 与 turn-opening user message 映射已覆盖：checkpoint 在 turn 结束时记录该 turn 的全部 assistant message ids（包含工具循环中的中间消息），并在 turn 开始时记录 user message id；`/api/checkpoint-for-message` 对未知消息 fail-closed，companion 目前只对可解析的 assistant 消息显示 rewind action。
 - Git 与 fallback 恢复完成后均执行工作区摘要校验；持久化 DAG 加载会校验节点、父节点、分支和会话归属。
 - 真实 DSH 源码宿主加载插件通过。
+- 2026-09-19 使用本地 DSH 源码宿主 `0.1.6-alpha.1` 与 OpenAI-compatible
+  Gemini 网关（`gemini-3.8-flash`）复测通过：`TM_DSH_LIVE=1`、重启、工具失败
+  和 pre-command 开关同时启用时，成功落盘 finalized checkpoint、Agent-write
+  ledger、重启后的 DAG、`failedTools` 证据和高风险工具前置 checkpoint。
 - 真实本地模型请求、文件创建、turn 结束后的 finalized checkpoint 落盘通过。
 - 使用同一 `DSH_HOME` 与 workspace 的 live restart 测试通过，第二次运行保留并新增 DAG checkpoint。
 - live restart 还验证每个持久化节点的 `sessionState.sessionId` 与 DAG 所属 session 一致，且原 session DAG 未丢失。
 - 真实 DSH Web 宿主通过 `session/create`、`session/prompt` 驱动 turn，并完成真实 `/api/fork` 与 `/api/rewind`。
+- 2026-09-19 通过同一本地 Gemini 网关重跑真实 Web smoke：`session/create`、
+  `session/prompt`、finalized checkpoint、fork、rewind，以及缺失 session 的
+  `SessionController` fork 失败补偿全部通过。
 - 同一真实 Web session 中，失败工具证据会在从失败 checkpoint 分叉时进入 `reflectionAdvisory`。
 - 真实 DSH 不可达模型端点会产生并持久化 `failed` checkpoint，且保留错误证据。
 - 真实 DSH 强制执行退出码非零的 shell 命令后，checkpoint 持久化了 `failedTools` 证据。

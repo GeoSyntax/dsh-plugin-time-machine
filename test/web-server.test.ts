@@ -157,6 +157,26 @@ describe('TimeMachineWebServer', () => {
     expect(calls).toBe(1);
   });
 
+  it('records external effects through the Web API without invoking an adapter', async () => {
+    const sessionId = 'web-record-effect';
+    const checkpoint = await service.createTurnCheckpoint({
+      sessionId, turnIndex: 1, prompt: 'record remote effect', sessionState: { sessionId, messages: [] },
+    });
+    let called = false;
+    service.registerExternalEffectAdapter({ name: 'record-only', async compensate() { called = true; return { status: 'compensated' }; } });
+    const response = await fetch(`http://localhost:${testPort}/api/external-effects`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        sessionId, checkpointId: checkpoint.id, adapter: 'record-only', operation: 'create namespace',
+        reversible: true, compensation: 'delete namespace', failureSemantics: 'retryable',
+      }),
+    });
+    expect(response.status).toBe(201);
+    const body = await response.json();
+    expect(body.checkpoint.externalEffects).toEqual([expect.objectContaining({ adapter: 'record-only', status: 'unresolved' })]);
+    expect(called).toBe(false);
+  });
+
   it('returns a conflict instead of a server error when explicit compensation lacks an adapter', async () => {
     const sessionId = 'web-missing-adapter';
     const checkpoint = await service.createTurnCheckpoint({

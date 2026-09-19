@@ -210,6 +210,31 @@ export class TimeMachineWebServer {
       return;
     }
 
+    if (pathname === '/api/external-effects' && req.method === 'POST') {
+      const body = await this.readJsonBody(req);
+      if (typeof body.sessionId !== 'string' || typeof body.checkpointId !== 'string') {
+        throw Object.assign(new Error('sessionId and checkpointId are required'), { code: 'BAD_REQUEST' });
+      }
+      if (typeof body.adapter !== 'string' || typeof body.operation !== 'string' || typeof body.failureSemantics !== 'string') {
+        throw Object.assign(new Error('adapter, operation, and failureSemantics are required'), { code: 'BAD_REQUEST' });
+      }
+      if (typeof body.reversible !== 'boolean') {
+        throw Object.assign(new Error('reversible must be a boolean'), { code: 'BAD_REQUEST' });
+      }
+      const result = await this.service.recordExternalEffect(body.sessionId, body.checkpointId, {
+        adapter: body.adapter,
+        operation: body.operation,
+        reversible: body.reversible,
+        compensation: typeof body.compensation === 'string' ? body.compensation : undefined,
+        failureSemantics: body.failureSemantics,
+        status: body.status === undefined ? 'unresolved' : body.status,
+        id: typeof body.id === 'string' ? body.id : undefined,
+      });
+      res.writeHead(201, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, checkpoint: result }));
+      return;
+    }
+
     if (pathname === '/api/external-effects/compensate' && req.method === 'POST') {
       const body = await this.readJsonBody(req);
       if (typeof body.sessionId !== 'string' || typeof body.checkpointId !== 'string' || typeof body.effectId !== 'string') {

@@ -92,6 +92,7 @@ dsh plugin --profile web list --depth 0
 - **显式部分快照（谨慎启用）:** 同时设置 `allowPartialSnapshots: true` 与快照大小上限后，超限 regular file 会记录在 checkpoint 的 `omittedPaths` 中并从不可变树排除；恢复时保留该路径的实时内容，不会假装已捕获。默认仍然拒绝超限快照并返回 `SNAPSHOT_SIZE_LIMIT`。
 - **外部副作用补偿边界:** 集成方可注册命名 compensation adapter；`/tm-external-compensate` 和 `POST /api/external-effects/compensate` 默认只 dry-run，只有显式 `--execute`/`execute: true` 才调用适配器。核心持久化幂等 key、结果和 unknown 状态，但不替适配器管理认证或远程事务。
   dry-run 即使 adapter 尚未加载也会返回 `adapterAvailable: false` 的结构化告警；只有真正执行时才会因缺少 adapter 拒绝请求，并返回 `EXTERNAL_ADAPTER_UNAVAILABLE`（Web HTTP 409）。
+- **外部副作用登记 API:** companion 集成可通过 `POST /api/external-effects` 声明 adapter、操作、可逆性和失败语义；该接口只写入审计账本，不会调用远程系统，成功返回 HTTP 201。
 
 ## Safety model
 

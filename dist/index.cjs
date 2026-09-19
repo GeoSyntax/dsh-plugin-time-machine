@@ -3945,6 +3945,18 @@ var TimeMachineClient = class {
     this.assertBinding(action);
     return this.restoreWorkspace({ ...options, sessionId: action.sessionId, checkpointId: action.checkpointId, restorePlanId: action.restorePlanId });
   }
+  async recordExternalEffect(request) {
+    if (!request.sessionId || !request.checkpointId || !request.adapter || !request.operation || !request.failureSemantics) {
+      throw new Error("recordExternalEffect requires sessionId, checkpointId, adapter, operation, and failureSemantics.");
+    }
+    return this.post("/api/external-effects", request);
+  }
+  async compensateExternalEffect(request) {
+    if (!request.sessionId || !request.checkpointId || !request.effectId) {
+      throw new Error("compensateExternalEffect requires sessionId, checkpointId, and effectId.");
+    }
+    return this.post("/api/external-effects/compensate", request);
+  }
   async diff(sessionId, baseCheckpointId, targetCheckpointId) {
     return this.get(`/api/diff?sessionId=${encodeURIComponent(sessionId)}&base=${encodeURIComponent(baseCheckpointId)}&target=${encodeURIComponent(targetCheckpointId)}`);
   }

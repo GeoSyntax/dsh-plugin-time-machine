@@ -103,6 +103,7 @@ dsh plugin --profile web list --depth 0
 - **浏览器请求防护:** 除 Host/Origin 围栏外，未显式 allowlist 的 `Sec-Fetch-Site: cross-site` 请求也会被拒绝，降低无 Origin 跨站 POST 的 CSRF 风险。
 - **完整工作区恢复而不分叉会话:** `/tm-restore <checkpoint>` 或 `POST /api/restore-workspace` 可将整个工作区恢复到 checkpoint，同时保留当前 DSH 对话；需要新对话上下文时再使用 `/tm-rewind`。
 - **Companion contract 同步:** `TimeMachineClient` 同步提供 `restoreWorkspaceFromPreview()`，原生 companion 不必绕过一次性 restore-plan 绑定直接拼 HTTP 请求。
+- `TimeMachineClient` 也提供 `recordExternalEffect()` 与 `compensateExternalEffect()`，外部副作用默认仍是 dry-run，显式执行和幂等 key 由调用方控制。
 - **可诊断的社区安装:** `/tm-doctor` 会检查当前 profile 是否有 `sessionController`、Git/fallback 引擎、Web Dashboard、预命令边界和 Agent-write ledger，并给出可执行的配置警告。
 
 ## Safety model

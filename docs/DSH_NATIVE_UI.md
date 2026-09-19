@@ -14,7 +14,7 @@ assistant 的 `messageId`，并且按 session 注入；它不是一个可以从�
 - 未承诺：在 DSH transcript 的 assistant action strip 中自动出现按钮。
 - 兼容回退：用户可以从 DSH 打开独立 Dashboard，或执行 CLI 命令。
 - 已提供：无 React/浏览器依赖的 `TimeMachineClient` companion contract；它封装
-  status、capabilities、storage、DAG、diff、preview、rewind、fork、完整/选择性恢复和审计读取，并在客户端
+  status、capabilities、storage、DAG、diff、preview、rewind、fork、完整/选择性恢复、外部副作用记录/补偿和审计读取，并在客户端
   强制校验一次性 restore-plan 绑定。它不是原生 slot UI，也不会自动注入按钮。
 - 已提供：`GET /api/sessions` 与 `TimeMachineClient.sessions()`，用于原生 companion
   在多个真实 DSH session 之间发现和切换；Dashboard 也不再隐式创建 `default` DAG。

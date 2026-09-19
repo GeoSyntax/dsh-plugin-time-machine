@@ -54,6 +54,26 @@ export interface RestoreFilesRequest {
 
 export type RestoreWorkspaceRequest = Omit<RewindRequest, 'checkpointId'> & { checkpointId: string };
 
+export interface ExternalEffectRequest {
+  sessionId: string;
+  checkpointId: string;
+  adapter: string;
+  operation: string;
+  reversible: boolean;
+  failureSemantics: string;
+  compensation?: string;
+  status?: 'unresolved' | 'compensated' | 'unknown';
+  id?: string;
+}
+
+export interface ExternalCompensationRequest {
+  sessionId: string;
+  checkpointId: string;
+  effectId: string;
+  execute?: boolean;
+  idempotencyKey?: string;
+}
+
 export interface PreviewBoundAction {
   readonly sessionId: string;
   readonly checkpointId: string;
@@ -131,6 +151,20 @@ export class TimeMachineClient {
   async restoreWorkspaceFromPreview(action: PreviewBoundAction, options: Omit<RestoreWorkspaceRequest, 'sessionId' | 'checkpointId' | 'restorePlanId'> = {}): Promise<unknown> {
     this.assertBinding(action);
     return this.restoreWorkspace({ ...options, sessionId: action.sessionId, checkpointId: action.checkpointId, restorePlanId: action.restorePlanId });
+  }
+
+  async recordExternalEffect(request: ExternalEffectRequest): Promise<unknown> {
+    if (!request.sessionId || !request.checkpointId || !request.adapter || !request.operation || !request.failureSemantics) {
+      throw new Error('recordExternalEffect requires sessionId, checkpointId, adapter, operation, and failureSemantics.');
+    }
+    return this.post('/api/external-effects', request);
+  }
+
+  async compensateExternalEffect(request: ExternalCompensationRequest): Promise<unknown> {
+    if (!request.sessionId || !request.checkpointId || !request.effectId) {
+      throw new Error('compensateExternalEffect requires sessionId, checkpointId, and effectId.');
+    }
+    return this.post('/api/external-effects/compensate', request);
   }
 
   async diff(sessionId: string, baseCheckpointId: string, targetCheckpointId: string): Promise<unknown> {

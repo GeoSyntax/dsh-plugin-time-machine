@@ -1,7 +1,7 @@
 import { Context } from '@deepseek-ai/cordis';
 import Schema from '@deepseek-ai/schemastery';
-import { D as DAGTree, C as CheckpointNode, T as TimeMachineConfig, S as SessionState, A as AgentWriteRecord, F as FileChange, a as ToolMutationRecord, E as ExternalEffectRecord, b as ExternalEffectAdapter, c as ExternalEffectCompensationResult, R as RestoreOptions, d as RestoreResult, e as SelectiveRestoreResult, f as ReflectionSummary, g as DiffResult, h as RestorePreview, i as StorageStatus, j as SessionSummary, W as WorkspaceIsolation, P as PruneResult } from './client-H4-uQwWM.js';
-export { k as CompanionTimelineEntry, l as ExternalCompensationRequest, m as ExternalEffectCompensationContext, n as ExternalEffectRequest, o as ForkRequest, p as PreviewBoundAction, q as PruneRequest, r as RestoreFilesRequest, s as RestoreWorkspaceRequest, t as RewindRequest, u as SessionMessage, v as TimeMachineClient, w as TimeMachineClientError, x as TimeMachineClientOptions, U as UndoRequest, y as buildCompanionTimeline } from './client-H4-uQwWM.js';
+import { D as DAGTree, C as CheckpointNode, T as TimeMachineConfig, S as SessionState, A as AgentWriteRecord, F as FileChange, a as ToolMutationRecord, E as ExternalEffectRecord, b as ExternalEffectAdapter, c as ExternalEffectCompensationResult, R as RestoreOptions, d as RestoreResult, e as SelectiveRestoreResult, f as ReflectionSummary, g as DiffResult, h as RestorePreview, i as StorageStatus, j as SessionSummary, W as WorkspaceIsolation, P as PruneResult } from './client-OsU8XaEa.js';
+export { k as CompanionTimelineEntry, l as ExternalCompensationRequest, m as ExternalEffectCompensationContext, n as ExternalEffectRequest, o as ForkRequest, p as PreviewBoundAction, q as PruneRequest, r as RestoreFilesRequest, s as RestoreWorkspaceRequest, t as RewindRequest, u as SessionMessage, v as TimeMachineClient, w as TimeMachineClientError, x as TimeMachineClientOptions, U as UndoRequest, y as buildCompanionTimeline } from './client-OsU8XaEa.js';
 
 /** Current on-disk DAG schema. Bump only with an explicit migration path. */
 declare const DAG_FORMAT_VERSION: 1;
@@ -687,6 +687,7 @@ interface ToolEventExecutionLike {
 }
 interface ToolEventResultLike {
     readonly isError?: boolean;
+    readonly error?: unknown;
 }
 interface ToolExecutionLike {
     readonly callId?: string;

@@ -139,7 +139,7 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
         if (!checkpointId) return { kind: 'error', text: 'Usage: /tm-tool-mutations <checkpoint>' };
         const records = await service.getToolMutationLedger(agent.session.id, checkpointId);
         if (records.length === 0) return { kind: 'success', text: `No tool mutation evidence recorded for ${checkpointId}.` };
-        const lines = records.map(item => `${item.status} ${item.toolName}${item.callId ? ` [${item.callId}]` : ''}: ${item.changedFiles.map(change => `${change.status} ${change.path}`).join(', ') || 'no workspace delta'}`);
+        const lines = records.map(item => `${item.status} ${item.toolName}${item.callId ? ` [${item.callId}]` : ''}: ${item.changedFiles.map(change => `${change.status} ${change.path}`).join(', ') || 'no workspace delta'}${item.error ? ` — ${item.error}` : ''}`);
         return { kind: 'success', text: `Tool mutation evidence for ${checkpointId}:\n${lines.join('\n')}` };
       },
     });

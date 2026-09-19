@@ -90,6 +90,8 @@ export interface ToolMutationRecord {
   changedFiles: FileChange[];
   recordedAt: number;
   callId?: string;
+  /** Bounded, sanitized failure summary; raw tool input/output is never persisted. */
+  error?: string;
 }
 
 export interface CheckpointNode {

@@ -248,6 +248,7 @@ function toolMutationsGroup(node) {
     const item = element('li', 'file-item');
     const files = Array.isArray(record.changedFiles) ? record.changedFiles : [];
     item.append(element('span', '', `⚙ ${String(record.toolName)}`), element('span', `badge ${record.status === 'error' ? 'badge-warning' : 'badge-success'}`, String(record.status).toUpperCase()), element('code', '', files.map(file => `${file.status} ${file.path}`).join(', ') || 'no workspace delta'));
+    if (record.error) item.append(element('span', 'badge badge-warning', String(record.error)));
     list.append(item);
   }
   return group(`Tool Mutation Ledger (${records.length})`, list);

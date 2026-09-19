@@ -2136,7 +2136,7 @@ var DAGStateManager = class {
       if (node.assistantMessageIds !== void 0 && (!Array.isArray(node.assistantMessageIds) || node.assistantMessageIds.some((messageId) => typeof messageId !== "string" || !messageId.trim()))) {
         throw new Error(`DAG checkpoint '${id}' has invalid assistant message ids.`);
       }
-      if (node.toolMutations !== void 0 && (!Array.isArray(node.toolMutations) || node.toolMutations.some((item) => !item || typeof item.toolName !== "string" || !item.toolName.trim() || !["success", "error"].includes(item.status) || !Array.isArray(item.changedFiles) || !Number.isFinite(item.recordedAt)))) {
+      if (node.toolMutations !== void 0 && (!Array.isArray(node.toolMutations) || node.toolMutations.some((item) => !item || typeof item.toolName !== "string" || !item.toolName.trim() || !["success", "error"].includes(item.status) || !Array.isArray(item.changedFiles) || !Number.isFinite(item.recordedAt) || item.error !== void 0 && (typeof item.error !== "string" || item.error.length > 300)))) {
         throw new Error(`DAG checkpoint '${id}' has invalid tool mutation evidence.`);
       }
       if (node.parentId !== null && !tree.nodes[node.parentId]) {
@@ -2707,7 +2707,8 @@ var TimeMachineService = class {
       const node = dag.getNode(checkpointId);
       if (!node) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
       const changedFiles = [...new Map(mutation.changedFiles.map((item) => [item.path, { path: item.path, status: item.status }])).values()].sort((a, b) => a.path.localeCompare(b.path));
-      const record = { toolName, status: mutation.status, changedFiles, recordedAt: Date.now(), ...mutation.callId?.trim() ? { callId: mutation.callId.trim() } : {} };
+      const error = mutation.error?.trim().slice(0, 300);
+      const record = { toolName, status: mutation.status, changedFiles, recordedAt: Date.now(), ...mutation.callId?.trim() ? { callId: mutation.callId.trim() } : {}, ...error ? { error } : {} };
       return dag.updateNode(checkpointId, { toolMutations: [...node.toolMutations ?? [], record] });
     });
   }
@@ -4320,7 +4321,7 @@ ${changes.map((item) => `${item.status} ${item.path}`).join("\n")}` };
         if (!checkpointId) return { kind: "error", text: "Usage: /tm-tool-mutations <checkpoint>" };
         const records = await service.getToolMutationLedger(agent.session.id, checkpointId);
         if (records.length === 0) return { kind: "success", text: `No tool mutation evidence recorded for ${checkpointId}.` };
-        const lines = records.map((item) => `${item.status} ${item.toolName}${item.callId ? ` [${item.callId}]` : ""}: ${item.changedFiles.map((change) => `${change.status} ${change.path}`).join(", ") || "no workspace delta"}`);
+        const lines = records.map((item) => `${item.status} ${item.toolName}${item.callId ? ` [${item.callId}]` : ""}: ${item.changedFiles.map((change) => `${change.status} ${change.path}`).join(", ") || "no workspace delta"}${item.error ? ` \u2014 ${item.error}` : ""}`);
         return { kind: "success", text: `Tool mutation evidence for ${checkpointId}:
 ${lines.join("\n")}` };
       }
@@ -4883,6 +4884,17 @@ var Config = Schema.object({
   preCommandTools: Schema.array(Schema.string()).default(["write", "edit", "str_replace_editor", "bash", "shell", "pwsh", "powershell", "terminal_bash", "terminal_exec", "run_code", "python"]),
   preCommandMaxPerTurn: Schema.number().step(1).min(0).default(1)
 });
+function boundedToolError(result) {
+  if (result.isError !== true || result.error === void 0 || result.error === null) return void 0;
+  const value = result.error;
+  if (typeof value === "string") return value.replace(/\s+/g, " ").trim().slice(0, 300) || void 0;
+  if (typeof value === "object") {
+    const record = value;
+    const fields = ["code", "name", "reason", "message"].map((key) => typeof record[key] === "string" ? `${key}=${String(record[key]).replace(/\s+/g, " ").trim()}` : void 0).filter((item) => Boolean(item));
+    return fields.join("; ").slice(0, 300) || void 0;
+  }
+  return void 0;
+}
 function apply(ctx, config = {}) {
   const workDir = path9.resolve(process.cwd());
   const service = new TimeMachineService({ workDir, storageDir: config.storageDir, config });
@@ -5036,7 +5048,8 @@ function apply(ctx, config = {}) {
         toolName: boundary.toolName,
         callId: boundary.callId,
         status: result?.isError === true ? "error" : "success",
-        changedFiles
+        changedFiles,
+        ...boundedToolError(result) ? { error: boundedToolError(result) } : {}
       })).catch((error) => ctx.logger.warn(`[time-machine] could not record tool mutation for ${boundary.toolName}: ${errorMessage(error)}`));
     });
   }

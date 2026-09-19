@@ -383,7 +383,7 @@ export class DAGStateManager {
       if (node.assistantMessageIds !== undefined && (!Array.isArray(node.assistantMessageIds) || node.assistantMessageIds.some(messageId => typeof messageId !== 'string' || !messageId.trim()))) {
         throw new Error(`DAG checkpoint '${id}' has invalid assistant message ids.`);
       }
-      if (node.toolMutations !== undefined && (!Array.isArray(node.toolMutations) || node.toolMutations.some(item => !item || typeof item.toolName !== 'string' || !item.toolName.trim() || !['success', 'error'].includes(item.status) || !Array.isArray(item.changedFiles) || !Number.isFinite(item.recordedAt)))) {
+      if (node.toolMutations !== undefined && (!Array.isArray(node.toolMutations) || node.toolMutations.some(item => !item || typeof item.toolName !== 'string' || !item.toolName.trim() || !['success', 'error'].includes(item.status) || !Array.isArray(item.changedFiles) || !Number.isFinite(item.recordedAt) || (item.error !== undefined && (typeof item.error !== 'string' || item.error.length > 300))))) {
         throw new Error(`DAG checkpoint '${id}' has invalid tool mutation evidence.`);
       }
       if (node.parentId !== null && !tree.nodes[node.parentId]) {

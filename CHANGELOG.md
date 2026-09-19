@@ -5,6 +5,8 @@
 - Keep delayed `tools/result` events attributable after `turn/end` by matching
   the pre-command boundary by call id or execution identity; pending entries
   expire after five minutes without keeping the Node process alive.
+- Record a bounded, whitespace-normalized failure summary in tool mutation
+  evidence without persisting raw tool arguments or full command output.
 
 ## Unreleased
 

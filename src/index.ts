@@ -93,6 +93,21 @@ interface ToolEventExecutionLike {
 
 interface ToolEventResultLike {
   readonly isError?: boolean;
+  readonly error?: unknown;
+}
+
+function boundedToolError(result: ToolEventResultLike): string | undefined {
+  if (result.isError !== true || result.error === undefined || result.error === null) return undefined;
+  const value = result.error;
+  if (typeof value === 'string') return value.replace(/\s+/g, ' ').trim().slice(0, 300) || undefined;
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    const fields = ['code', 'name', 'reason', 'message']
+      .map(key => typeof record[key] === 'string' ? `${key}=${String(record[key]).replace(/\s+/g, ' ').trim()}` : undefined)
+      .filter((item): item is string => Boolean(item));
+    return fields.join('; ').slice(0, 300) || undefined;
+  }
+  return undefined;
 }
 
 interface ToolExecutionLike {
@@ -287,6 +302,7 @@ export function apply(ctx: Context, config: Config = {}): void {
           callId: boundary.callId,
           status: result?.isError === true ? 'error' : 'success',
           changedFiles,
+          ...(boundedToolError(result) ? { error: boundedToolError(result) } : {}),
         }))
         .catch((error: unknown) => ctx.logger.warn(`[time-machine] could not record tool mutation for ${boundary.toolName}: ${errorMessage(error)}`));
     });

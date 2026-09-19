@@ -439,7 +439,8 @@ export class TimeMachineService {
       if (!node) throw new Error(`Checkpoint '${checkpointId}' does not exist in DAG.`);
       const changedFiles = [...new Map(mutation.changedFiles.map(item => [item.path, { path: item.path, status: item.status }])).values()]
         .sort((a, b) => a.path.localeCompare(b.path));
-      const record: ToolMutationRecord = { toolName, status: mutation.status, changedFiles, recordedAt: Date.now(), ...(mutation.callId?.trim() ? { callId: mutation.callId.trim() } : {}) };
+      const error = mutation.error?.trim().slice(0, 300);
+      const record: ToolMutationRecord = { toolName, status: mutation.status, changedFiles, recordedAt: Date.now(), ...(mutation.callId?.trim() ? { callId: mutation.callId.trim() } : {}), ...(error ? { error } : {}) };
       return dag.updateNode(checkpointId, { toolMutations: [...(node.toolMutations ?? []), record] });
     });
   }

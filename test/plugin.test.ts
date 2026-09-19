@@ -203,9 +203,18 @@ describe('DSH Cordis plugin entry', () => {
         arguments: { command: 'rm -rf build' },
         agent,
       }, async () => ({ kind: 'allow' }));
-      const nextNodes = Object.values((await (ctx.get('timeMachine') as TimeMachineService).getDAGManager(session.id)).tree.nodes);
+      ctx.emit('tools/result', { callId: 'high-risk-call', name: 'bash', agent }, { isError: true, error: { code: 'EXIT_NONZERO', reason: 'exit code 1' } });
+      let nextNodes = Object.values((await (ctx.get('timeMachine') as TimeMachineService).getDAGManager(session.id)).tree.nodes);
+      for (let attempt = 0; attempt < 50 && !nextNodes.some(node => node.toolMutations?.some(item => item.status === 'error')); attempt += 1) {
+        await new Promise(resolve => setTimeout(resolve, 10));
+        nextNodes = Object.values((await (ctx.get('timeMachine') as TimeMachineService).getDAGManager(session.id)).tree.nodes);
+      }
       expect(nextNodes).toHaveLength(4);
       expect(nextNodes.filter(node => node.tags?.includes('pre-command'))).toHaveLength(2);
+      const failedBoundary = nextNodes.find(node => node.tags?.includes('pre-command') && node.turnIndex === 2);
+      expect(failedBoundary?.toolMutations).toEqual(expect.arrayContaining([
+        expect.objectContaining({ status: 'error', error: 'code=EXIT_NONZERO; reason=exit code 1' }),
+      ]));
     } finally {
       await (ctx?.fiber?.dispose?.() ?? Promise.resolve());
       process.chdir(previousCwd);

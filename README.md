@@ -59,6 +59,7 @@ dsh plugin --profile web list --depth 0
 /tm-prune [keep-latest] --repack-shadow
 /tm-quarantine-migrate <backup-key>
 /tm-external-compensate <checkpoint> <effect-id> [--execute]
+/tm-external-record <checkpoint> <adapter> <operation> --failure=<text> [--reversible]
 /tm-preview <checkpoint>
 /tm-restore-files <checkpoint> <path...> [--plan=<id>]
 /tm-fork <checkpoint> <branch>

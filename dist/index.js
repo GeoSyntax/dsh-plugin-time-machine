@@ -3422,6 +3422,28 @@ ${changes.map((item) => `${item.status} ${item.path}`).join("\n")}` };
       }
     });
     scope.commands.register({
+      name: "tm-external-record",
+      description: "Record an external side effect without executing compensation",
+      input: { hint: "<checkpoint> <adapter> <operation> [--reversible] [--failure=<text>] [--compensation=<text>]" },
+      handler: async ({ agent, rawInput }) => {
+        const args = rawInput.trim().split(/\s+/).filter(Boolean);
+        const positionals = args.filter((arg) => !arg.startsWith("--"));
+        if (positionals.length < 3) return { kind: "error", text: "Usage: /tm-external-record <checkpoint> <adapter> <operation> [--reversible] [--failure=<text>] [--compensation=<text>]" };
+        const failureSemantics = optionValue(args, "--failure");
+        if (!failureSemantics) return { kind: "error", text: "Usage requires --failure=<text>." };
+        const updated = await service.recordExternalEffect(agent.session.id, positionals[0], {
+          adapter: positionals[1],
+          operation: positionals[2],
+          reversible: args.includes("--reversible"),
+          compensation: optionValue(args, "--compensation"),
+          failureSemantics,
+          status: "unresolved"
+        });
+        const effect = updated.externalEffects?.at(-1);
+        return { kind: "success", text: `Recorded external effect ${effect?.id ?? "(unknown)"} via '${positionals[1]}'; no remote call was executed.` };
+      }
+    });
+    scope.commands.register({
       name: "tm-rewind",
       description: "Restore workspace and fork conversation at a checkpoint",
       input: { hint: "<checkpoint> [--merge|--force] [--preserve-hand-edits] [--delete-new-ignored] [--plan=<id>]" },

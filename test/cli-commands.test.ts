@@ -45,7 +45,7 @@ describe('registered DSH time-machine commands', () => {
   });
 
   it('registers tm-tree, tm-fork, and tm-rewind handlers', () => {
-    expect(Object.keys(handlers)).toEqual(expect.arrayContaining(['tm-tree', 'tm-fork', 'tm-rewind', 'tm-agent-writes', 'tm-unattributed', 'tm-quarantine-migrate', 'tm-external-compensate']));
+    expect(Object.keys(handlers)).toEqual(expect.arrayContaining(['tm-tree', 'tm-fork', 'tm-rewind', 'tm-agent-writes', 'tm-unattributed', 'tm-quarantine-migrate', 'tm-external-record', 'tm-external-compensate']));
   });
 
   it('exposes a read-only Agent-write ledger view', async () => {
@@ -71,6 +71,20 @@ describe('registered DSH time-machine commands', () => {
     await service.finalizeTurnCheckpoint({ sessionId, checkpointId: checkpoint.id, status: 'success' });
     const result = await handlers['tm-unattributed']({ agent: { session: { id: sessionId } }, rawInput: checkpoint.id });
     expect(result).toEqual({ kind: 'success', text: `Unattributed workspace changes for ${checkpoint.id}:\nadded shell.txt` });
+  });
+
+  it('records external effects from the CLI without executing compensation', async () => {
+    const sessionId = 'cli-external-record';
+    const checkpoint = await service.createTurnCheckpoint({ sessionId, turnIndex: 1, prompt: 'base', sessionState: { sessionId, messages: [] } });
+    const result = await handlers['tm-external-record']({
+      agent: { session: { id: sessionId } },
+      rawInput: `${checkpoint.id} redis create-namespace --failure=retryable --reversible --compensation=delete-namespace`,
+    });
+    expect(result.kind).toBe('success');
+    expect(result.text).toContain('no remote call was executed');
+    expect((await service.getDAGManager(sessionId)).getNode(checkpoint.id)?.externalEffects).toEqual([
+      expect.objectContaining({ adapter: 'redis', operation: 'create-namespace', reversible: true, status: 'unresolved' }),
+    ]);
   });
 
   it('runs tm-tree and tm-fork through the real service and session controller contract', async () => {

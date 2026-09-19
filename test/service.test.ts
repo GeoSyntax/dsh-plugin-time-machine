@@ -203,6 +203,11 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
     await defaultLedger.recordAgentWrite(sessionId, agent.id, { path: 'ledger-default.txt', operation: 'modify' });
     await fs.writeFile(file, 'human\n', 'utf8');
 
+    const preview = await defaultLedger.previewRestore(sessionId, base.id);
+    expect(preview.workspaceDrifted).toBe(true);
+    expect(preview.conflictingPaths).toEqual([]);
+    expect(preview.preservedHandEditPaths).toEqual(['ledger-default.txt']);
+    expect(preview.requiresForce).toBe(false);
     const result = await defaultLedger.rewindToCheckpoint(sessionId, base.id);
     expect(await fs.readFile(file, 'utf8')).toBe('human\n');
     expect(result.preservedHandEditPaths).toEqual(['ledger-default.txt']);

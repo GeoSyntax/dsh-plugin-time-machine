@@ -21,6 +21,11 @@ read content; explicit migration preserves the legacy backup on failure;
 quota/prune accounting remains correct; no key material appears in logs,
 manifests, or Git refs.
 
+The implementation boundary and failure matrix are documented in
+[ENCRYPTED_SHADOW_DESIGN.md](./ENCRYPTED_SHADOW_DESIGN.md). Directly encrypting
+Git loose objects or packs is explicitly rejected because Git would no longer
+be able to read the shadow store.
+
 ### Host capability contract
 
 Keep `GET /api/capabilities` versioned as new host integrations land. A DSH

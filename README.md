@@ -266,7 +266,7 @@ Git status 报告的变更路径。小仓库仍有 Git 进程启动开销，但�
 - Hermes Agent v2 已有自己的 checkpoint/rollback；本插件适合需要 DSH Session fork、DAG 探索或失败反思的场景。
 - 外部数据库、网络、进程或云资源变更不会被文件恢复假装“回滚”。集成方可调用 `service.recordExternalEffect(...)` 记录 adapter、操作、可逆性、补偿说明和失败语义；这些记录会持久化到 checkpoint，并在 fork 反思中生成警告，但核心不会未经用户批准执行补偿。
 
-问题定义、设计取舍、同类能力对照、社区路线图和完整验收矩阵见 [docs/PROBLEM.md](docs/PROBLEM.md)、[docs/COMPARISON.md](docs/COMPARISON.md)、[docs/ROADMAP.md](docs/ROADMAP.md)、[DESIGN.md](DESIGN.md) 和 [docs/TEST_PLAN.md](docs/TEST_PLAN.md)。
+问题定义、设计取舍、同类能力对照、社区路线图、workspace host routing 契约和完整验收矩阵见 [docs/PROBLEM.md](docs/PROBLEM.md)、[docs/COMPARISON.md](docs/COMPARISON.md)、[docs/ROADMAP.md](docs/ROADMAP.md)、[docs/HOST_WORKSPACE_ROUTING.md](docs/HOST_WORKSPACE_ROUTING.md)、[DESIGN.md](DESIGN.md) 和 [docs/TEST_PLAN.md](docs/TEST_PLAN.md)。
 
 DSH 原生消息操作的扩展边界和 companion package 验收条件见
 [docs/DSH_NATIVE_UI.md](docs/DSH_NATIVE_UI.md)。主服务包不会把 React client

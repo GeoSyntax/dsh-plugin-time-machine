@@ -61,6 +61,9 @@ plugin instance owns one configured `workDir` and skips sessions whose
 `header.cwd` differs. Multi-project routing remains a host-integration item;
 silently binding those sessions to the wrong root would be unsafe.
 
+The proposed host adapter, failure matrix, and upstream API shape are defined
+in [HOST_WORKSPACE_ROUTING.md](./HOST_WORKSPACE_ROUTING.md).
+
 ## P1 — scale and workflow parity
 
 ### Large-workspace incremental capture

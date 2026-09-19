@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add a documented host workspace-routing contract covering multi-root
+  services, isolated fork requirements, capability states, and failure
+  acceptance tests; keep the current single-root behavior fail-closed until
+  DSH exposes the required fork API.
 - Advertise `messageAnchors: ["assistant", "user"]` through capabilities so
   third-party clients can discover the user-message checkpoint contract.
 - Bind checkpoints to the turn-opening user message as well as finalized

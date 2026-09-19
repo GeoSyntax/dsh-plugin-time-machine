@@ -54,6 +54,10 @@ export interface RestoreFilesRequest {
 
 export type RestoreWorkspaceRequest = Omit<RewindRequest, 'checkpointId'> & { checkpointId: string };
 
+export interface UndoRequest extends Omit<RewindRequest, 'checkpointId'> {
+  count?: number;
+}
+
 export interface ExternalEffectRequest {
   sessionId: string;
   checkpointId: string;
@@ -144,6 +148,14 @@ export class TimeMachineClient {
   async rewind(action: PreviewBoundAction, options: Omit<RewindRequest, 'sessionId' | 'checkpointId' | 'restorePlanId'> = {}): Promise<unknown> {
     this.assertBinding(action);
     return this.post('/api/rewind', { ...options, sessionId: action.sessionId, checkpointId: action.checkpointId, restorePlanId: action.restorePlanId });
+  }
+
+  /** Direct relative-turn undo for CLI-like companions; preview-first UIs may use timeline()+preview()+rewind(). */
+  async undo(request: UndoRequest): Promise<unknown> {
+    if (!request.sessionId) throw new Error('undo requires sessionId.');
+    const count = request.count ?? 1;
+    if (!Number.isInteger(count) || count < 1 || count > 500) throw new Error('undo count must be an integer between 1 and 500.');
+    return this.post('/api/undo', { ...request, count });
   }
 
   async fork(action: PreviewBoundAction, branchName: string, options: Omit<ForkRequest, 'sessionId' | 'checkpointId' | 'restorePlanId' | 'branchName'> = {}): Promise<unknown> {

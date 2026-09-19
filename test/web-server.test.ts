@@ -346,6 +346,32 @@ describe('TimeMachineWebServer', () => {
     expect(await fs.readFile(right, 'utf8')).toBe('live-right\n');
   });
 
+  it('supports relative turn undo through the Web API without counting internal checkpoints', async () => {
+    const sessionId = 'web-undo-session';
+    const checkpoints = [] as Array<{ id: string }>;
+    for (let turnIndex = 1; turnIndex <= 3; turnIndex += 1) {
+      const checkpoint = await service.createTurnCheckpoint({ sessionId, turnIndex, prompt: `turn ${turnIndex}`, sessionState: { sessionId, messages: [] } });
+      checkpoints.push(checkpoint);
+      await service.finalizeTurnCheckpoint({ sessionId, checkpointId: checkpoint.id, status: 'success' });
+    }
+    await service.createTurnCheckpoint({ sessionId, turnIndex: 3, prompt: '[pre-command]', sessionState: { sessionId, messages: [] }, tags: ['pre-command'] });
+
+    await server.stop();
+    server = new TimeMachineWebServer(service, testPort, '127.0.0.1', {
+      restartConversation: async (_source, checkpoint) => ({ sessionId: `undo-${checkpoint.id}` }),
+    });
+    await server.start();
+    const response = await fetch(`http://localhost:${testPort}/api/undo`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId, count: 2 }),
+    });
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.targetCheckpointId).toBe(checkpoints[0].id);
+    expect(body.conversation.sessionId).toBe(`undo-${checkpoints[0].id}`);
+  });
+
   it('restores a full workspace without requiring conversation restart', async () => {
     const sessionId = 'restore-workspace-web';
     const file = path.join(tmpDir, 'restore-workspace.txt');

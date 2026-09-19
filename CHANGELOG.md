@@ -79,3 +79,6 @@ See [README.md](./README.md), [docs/COMPARISON.md](./docs/COMPARISON.md), and
 - Exclude still-running checkpoints from the user-visible undo lineage.
 - Publish the dependency-free companion contract from the `./client` package
   subpath, including `timeline()` and its shared safety-aware projection.
+- Add the shared `POST /api/undo` and `TimeMachineClient.undo()` relative-turn
+  contract for CLI-like companions; confirmation UIs should still use preview
+  plans before mutation.

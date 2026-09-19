@@ -36,10 +36,8 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
         const rawLimit = rawInput.trim().split(/\s+/).filter(Boolean)[0];
         const limit = rawLimit === undefined ? 10 : Number(rawLimit);
         if (!Number.isInteger(limit) || limit < 1 || limit > 100) return { kind: 'error', text: 'Usage: /tm-list [limit 1-100]' };
-        const dag = await service.getDAGManager(agent.session.id);
-        const current = dag.getCurrentNode();
-        if (!current) return { kind: 'success', text: 'No checkpoints recorded for this session yet.' };
-        const lineage = relativeTurnNodes(dag.getLineage(current.id)).slice(0, limit);
+        const lineage = await service.listRelativeTurnCheckpoints(agent.session.id, limit);
+        if (lineage.length === 0) return { kind: 'success', text: 'No completed checkpoints recorded for this session yet.' };
         const lines = lineage.map((node, index) => {
           const undo = index === 0 ? 'current' : `undo ${index}`;
           const summary = node.summary || node.prompt || node.status;
@@ -366,24 +364,7 @@ function optionValue(args: string[], name: string): string | undefined {
 }
 
 async function resolveRelativeCheckpoint(service: TimeMachineService, sessionId: string, count: number): Promise<string | undefined> {
-  const dag = await service.getDAGManager(sessionId);
-  const current = dag.getCurrentNode();
-  if (!current) return undefined;
-  return relativeTurnNodes(dag.getLineage(current.id))[count]?.id;
-}
-
-/** Select one user-visible boundary per completed turn, ignoring internal safety nodes. */
-function relativeTurnNodes(lineage: CheckpointNode[]): CheckpointNode[] {
-  const selected: CheckpointNode[] = [];
-  const seenTurns = new Set<number>();
-  for (const node of [...lineage].reverse()) {
-    if (node.status === 'running') continue;
-    if (node.tags?.includes('pre-command') || node.tags?.includes('rescue') || node.tags?.includes('selective-restore')) continue;
-    if (seenTurns.has(node.turnIndex)) continue;
-    seenTurns.add(node.turnIndex);
-    selected.push(node);
-  }
-  return selected;
+  return (await service.resolveRelativeTurnCheckpoint(sessionId, count))?.id;
 }
 
 function parseDurationMs(value: string): number | undefined {

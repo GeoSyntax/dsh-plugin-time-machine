@@ -244,7 +244,9 @@ client slot 集成伪装成已支持能力。
 它提供 status、capabilities、storage、DAG、diff、preview、rewind、fork、选择性恢复和审计读取方法，
 其中 `restoreFilesFromPreview()` 与 rewind/fork 一样复用一次性 preview 绑定，
 并强制把 `restorePlanId` 绑定到 preview 返回的 session/checkpoint；服务端返回
-409 时会抛出带 `status`/`code`/`body` 的 `TimeMachineClientError`。`timeline(sessionId)`
+409 时会抛出带 `status`/`code`/`body` 的 `TimeMachineClientError`。`undo({ sessionId, count })`
+提供 CLI-like 的相对 turn 回退；需要向用户展示冲突并确认的 UI 应优先使用
+`timeline()` → `preview()` → `rewind()`。`timeline(sessionId)`
 还返回 UI 无关的活动 lineage 投影，标记 running、内部安全节点、partial checkpoint、
 未归因变更和待审查外部副作用，避免每个 UI 重复实现安全规则。
 

@@ -2094,6 +2094,28 @@ var TimeMachineService = class {
     }
     return mgr;
   }
+  /** Resolve a user-facing undo distance on the active lineage, ignoring internal nodes. */
+  async resolveRelativeTurnCheckpoint(sessionId, count) {
+    if (!Number.isInteger(count) || count < 1) throw new Error("Undo count must be a positive integer.");
+    return (await this.listRelativeTurnCheckpoints(sessionId))[count] ?? null;
+  }
+  /** Return newest-first user-visible boundaries for CLI, REST, and companion projections. */
+  async listRelativeTurnCheckpoints(sessionId, limit = 500) {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 500) throw new Error("Undo list limit must be an integer between 1 and 500.");
+    const dag = await this.getDAGManager(sessionId);
+    const current = dag.getCurrentNode();
+    if (!current) return [];
+    const selected = [];
+    const seenTurns = /* @__PURE__ */ new Set();
+    for (const node of [...dag.getLineage(current.id)].reverse()) {
+      if (node.status === "running" || node.tags?.includes("pre-command") || node.tags?.includes("rescue") || node.tags?.includes("selective-restore")) continue;
+      if (seenTurns.has(node.turnIndex)) continue;
+      seenTurns.add(node.turnIndex);
+      selected.push(node);
+      if (selected.length >= limit) break;
+    }
+    return selected;
+  }
   /**
    * 核心：创建原子双轨快照（状态轨 + 工作区轨）
    */
@@ -3082,7 +3104,7 @@ var TimeMachineWebServer = class {
           }
           await this.handleStatic(res, pathname);
         } catch (err) {
-          const status = err?.code === "BAD_REQUEST" ? 400 : err?.code === "SESSION_NOT_FOUND" ? 404 : err?.code === "RESTORE_PLAN_INVALID" || err?.code === "RESTORE_MERGE_CONFLICT" || err?.code === "QUARANTINE_KEY_INVALID" || err?.code === "EXTERNAL_COMPENSATION_UNKNOWN" || err?.code === "EXTERNAL_ADAPTER_UNAVAILABLE" || err?.code === "EXTERNAL_EFFECT_DUPLICATE" ? 409 : err?.code === "UNSUPPORTED_WORKSPACE_STATE" ? 422 : err?.code === "SNAPSHOT_SIZE_LIMIT" ? 413 : 500;
+          const status = err?.code === "BAD_REQUEST" ? 400 : err?.code === "SESSION_NOT_FOUND" || err?.code === "UNDO_TARGET_NOT_FOUND" ? 404 : err?.code === "RESTORE_PLAN_INVALID" || err?.code === "RESTORE_MERGE_CONFLICT" || err?.code === "QUARANTINE_KEY_INVALID" || err?.code === "EXTERNAL_COMPENSATION_UNKNOWN" || err?.code === "EXTERNAL_ADAPTER_UNAVAILABLE" || err?.code === "EXTERNAL_EFFECT_DUPLICATE" ? 409 : err?.code === "UNSUPPORTED_WORKSPACE_STATE" ? 422 : err?.code === "SNAPSHOT_SIZE_LIMIT" ? 413 : 500;
           res.writeHead(status, { "Content-Type": "application/json" });
           res.end(JSON.stringify({
             error: err.message || "Internal Server Error",
@@ -3215,6 +3237,35 @@ var TimeMachineWebServer = class {
       await this.service.completeRestoreJournal(result.restoreJournalId);
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ success: true, result, conversation }));
+      return;
+    }
+    if (pathname === "/api/undo" && req.method === "POST") {
+      const body = await this.readJsonBody(req);
+      const sourceSessionId = this.requireSessionId(body.sessionId);
+      const count = Number(body.count ?? 1);
+      if (!Number.isInteger(count) || count < 1 || count > 500) {
+        throw Object.assign(new Error("count must be a positive integer no greater than 500"), { code: "BAD_REQUEST" });
+      }
+      if (!this.hooks.restartConversation) throw new Error("Conversation restart capability is unavailable; refusing workspace-only undo.");
+      await this.requirePersistedSession(sourceSessionId);
+      const target = await this.service.resolveRelativeTurnCheckpoint(sourceSessionId, count);
+      if (!target) throw Object.assign(new Error(`No completed turn exists ${count} step(s) before the active checkpoint.`), { code: "UNDO_TARGET_NOT_FOUND" });
+      const result = await this.service.rewindToCheckpoint(sourceSessionId, target.id, {
+        mode: body.force === true ? "force" : body.merge === true ? "merge" : void 0,
+        preserveVerifiedHandEdits: body.preserveVerifiedHandEdits === true,
+        deleteNewIgnoredPaths: body.deleteNewIgnoredPaths === true
+      });
+      let conversation;
+      try {
+        conversation = await this.hooks.restartConversation(sourceSessionId, result.targetNode);
+      } catch (error) {
+        await this.compensate(sourceSessionId, result.rescueCheckpointId);
+        await this.service.completeRestoreJournal(result.restoreJournalId);
+        throw error;
+      }
+      await this.service.completeRestoreJournal(result.restoreJournalId);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: true, count, targetCheckpointId: target.id, result, conversation }));
       return;
     }
     if (pathname === "/api/restore-workspace" && req.method === "POST") {
@@ -3536,10 +3587,8 @@ function registerCliCommands(ctx, service) {
         const rawLimit = rawInput.trim().split(/\s+/).filter(Boolean)[0];
         const limit = rawLimit === void 0 ? 10 : Number(rawLimit);
         if (!Number.isInteger(limit) || limit < 1 || limit > 100) return { kind: "error", text: "Usage: /tm-list [limit 1-100]" };
-        const dag = await service.getDAGManager(agent.session.id);
-        const current = dag.getCurrentNode();
-        if (!current) return { kind: "success", text: "No checkpoints recorded for this session yet." };
-        const lineage = relativeTurnNodes(dag.getLineage(current.id)).slice(0, limit);
+        const lineage = await service.listRelativeTurnCheckpoints(agent.session.id, limit);
+        if (lineage.length === 0) return { kind: "success", text: "No completed checkpoints recorded for this session yet." };
         const lines = lineage.map((node, index) => {
           const undo = index === 0 ? "current" : `undo ${index}`;
           const summary = node.summary || node.prompt || node.status;
@@ -3850,22 +3899,7 @@ function optionValue(args, name2) {
   return inline ? inline.slice(prefix.length) || void 0 : void 0;
 }
 async function resolveRelativeCheckpoint(service, sessionId, count) {
-  const dag = await service.getDAGManager(sessionId);
-  const current = dag.getCurrentNode();
-  if (!current) return void 0;
-  return relativeTurnNodes(dag.getLineage(current.id))[count]?.id;
-}
-function relativeTurnNodes(lineage) {
-  const selected = [];
-  const seenTurns = /* @__PURE__ */ new Set();
-  for (const node of [...lineage].reverse()) {
-    if (node.status === "running") continue;
-    if (node.tags?.includes("pre-command") || node.tags?.includes("rescue") || node.tags?.includes("selective-restore")) continue;
-    if (seenTurns.has(node.turnIndex)) continue;
-    seenTurns.add(node.turnIndex);
-    selected.push(node);
-  }
-  return selected;
+  return (await service.resolveRelativeTurnCheckpoint(sessionId, count))?.id;
 }
 function parseDurationMs(value) {
   const match = /^(\d+(?:\.\d+)?)(ms|s|m|h|d|w)$/i.exec(value.trim());
@@ -3954,6 +3988,13 @@ var TimeMachineClient = class {
   async rewind(action, options = {}) {
     this.assertBinding(action);
     return this.post("/api/rewind", { ...options, sessionId: action.sessionId, checkpointId: action.checkpointId, restorePlanId: action.restorePlanId });
+  }
+  /** Direct relative-turn undo for CLI-like companions; preview-first UIs may use timeline()+preview()+rewind(). */
+  async undo(request) {
+    if (!request.sessionId) throw new Error("undo requires sessionId.");
+    const count = request.count ?? 1;
+    if (!Number.isInteger(count) || count < 1 || count > 500) throw new Error("undo count must be an integer between 1 and 500.");
+    return this.post("/api/undo", { ...request, count });
   }
   async fork(action, branchName, options = {}) {
     this.assertBinding(action);

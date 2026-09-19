@@ -1,7 +1,7 @@
 import { Context } from '@deepseek-ai/cordis';
 import Schema from '@deepseek-ai/schemastery';
-import { D as DAGTree, C as CheckpointNode, T as TimeMachineConfig, S as SessionState, A as AgentWriteRecord, F as FileChange, E as ExternalEffectRecord, a as ExternalEffectAdapter, b as ExternalEffectCompensationResult, R as RestoreOptions, c as RestoreResult, d as SelectiveRestoreResult, e as ReflectionSummary, f as DiffResult, g as RestorePreview, h as StorageStatus, i as SessionSummary, P as PruneResult } from './client-CClaY-fd.cjs';
-export { j as CompanionTimelineEntry, k as ExternalCompensationRequest, l as ExternalEffectCompensationContext, m as ExternalEffectRequest, n as ForkRequest, o as PreviewBoundAction, p as RestoreFilesRequest, q as RestoreWorkspaceRequest, r as RewindRequest, s as SessionMessage, t as TimeMachineClient, u as TimeMachineClientError, v as TimeMachineClientOptions, w as buildCompanionTimeline } from './client-CClaY-fd.cjs';
+import { D as DAGTree, C as CheckpointNode, T as TimeMachineConfig, S as SessionState, A as AgentWriteRecord, F as FileChange, E as ExternalEffectRecord, a as ExternalEffectAdapter, b as ExternalEffectCompensationResult, R as RestoreOptions, c as RestoreResult, d as SelectiveRestoreResult, e as ReflectionSummary, f as DiffResult, g as RestorePreview, h as StorageStatus, i as SessionSummary, P as PruneResult } from './client-BRc8N0UG.cjs';
+export { j as CompanionTimelineEntry, k as ExternalCompensationRequest, l as ExternalEffectCompensationContext, m as ExternalEffectRequest, n as ForkRequest, o as PreviewBoundAction, p as RestoreFilesRequest, q as RestoreWorkspaceRequest, r as RewindRequest, s as SessionMessage, t as TimeMachineClient, u as TimeMachineClientError, v as TimeMachineClientOptions, U as UndoRequest, w as buildCompanionTimeline } from './client-BRc8N0UG.cjs';
 
 interface DAGManagerOptions {
     sessionId: string;
@@ -102,6 +102,10 @@ declare class TimeMachineService {
      * 获取或初始化指定会话的 DAG 管理器
      */
     getDAGManager(sessionId: string): Promise<DAGStateManager>;
+    /** Resolve a user-facing undo distance on the active lineage, ignoring internal nodes. */
+    resolveRelativeTurnCheckpoint(sessionId: string, count: number): Promise<CheckpointNode | null>;
+    /** Return newest-first user-visible boundaries for CLI, REST, and companion projections. */
+    listRelativeTurnCheckpoints(sessionId: string, limit?: number): Promise<CheckpointNode[]>;
     /**
      * 核心：创建原子双轨快照（状态轨 + 工作区轨）
      */

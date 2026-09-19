@@ -60,7 +60,7 @@ export class TimeMachineWebServer {
           // 静态资源处理
           await this.handleStatic(res, pathname);
         } catch (err: any) {
-          const status = err?.code === 'BAD_REQUEST' ? 400 : err?.code === 'SESSION_NOT_FOUND' ? 404 : err?.code === 'RESTORE_PLAN_INVALID' || err?.code === 'RESTORE_MERGE_CONFLICT' || err?.code === 'QUARANTINE_KEY_INVALID' || err?.code === 'EXTERNAL_COMPENSATION_UNKNOWN' || err?.code === 'EXTERNAL_ADAPTER_UNAVAILABLE' || err?.code === 'EXTERNAL_EFFECT_DUPLICATE' ? 409 : err?.code === 'UNSUPPORTED_WORKSPACE_STATE' ? 422 : err?.code === 'SNAPSHOT_SIZE_LIMIT' ? 413 : 500;
+          const status = err?.code === 'BAD_REQUEST' ? 400 : err?.code === 'SESSION_NOT_FOUND' || err?.code === 'UNDO_TARGET_NOT_FOUND' ? 404 : err?.code === 'RESTORE_PLAN_INVALID' || err?.code === 'RESTORE_MERGE_CONFLICT' || err?.code === 'QUARANTINE_KEY_INVALID' || err?.code === 'EXTERNAL_COMPENSATION_UNKNOWN' || err?.code === 'EXTERNAL_ADAPTER_UNAVAILABLE' || err?.code === 'EXTERNAL_EFFECT_DUPLICATE' ? 409 : err?.code === 'UNSUPPORTED_WORKSPACE_STATE' ? 422 : err?.code === 'SNAPSHOT_SIZE_LIMIT' ? 413 : 500;
           res.writeHead(status, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
             error: err.message || 'Internal Server Error',
@@ -206,6 +206,36 @@ export class TimeMachineWebServer {
       await this.service.completeRestoreJournal(result.restoreJournalId);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, result, conversation }));
+      return;
+    }
+
+    if (pathname === '/api/undo' && req.method === 'POST') {
+      const body = await this.readJsonBody(req);
+      const sourceSessionId = this.requireSessionId(body.sessionId);
+      const count = Number(body.count ?? 1);
+      if (!Number.isInteger(count) || count < 1 || count > 500) {
+        throw Object.assign(new Error('count must be a positive integer no greater than 500'), { code: 'BAD_REQUEST' });
+      }
+      if (!this.hooks.restartConversation) throw new Error('Conversation restart capability is unavailable; refusing workspace-only undo.');
+      await this.requirePersistedSession(sourceSessionId);
+      const target = await this.service.resolveRelativeTurnCheckpoint(sourceSessionId, count);
+      if (!target) throw Object.assign(new Error(`No completed turn exists ${count} step(s) before the active checkpoint.`), { code: 'UNDO_TARGET_NOT_FOUND' });
+      const result = await this.service.rewindToCheckpoint(sourceSessionId, target.id, {
+        mode: body.force === true ? 'force' : body.merge === true ? 'merge' : undefined,
+        preserveVerifiedHandEdits: body.preserveVerifiedHandEdits === true,
+        deleteNewIgnoredPaths: body.deleteNewIgnoredPaths === true,
+      });
+      let conversation: { sessionId: string };
+      try {
+        conversation = await this.hooks.restartConversation(sourceSessionId, result.targetNode);
+      } catch (error) {
+        await this.compensate(sourceSessionId, result.rescueCheckpointId);
+        await this.service.completeRestoreJournal(result.restoreJournalId);
+        throw error;
+      }
+      await this.service.completeRestoreJournal(result.restoreJournalId);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, count, targetCheckpointId: target.id, result, conversation }));
       return;
     }
 

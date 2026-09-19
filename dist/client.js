@@ -54,6 +54,13 @@ var TimeMachineClient = class {
     this.assertBinding(action);
     return this.post("/api/rewind", { ...options, sessionId: action.sessionId, checkpointId: action.checkpointId, restorePlanId: action.restorePlanId });
   }
+  /** Direct relative-turn undo for CLI-like companions; preview-first UIs may use timeline()+preview()+rewind(). */
+  async undo(request) {
+    if (!request.sessionId) throw new Error("undo requires sessionId.");
+    const count = request.count ?? 1;
+    if (!Number.isInteger(count) || count < 1 || count > 500) throw new Error("undo count must be an integer between 1 and 500.");
+    return this.post("/api/undo", { ...request, count });
+  }
   async fork(action, branchName, options = {}) {
     this.assertBinding(action);
     if (!branchName.trim()) throw new Error("branchName must be non-empty.");

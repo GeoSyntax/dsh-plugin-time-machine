@@ -20,6 +20,9 @@ assistant 的 `messageId`，并且按 session 注入；它不是一个可以从�
 - 已提供：`client.timeline(sessionId)` 和 `buildCompanionTimeline()` 纯数据投影；
   统一处理活动 lineage、相对 undo 编号、running/internal 节点和风险警告，供
   React slot 或独立 Dashboard 复用。
+- 已提供：`POST /api/undo` 与 `TimeMachineClient.undo()` 的相对 turn contract；
+  它适合 CLI-like 快捷操作，面向确认型 UI 仍应先读取 timeline、调用 preview，
+  再提交 session-bound restore plan 到 `/api/rewind`。
 - 已提供：`GET /api/sessions` 与 `TimeMachineClient.sessions()`，用于原生 companion
   在多个真实 DSH session 之间发现和切换；Dashboard 也不再隐式创建 `default` DAG。
 - 已提供：`webAllowedOrigins` 精确 Origin allowlist 和 CORS 响应头；默认仍拒绝跨源请求，

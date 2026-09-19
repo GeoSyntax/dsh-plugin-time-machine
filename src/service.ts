@@ -180,6 +180,30 @@ export class TimeMachineService {
     return mgr;
   }
 
+  /** Resolve a user-facing undo distance on the active lineage, ignoring internal nodes. */
+  async resolveRelativeTurnCheckpoint(sessionId: string, count: number): Promise<CheckpointNode | null> {
+    if (!Number.isInteger(count) || count < 1) throw new Error('Undo count must be a positive integer.');
+    return (await this.listRelativeTurnCheckpoints(sessionId))[count] ?? null;
+  }
+
+  /** Return newest-first user-visible boundaries for CLI, REST, and companion projections. */
+  async listRelativeTurnCheckpoints(sessionId: string, limit = 500): Promise<CheckpointNode[]> {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 500) throw new Error('Undo list limit must be an integer between 1 and 500.');
+    const dag = await this.getDAGManager(sessionId);
+    const current = dag.getCurrentNode();
+    if (!current) return [];
+    const selected: CheckpointNode[] = [];
+    const seenTurns = new Set<number>();
+    for (const node of [...dag.getLineage(current.id)].reverse()) {
+      if (node.status === 'running' || node.tags?.includes('pre-command') || node.tags?.includes('rescue') || node.tags?.includes('selective-restore')) continue;
+      if (seenTurns.has(node.turnIndex)) continue;
+      seenTurns.add(node.turnIndex);
+      selected.push(node);
+      if (selected.length >= limit) break;
+    }
+    return selected;
+  }
+
   /**
    * 核心：创建原子双轨快照（状态轨 + 工作区轨）
    */

@@ -306,6 +306,9 @@ interface RestoreFilesRequest {
 type RestoreWorkspaceRequest = Omit<RewindRequest, 'checkpointId'> & {
     checkpointId: string;
 };
+interface UndoRequest extends Omit<RewindRequest, 'checkpointId'> {
+    count?: number;
+}
 interface ExternalEffectRequest {
     sessionId: string;
     checkpointId: string;
@@ -354,6 +357,8 @@ declare class TimeMachineClient {
     timeline(sessionId: string, limit?: number): Promise<CompanionTimelineEntry[]>;
     preview(sessionId: string, checkpointId: string): Promise<PreviewBoundAction>;
     rewind(action: PreviewBoundAction, options?: Omit<RewindRequest, 'sessionId' | 'checkpointId' | 'restorePlanId'>): Promise<unknown>;
+    /** Direct relative-turn undo for CLI-like companions; preview-first UIs may use timeline()+preview()+rewind(). */
+    undo(request: UndoRequest): Promise<unknown>;
     fork(action: PreviewBoundAction, branchName: string, options?: Omit<ForkRequest, 'sessionId' | 'checkpointId' | 'restorePlanId' | 'branchName'>): Promise<unknown>;
     restoreFiles(request: RestoreFilesRequest): Promise<unknown>;
     restoreFilesFromPreview(action: PreviewBoundAction, paths: string[], options?: Omit<RestoreFilesRequest, 'sessionId' | 'checkpointId' | 'paths' | 'restorePlanId'>): Promise<unknown>;
@@ -373,4 +378,4 @@ declare class TimeMachineClient {
 /** Pure timeline projection shared by browser clients and tests. */
 declare function buildCompanionTimeline(dag: DAGTree, limit?: number): CompanionTimelineEntry[];
 
-export { type AgentWriteRecord as A, type CheckpointNode as C, type DAGTree as D, type ExternalEffectRecord as E, type FileChange as F, type PruneResult as P, type RestoreOptions as R, type SessionState as S, type TimeMachineConfig as T, type ExternalEffectAdapter as a, type ExternalEffectCompensationResult as b, type RestoreResult as c, type SelectiveRestoreResult as d, type ReflectionSummary as e, type DiffResult as f, type RestorePreview as g, type StorageStatus as h, type SessionSummary as i, type CompanionTimelineEntry as j, type ExternalCompensationRequest as k, type ExternalEffectCompensationContext as l, type ExternalEffectRequest as m, type ForkRequest as n, type PreviewBoundAction as o, type RestoreFilesRequest as p, type RestoreWorkspaceRequest as q, type RewindRequest as r, type SessionMessage as s, TimeMachineClient as t, TimeMachineClientError as u, type TimeMachineClientOptions as v, buildCompanionTimeline as w };
+export { type AgentWriteRecord as A, type CheckpointNode as C, type DAGTree as D, type ExternalEffectRecord as E, type FileChange as F, type PruneResult as P, type RestoreOptions as R, type SessionState as S, type TimeMachineConfig as T, type UndoRequest as U, type ExternalEffectAdapter as a, type ExternalEffectCompensationResult as b, type RestoreResult as c, type SelectiveRestoreResult as d, type ReflectionSummary as e, type DiffResult as f, type RestorePreview as g, type StorageStatus as h, type SessionSummary as i, type CompanionTimelineEntry as j, type ExternalCompensationRequest as k, type ExternalEffectCompensationContext as l, type ExternalEffectRequest as m, type ForkRequest as n, type PreviewBoundAction as o, type RestoreFilesRequest as p, type RestoreWorkspaceRequest as q, type RewindRequest as r, type SessionMessage as s, TimeMachineClient as t, TimeMachineClientError as u, type TimeMachineClientOptions as v, buildCompanionTimeline as w };

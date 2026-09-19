@@ -1,5 +1,6 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
 import { createHash } from 'node:crypto';
 import type { Context } from '@deepseek-ai/cordis';
 import Schema from '@deepseek-ai/schemastery';
@@ -454,11 +455,28 @@ function isNativeWriteTool(name: string): boolean {
 }
 
 function workspaceRelativePath(workDir: string, displayPath: string): string | undefined {
-  const absolute = path.resolve(workDir, displayPath);
-  const root = path.resolve(workDir);
+  const absolute = canonicalPathForComparison(path.resolve(workDir, displayPath));
+  const root = canonicalPathForComparison(path.resolve(workDir));
   const relative = path.relative(root, absolute).replace(/\\/g, '/');
   if (!relative || relative === '..' || relative.startsWith('../') || path.isAbsolute(relative)) return undefined;
   return relative;
+}
+
+/** Resolve existing parents so macOS mount aliases also work for observed paths that are absent. */
+function canonicalPathForComparison(candidate: string): string {
+  let cursor = candidate;
+  const suffix: string[] = [];
+  while (true) {
+    try {
+      const resolved = fsSync.realpathSync.native(cursor);
+      return path.join(resolved, ...suffix.reverse());
+    } catch {
+      const parent = path.dirname(cursor);
+      if (parent === cursor) return candidate;
+      suffix.push(path.basename(cursor));
+      cursor = parent;
+    }
+  }
 }
 
 function executionIdentity(

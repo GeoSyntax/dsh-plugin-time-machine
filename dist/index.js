@@ -1498,6 +1498,7 @@ Reason: ${err || out || `exit ${code}`}`));
 init_esm_shims();
 import path12 from "path";
 import fs10 from "fs/promises";
+import fsSync from "fs";
 import { createHash as createHash6 } from "crypto";
 import Schema from "@deepseek-ai/schemastery";
 import pc2 from "picocolors";
@@ -5359,11 +5360,26 @@ function isNativeWriteTool(name2) {
   return name2 === "write" || name2 === "edit" || name2 === "str_replace_editor";
 }
 function workspaceRelativePath(workDir, displayPath) {
-  const absolute = path12.resolve(workDir, displayPath);
-  const root = path12.resolve(workDir);
+  const absolute = canonicalPathForComparison(path12.resolve(workDir, displayPath));
+  const root = canonicalPathForComparison(path12.resolve(workDir));
   const relative = path12.relative(root, absolute).replace(/\\/g, "/");
   if (!relative || relative === ".." || relative.startsWith("../") || path12.isAbsolute(relative)) return void 0;
   return relative;
+}
+function canonicalPathForComparison(candidate) {
+  let cursor = candidate;
+  const suffix = [];
+  while (true) {
+    try {
+      const resolved = fsSync.realpathSync.native(cursor);
+      return path12.join(resolved, ...suffix.reverse());
+    } catch {
+      const parent = path12.dirname(cursor);
+      if (parent === cursor) return candidate;
+      suffix.push(path12.basename(cursor));
+      cursor = parent;
+    }
+  }
 }
 function executionIdentity(execution, identities, allocate) {
   const object = execution;

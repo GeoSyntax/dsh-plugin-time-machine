@@ -1552,6 +1552,7 @@ module.exports = __toCommonJS(index_exports);
 init_cjs_shims();
 var import_node_path11 = __toESM(require("path"), 1);
 var import_promises10 = __toESM(require("fs/promises"), 1);
+var import_node_fs = __toESM(require("fs"), 1);
 var import_node_crypto7 = require("crypto");
 var import_schemastery = __toESM(require("@deepseek-ai/schemastery"), 1);
 var import_picocolors2 = __toESM(require("picocolors"), 1);
@@ -5413,11 +5414,26 @@ function isNativeWriteTool(name2) {
   return name2 === "write" || name2 === "edit" || name2 === "str_replace_editor";
 }
 function workspaceRelativePath(workDir, displayPath) {
-  const absolute = import_node_path11.default.resolve(workDir, displayPath);
-  const root = import_node_path11.default.resolve(workDir);
+  const absolute = canonicalPathForComparison(import_node_path11.default.resolve(workDir, displayPath));
+  const root = canonicalPathForComparison(import_node_path11.default.resolve(workDir));
   const relative = import_node_path11.default.relative(root, absolute).replace(/\\/g, "/");
   if (!relative || relative === ".." || relative.startsWith("../") || import_node_path11.default.isAbsolute(relative)) return void 0;
   return relative;
+}
+function canonicalPathForComparison(candidate) {
+  let cursor = candidate;
+  const suffix = [];
+  while (true) {
+    try {
+      const resolved = import_node_fs.default.realpathSync.native(cursor);
+      return import_node_path11.default.join(resolved, ...suffix.reverse());
+    } catch {
+      const parent = import_node_path11.default.dirname(cursor);
+      if (parent === cursor) return candidate;
+      suffix.push(import_node_path11.default.basename(cursor));
+      cursor = parent;
+    }
+  }
 }
 function executionIdentity(execution, identities, allocate) {
   const object = execution;

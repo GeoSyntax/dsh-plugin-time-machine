@@ -10,6 +10,7 @@ interface CommandInvocationLike {
 interface SessionControllerLike {
   create(request: { readonly cwd?: string }): Promise<{ readonly sessionId: string }>;
   fork(request: { readonly sessionId: string; readonly atSeq?: number }): Promise<{ readonly sessionId: string }>;
+  rewind?(request: { readonly sessionId: string; readonly atSeq?: number }): Promise<{ readonly sessionId: string }>;
 }
 
 type CommandResult = { kind: 'success' | 'error'; text: string };
@@ -393,6 +394,9 @@ async function restartConversation(
   cwd: string,
 ): Promise<{ sessionId: string }> {
   const boundary = checkpoint.sessionState.boundarySeq;
+  if (boundary !== undefined && controller.rewind) {
+    return controller.rewind({ sessionId: sourceSessionId, atSeq: boundary });
+  }
   return boundary === undefined
     ? controller.create({ cwd })
     : controller.fork({ sessionId: sourceSessionId, atSeq: boundary });

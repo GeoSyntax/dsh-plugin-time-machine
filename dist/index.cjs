@@ -3262,8 +3262,9 @@ var TimeMachineWebServer = class {
       return;
     }
     if (pathname === "/api/capabilities" && req.method === "GET") {
+      const capabilities = await this.service.getCapabilities();
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ capabilities: await this.service.getCapabilities() }));
+      res.end(JSON.stringify({ capabilities: { ...capabilities, rewindSessionMode: this.hooks.rewindSessionMode?.() ?? capabilities.rewindSessionMode } }));
       return;
     }
     if (pathname === "/api/agent-writes" && req.method === "GET") {
@@ -4011,6 +4012,9 @@ function formatBytes(bytes) {
 }
 async function restartConversation(controller, sourceSessionId, checkpoint, cwd) {
   const boundary = checkpoint.sessionState.boundarySeq;
+  if (boundary !== void 0 && controller.rewind) {
+    return controller.rewind({ sessionId: sourceSessionId, atSeq: boundary });
+  }
   return boundary === void 0 ? controller.create({ cwd }) : controller.fork({ sessionId: sourceSessionId, atSeq: boundary });
 }
 async function compensate(service, sessionId, rescueCheckpointId) {
@@ -4249,7 +4253,18 @@ function apply(ctx, config = {}) {
         const controller = ctx.get("sessionController");
         if (!controller) throw new Error("This DSH profile has no sessionController.");
         const boundary = checkpoint.sessionState.boundarySeq;
+        if (boundary !== void 0 && controller.rewind) {
+          return controller.rewind({ sessionId: sourceSessionId, atSeq: boundary });
+        }
         return boundary === void 0 ? controller.create({ cwd: service.workDir }) : controller.fork({ sessionId: sourceSessionId, atSeq: boundary });
+      },
+      rewindSessionMode: () => {
+        try {
+          const controller = ctx.get("sessionController");
+          return controller?.rewind ? "in-place" : "fork";
+        } catch {
+          return "fork";
+        }
       },
       sessionExists: async (sessionId) => {
         const controller = ctx.get("sessionController");

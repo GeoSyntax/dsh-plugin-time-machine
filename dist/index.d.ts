@@ -598,6 +598,13 @@ interface SessionControllerLike {
     }): Promise<{
         readonly sessionId: string;
     }>;
+    /** Optional host extension for true in-place append-only session rewind. */
+    rewind?(request: {
+        readonly sessionId: string;
+        readonly atSeq?: number;
+    }): Promise<{
+        readonly sessionId: string;
+    }>;
     inspect?(sessionId: string): Promise<unknown>;
 }
 interface CommandRuntimeLike {

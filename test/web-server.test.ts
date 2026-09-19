@@ -108,6 +108,17 @@ describe('TimeMachineWebServer', () => {
     expect(fetchMetadataBlocked.status).toBe(403);
   });
 
+  it('advertises an optional host-provided in-place rewind contract', async () => {
+    await server.stop();
+    server = new TimeMachineWebServer(service, testPort, '127.0.0.1', {
+      rewindSessionMode: () => 'in-place',
+    });
+    await server.start();
+    const response = await fetch(`http://localhost:${testPort}/api/capabilities`);
+    expect(response.status).toBe(200);
+    expect((await response.json()).capabilities.rewindSessionMode).toBe('in-place');
+  });
+
   it('discovers and switches between real persisted sessions without a default ghost', async () => {
     const first = await service.createTurnCheckpoint({
       sessionId: 'web-session-alpha', turnIndex: 1, prompt: 'alpha', sessionState: { sessionId: 'web-session-alpha', messages: [] },

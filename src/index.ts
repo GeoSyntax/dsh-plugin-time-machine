@@ -64,6 +64,8 @@ interface AgentLike {
 interface SessionControllerLike {
   create(request: { readonly cwd?: string }): Promise<{ readonly sessionId: string }>;
   fork(request: { readonly sessionId: string; readonly atSeq?: number }): Promise<{ readonly sessionId: string }>;
+  /** Optional host extension for true in-place append-only session rewind. */
+  rewind?(request: { readonly sessionId: string; readonly atSeq?: number }): Promise<{ readonly sessionId: string }>;
   inspect?(sessionId: string): Promise<unknown>;
 }
 
@@ -133,9 +135,20 @@ export function apply(ctx: Context, config: Config = {}): void {
         const controller = ctx.get('sessionController') as SessionControllerLike | undefined;
         if (!controller) throw new Error('This DSH profile has no sessionController.');
         const boundary = checkpoint.sessionState.boundarySeq;
+        if (boundary !== undefined && controller.rewind) {
+          return controller.rewind({ sessionId: sourceSessionId, atSeq: boundary });
+        }
         return boundary === undefined
           ? controller.create({ cwd: service.workDir })
           : controller.fork({ sessionId: sourceSessionId, atSeq: boundary });
+      },
+      rewindSessionMode: () => {
+        try {
+          const controller = ctx.get('sessionController') as SessionControllerLike | undefined;
+          return controller?.rewind ? 'in-place' : 'fork';
+        } catch {
+          return 'fork';
+        }
       },
       sessionExists: async (sessionId) => {
         const controller = ctx.get('sessionController') as SessionControllerLike | undefined;

@@ -7,6 +7,8 @@ import type { CheckpointNode } from '../types.js';
 
 export interface TimeMachineWebHooks {
   restartConversation?: (sourceSessionId: string, checkpoint: CheckpointNode) => Promise<{ sessionId: string }>;
+  /** Host session mode advertised to native clients; defaults to fork. */
+  rewindSessionMode?: () => 'fork' | 'in-place';
   /** Optional host-side session authority (for profiles exposing inspect()). */
   sessionExists?: (sessionId: string) => Promise<boolean>;
 }
@@ -143,8 +145,9 @@ export class TimeMachineWebServer {
     }
 
     if (pathname === '/api/capabilities' && req.method === 'GET') {
+      const capabilities = await this.service.getCapabilities();
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ capabilities: await this.service.getCapabilities() }));
+      res.end(JSON.stringify({ capabilities: { ...capabilities, rewindSessionMode: this.hooks.rewindSessionMode?.() ?? capabilities.rewindSessionMode } }));
       return;
     }
 

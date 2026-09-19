@@ -33,6 +33,9 @@ assistant 的 `messageId`，并且按 session 注入；它不是一个可以从�
 - `handEditPolicy: ledger-default` 表示服务端已启用
   `preserveVerifiedHandEditsByDefault`；companion 应在确认前提示已验证的人工修改会
   默认保留，并允许用户显式选择 `preserveVerifiedHandEdits: false` 的全量覆盖语义。
+- 如果宿主额外提供 `sessionController.rewind({ sessionId, atSeq })`，插件会使用它并将
+  `rewindSessionMode` 报告为 `in-place`；当前公开 DSH alpha 只提供 `fork`，因此默认仍是
+  新 session，不会伪造原地上下文回退。
 - 已提供：`webAllowedOrigins` 精确 Origin allowlist 和 CORS 响应头；默认仍拒绝跨源请求，
   只有部署者明确列出可信的本地 DSH client origin 后，companion 才能跨端口调用 REST API。
 - 已加入：`client-companion/` 独立 React/slot 包源码，使用 `TimeMachineClient`

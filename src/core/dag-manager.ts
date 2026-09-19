@@ -4,6 +4,9 @@ import { randomUUID } from 'node:crypto';
 import pc from 'picocolors';
 import type { CheckpointNode, DAGTree } from '../types.js';
 
+/** Current on-disk DAG schema. Bump only with an explicit migration path. */
+export const DAG_FORMAT_VERSION = 1 as const;
+
 export interface DAGManagerOptions {
   sessionId: string;
   storageDir: string;
@@ -17,6 +20,7 @@ export class DAGStateManager {
   constructor(options: DAGManagerOptions) {
     const branch = options.initialBranch || 'main';
     this.tree = {
+      formatVersion: DAG_FORMAT_VERSION,
       sessionId: options.sessionId,
       currentBranch: branch,
       currentCheckpointId: null,
@@ -41,9 +45,14 @@ export class DAGStateManager {
   async init(): Promise<void> {
     try {
       const content = await fs.readFile(this.storageFile, 'utf-8');
-      const loadedTree = JSON.parse(content) as DAGTree;
-      this.assertTree(loadedTree);
-      this.tree = loadedTree;
+      const parsed = JSON.parse(content) as DAGTree;
+      const { tree, migrated } = this.migrateTree(parsed);
+      this.assertTree(tree);
+      this.tree = tree;
+      // Legacy files are upgraded only after they have passed full validation.
+      // This keeps a corrupt/foreign file untouched for diagnosis and makes the
+      // migration atomic through the normal temporary-file persistence path.
+      if (migrated) await this.persist();
     } catch (error: any) {
       if (error?.code !== 'ENOENT') throw error;
     }
@@ -326,6 +335,9 @@ export class DAGStateManager {
   }
 
   private assertTree(tree: DAGTree): void {
+    if (tree.formatVersion !== DAG_FORMAT_VERSION) {
+      throw new Error(`Unsupported DAG storage format ${String(tree.formatVersion)}; expected ${DAG_FORMAT_VERSION}.`);
+    }
     if (!tree || tree.sessionId !== this.tree.sessionId || typeof tree.nodes !== 'object' || typeof tree.branches !== 'object') {
       throw new Error(`Invalid or foreign DAG state in '${this.storageFile}'.`);
     }
@@ -353,6 +365,19 @@ export class DAGStateManager {
         throw new Error(`DAG checkpoint '${id}' references missing branch '${node.branch}'.`);
       }
     }
+  }
+
+  private migrateTree(tree: DAGTree): { tree: DAGTree; migrated: boolean } {
+    if (!tree || typeof tree !== 'object') {
+      throw new Error(`Invalid or foreign DAG state in '${this.storageFile}'.`);
+    }
+    if (tree.formatVersion === undefined) {
+      return { tree: { ...tree, formatVersion: DAG_FORMAT_VERSION }, migrated: true };
+    }
+    if (tree.formatVersion !== DAG_FORMAT_VERSION) {
+      throw new Error(`Unsupported DAG storage format ${String(tree.formatVersion)}; expected ${DAG_FORMAT_VERSION}.`);
+    }
+    return { tree, migrated: false };
   }
 
   private async commitMutation(mutate: () => void): Promise<void> {

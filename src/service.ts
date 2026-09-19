@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import { GitPlumbingEngine } from './core/git-plumbing.js';
 import { FallbackSnapshotEngine } from './core/fallback-engine.js';
-import { DAGStateManager } from './core/dag-manager.js';
+import { DAGStateManager, DAG_FORMAT_VERSION } from './core/dag-manager.js';
 import { ReflectionAdvisor } from './core/reflection-advisor.js';
 import { KeyedOperationLock } from './core/operation-lock.js';
 import { WorkspaceFileLock } from './core/workspace-lock.js';
@@ -957,6 +957,7 @@ export class TimeMachineService {
   /** Report runtime capabilities so Web/CLI integrations can fail early. */
   async getCapabilities(): Promise<{
     version: 1;
+    dagStorageFormatVersion: 1;
     git: boolean;
     fallback: boolean;
     mergeRestore: boolean;
@@ -1006,6 +1007,7 @@ export class TimeMachineService {
     const usable = git && !workspace.sparseCheckout && workspace.submodulePaths.length === 0 && !workspace.inProgressOperation;
     return {
       version: 1,
+      dagStorageFormatVersion: DAG_FORMAT_VERSION,
       git,
       fallback: !git,
       mergeRestore: usable,

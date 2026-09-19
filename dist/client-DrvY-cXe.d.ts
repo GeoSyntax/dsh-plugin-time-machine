@@ -116,6 +116,8 @@ interface CheckpointNode {
     unattributedChanges?: FileChange[];
 }
 interface DAGTree {
+    /** Persisted DAG schema version. Legacy files may omit this until init migrates them. */
+    formatVersion?: number;
     sessionId: string;
     currentBranch: string;
     currentCheckpointId: string | null;

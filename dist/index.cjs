@@ -1138,6 +1138,7 @@ var index_exports = {};
 __export(index_exports, {
   Config: () => Config,
   DAGStateManager: () => DAGStateManager,
+  DAG_FORMAT_VERSION: () => DAG_FORMAT_VERSION,
   FallbackSnapshotEngine: () => FallbackSnapshotEngine,
   GitPlumbingEngine: () => GitPlumbingEngine,
   QuarantineKeyError: () => QuarantineKeyError,
@@ -1545,12 +1546,14 @@ var import_node_path3 = __toESM(require("path"), 1);
 var import_promises3 = __toESM(require("fs/promises"), 1);
 var import_node_crypto3 = require("crypto");
 var import_picocolors = __toESM(require("picocolors"), 1);
+var DAG_FORMAT_VERSION = 1;
 var DAGStateManager = class {
   tree;
   storageFile;
   constructor(options) {
     const branch = options.initialBranch || "main";
     this.tree = {
+      formatVersion: DAG_FORMAT_VERSION,
       sessionId: options.sessionId,
       currentBranch: branch,
       currentCheckpointId: null,
@@ -1574,9 +1577,11 @@ var DAGStateManager = class {
   async init() {
     try {
       const content = await import_promises3.default.readFile(this.storageFile, "utf-8");
-      const loadedTree = JSON.parse(content);
-      this.assertTree(loadedTree);
-      this.tree = loadedTree;
+      const parsed = JSON.parse(content);
+      const { tree, migrated } = this.migrateTree(parsed);
+      this.assertTree(tree);
+      this.tree = tree;
+      if (migrated) await this.persist();
     } catch (error) {
       if (error?.code !== "ENOENT") throw error;
     }
@@ -1828,6 +1833,9 @@ var DAGStateManager = class {
     return lines.join("\n");
   }
   assertTree(tree) {
+    if (tree.formatVersion !== DAG_FORMAT_VERSION) {
+      throw new Error(`Unsupported DAG storage format ${String(tree.formatVersion)}; expected ${DAG_FORMAT_VERSION}.`);
+    }
     if (!tree || tree.sessionId !== this.tree.sessionId || typeof tree.nodes !== "object" || typeof tree.branches !== "object") {
       throw new Error(`Invalid or foreign DAG state in '${this.storageFile}'.`);
     }
@@ -1855,6 +1863,18 @@ var DAGStateManager = class {
         throw new Error(`DAG checkpoint '${id}' references missing branch '${node.branch}'.`);
       }
     }
+  }
+  migrateTree(tree) {
+    if (!tree || typeof tree !== "object") {
+      throw new Error(`Invalid or foreign DAG state in '${this.storageFile}'.`);
+    }
+    if (tree.formatVersion === void 0) {
+      return { tree: { ...tree, formatVersion: DAG_FORMAT_VERSION }, migrated: true };
+    }
+    if (tree.formatVersion !== DAG_FORMAT_VERSION) {
+      throw new Error(`Unsupported DAG storage format ${String(tree.formatVersion)}; expected ${DAG_FORMAT_VERSION}.`);
+    }
+    return { tree, migrated: false };
   }
   async commitMutation(mutate) {
     const previous = cloneJson(this.tree);
@@ -2803,6 +2823,7 @@ var TimeMachineService = class {
     const usable = git && !workspace.sparseCheckout && workspace.submodulePaths.length === 0 && !workspace.inProgressOperation;
     return {
       version: 1,
+      dagStorageFormatVersion: DAG_FORMAT_VERSION,
       git,
       fallback: !git,
       mergeRestore: usable,
@@ -4714,6 +4735,7 @@ var index_default = TimeMachinePlugin;
 0 && (module.exports = {
   Config,
   DAGStateManager,
+  DAG_FORMAT_VERSION,
   FallbackSnapshotEngine,
   GitPlumbingEngine,
   QuarantineKeyError,

@@ -110,4 +110,38 @@ describe('DAGStateManager', () => {
     const manager = new DAGStateManager({ sessionId, storageDir: tmpDir });
     await expect(manager.init()).rejects.toThrow('current checkpoint');
   });
+
+  it('migrates a valid legacy DAG without a format version atomically', async () => {
+    const sessionId = 'legacy-session';
+    const file = path.join(tmpDir, `dag_${Buffer.from(sessionId).toString('base64url')}.json`);
+    const legacy = {
+      sessionId,
+      currentBranch: 'main',
+      currentCheckpointId: null,
+      nodes: {},
+      branches: { main: { name: 'main', headId: '', forkedFromId: null, createdAt: Date.now() } },
+    };
+    await fs.writeFile(file, JSON.stringify(legacy));
+    const manager = new DAGStateManager({ sessionId, storageDir: tmpDir });
+    await manager.init();
+    expect(manager.tree.formatVersion).toBe(1);
+    expect(JSON.parse(await fs.readFile(file, 'utf8')).formatVersion).toBe(1);
+  });
+
+  it('rejects a future DAG format without rewriting it', async () => {
+    const sessionId = 'future-session';
+    const file = path.join(tmpDir, `dag_${Buffer.from(sessionId).toString('base64url')}.json`);
+    const future = {
+      formatVersion: 99,
+      sessionId,
+      currentBranch: 'main',
+      currentCheckpointId: null,
+      nodes: {},
+      branches: { main: { name: 'main', headId: '', forkedFromId: null, createdAt: Date.now() } },
+    };
+    await fs.writeFile(file, JSON.stringify(future));
+    const manager = new DAGStateManager({ sessionId, storageDir: tmpDir });
+    await expect(manager.init()).rejects.toThrow('Unsupported DAG storage format 99');
+    expect(JSON.parse(await fs.readFile(file, 'utf8')).formatVersion).toBe(99);
+  });
 });

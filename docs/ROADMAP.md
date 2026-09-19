@@ -6,6 +6,18 @@ documented in [PROBLEM.md](./PROBLEM.md) and [COMPARISON.md](./COMPARISON.md).
 
 ## P0 — safety and compatibility
 
+### Versioned DAG storage and migration — implemented
+
+Persisted session history now carries a `formatVersion`. Existing unversioned
+files are upgraded only after full validation and an atomic rewrite; a future or
+unknown version fails closed and remains untouched. `GET /api/capabilities`
+reports the current `dagStorageFormatVersion` so companion clients can gate
+features before mutating history.
+
+**Acceptance:** legacy history opens and is rewritten with the current version;
+future-version history is rejected without modification; malformed or foreign
+files remain rejected.
+
 ### Encrypted sensitive-state storage
 
 Protect optional shadow objects and the remaining sensitive metadata at rest.

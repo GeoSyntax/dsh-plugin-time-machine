@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Version persisted DAG history and add an atomic legacy migration path; future
+  formats fail closed without rewriting user history, and capabilities expose
+  `dagStorageFormatVersion` for client compatibility checks.
 - Add an explicit host `workspaceIsolation()` capability seam; shared-lock
   remains the default, while isolated worktree/container claims are only
   surfaced when the host supplies and routes those workspaces.

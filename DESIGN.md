@@ -139,6 +139,21 @@ with timeout and dead-owner recovery.
 **Remaining boundary:** packed-object repacking and true multi-Agent worktree isolation
 remain future work; the lock prevents races but does not create independent workspaces.
 
+### 2026-09-19 — versioned DAG storage migration
+
+**Changes:** persisted DAG JSON now includes `formatVersion: 1`. Legacy files
+without the field are validated first and atomically rewritten; unknown future
+versions fail closed without rewriting the original file. The runtime exposes
+`dagStorageFormatVersion` through capability discovery.
+
+**Reason:** a community plugin must be upgrade-safe. Treating an older file as
+an opaque schema error strands a user's rollback history, while guessing at a
+future schema risks silent data loss.
+
+**Impact:** existing sessions migrate on first open; companion clients can gate
+features on the advertised version; corrupt and future files remain available
+for diagnosis and are never overwritten.
+
 ### 2026-09-19 — API boundary and external-effect identity hardening
 
 **Changes:** explicit external-effect IDs are now unique within a checkpoint and

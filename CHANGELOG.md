@@ -71,3 +71,5 @@ See [README.md](./README.md), [docs/COMPARISON.md](./docs/COMPARISON.md), and
 - Add `/tm-undo [count]`, a relative-turn CLI shortcut that resolves the active
   DAG lineage and reuses the same safe restore, rescue, and session-fork path as
   `/tm-rewind`.
+- Add `/tm-list [limit]` so users can discover those relative active-lineage
+  numbers without copying opaque checkpoint IDs.

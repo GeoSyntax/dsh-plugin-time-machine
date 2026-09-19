@@ -44,8 +44,8 @@ describe('registered DSH time-machine commands', () => {
     await fs.rm(root, { recursive: true, force: true });
   });
 
-  it('registers tm-tree, tm-doctor, tm-fork, tm-rewind, tm-undo, and tm-restore handlers', () => {
-    expect(Object.keys(handlers)).toEqual(expect.arrayContaining(['tm-tree', 'tm-doctor', 'tm-fork', 'tm-rewind', 'tm-undo', 'tm-restore', 'tm-agent-writes', 'tm-unattributed', 'tm-quarantine-migrate', 'tm-external-record', 'tm-external-compensate']));
+  it('registers tm-tree, tm-list, tm-doctor, tm-fork, tm-rewind, tm-undo, and tm-restore handlers', () => {
+    expect(Object.keys(handlers)).toEqual(expect.arrayContaining(['tm-tree', 'tm-list', 'tm-doctor', 'tm-fork', 'tm-rewind', 'tm-undo', 'tm-restore', 'tm-agent-writes', 'tm-unattributed', 'tm-quarantine-migrate', 'tm-external-record', 'tm-external-compensate']));
   });
 
   it('diagnoses dual-track readiness and actionable warnings', async () => {
@@ -82,6 +82,19 @@ describe('registered DSH time-machine commands', () => {
     expect(result.kind).toBe('success');
     expect(result.text).toContain(`Undid 2 turns to ${checkpoints[0].id}`);
     expect(result.text).toContain('cli-created-session');
+  });
+
+  it('lists relative active-lineage numbers for low-friction undo', async () => {
+    const sessionId = 'cli-list-session';
+    for (let turnIndex = 1; turnIndex <= 2; turnIndex += 1) {
+      const checkpoint = await service.createTurnCheckpoint({ sessionId, turnIndex, prompt: `turn ${turnIndex}`, sessionState: { sessionId, messages: [] } });
+      await service.finalizeTurnCheckpoint({ sessionId, checkpointId: checkpoint.id, status: 'success' });
+    }
+    const result = await handlers['tm-list']({ agent: { session: { id: sessionId } }, rawInput: '' });
+    expect(result.kind).toBe('success');
+    expect(result.text).toContain('0  current');
+    expect(result.text).toContain('1  undo');
+    expect(result.text).toContain('Use /tm-undo N');
   });
 
   it('exposes a read-only Agent-write ledger view', async () => {

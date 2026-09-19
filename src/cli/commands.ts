@@ -28,6 +28,28 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
     });
 
     scope.commands.register({
+      name: 'tm-list',
+      description: 'List recent checkpoints with relative undo numbers',
+      input: { hint: '[limit]' },
+      recordInput: false,
+      handler: async ({ agent, rawInput }: CommandInvocationLike): Promise<CommandResult> => {
+        const rawLimit = rawInput.trim().split(/\s+/).filter(Boolean)[0];
+        const limit = rawLimit === undefined ? 10 : Number(rawLimit);
+        if (!Number.isInteger(limit) || limit < 1 || limit > 100) return { kind: 'error', text: 'Usage: /tm-list [limit 1-100]' };
+        const dag = await service.getDAGManager(agent.session.id);
+        const current = dag.getCurrentNode();
+        if (!current) return { kind: 'success', text: 'No checkpoints recorded for this session yet.' };
+        const lineage = dag.getLineage(current.id).slice(-limit).reverse();
+        const lines = lineage.map((node, index) => {
+          const undo = index === 0 ? 'current' : `undo ${index}`;
+          const summary = node.summary || node.prompt || node.status;
+          return `${String(index).padStart(2, ' ')}  ${undo.padEnd(8, ' ')} ${node.id}  ${summary}`;
+        });
+        return { kind: 'success', text: `Recent checkpoints for ${agent.session.id}:\n${lines.join('\n')}\nUse /tm-undo N to restore and fork from the numbered active-lineage checkpoint.` };
+      },
+    });
+
+    scope.commands.register({
       name: 'tm-doctor',
       description: 'Diagnose Time Machine profile capabilities and recovery readiness',
       recordInput: false,

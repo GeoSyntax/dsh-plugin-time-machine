@@ -617,7 +617,7 @@ Reason: ${errorMsg}`);
         const current = await this.inspectWorkspace();
         const preservePaths = [...new Set((options.preservePaths ?? []).map(normalizeGitPath).filter(Boolean))];
         if (mode === "safe" && options.expectedCurrentTreeOid && current.treeOid !== options.expectedCurrentTreeOid) {
-          const details = (await this.diffNameOnly(options.expectedCurrentTreeOid, current.treeOid)).filter((item) => !preservePaths.some((path11) => item === path11 || item.startsWith(`${path11}/`)));
+          const details = (await this.diffNameOnly(options.expectedCurrentTreeOid, current.treeOid)).filter((item) => !preservePaths.some((path12) => item === path12 || item.startsWith(`${path12}/`)));
           if (details.length) throw new WorkspaceDriftError(details);
         }
         if (mode === "safe" && options.expectedCurrentIgnoredPaths) {
@@ -730,19 +730,19 @@ Reason: ${errorMsg}`);
         for (const relative of normalized) await this.safeWorkspacePath(relative);
         const mode = options.mode ?? "safe";
         const current = await this.inspectWorkspace();
-        const ignoredSelection = current.ignoredPaths.filter((file) => normalized.some((path11) => file === path11 || file.startsWith(`${path11}/`)));
+        const ignoredSelection = current.ignoredPaths.filter((file) => normalized.some((path12) => file === path12 || file.startsWith(`${path12}/`)));
         if (ignoredSelection.length) throw new WorkspaceRestoreConflictError(ignoredSelection);
         if (mode === "safe" && options.expectedCurrentTreeOid && current.treeOid !== options.expectedCurrentTreeOid) {
           const changed = await this.diffNameOnly(options.expectedCurrentTreeOid, current.treeOid);
-          const selectedDrift = changed.filter((file) => normalized.some((path11) => file === path11 || file.startsWith(`${path11}/`)));
+          const selectedDrift = changed.filter((file) => normalized.some((path12) => file === path12 || file.startsWith(`${path12}/`)));
           if (selectedDrift.length) throw new WorkspaceDriftError(selectedDrift);
         }
         const { stdout: treeStdout } = await this.runGit(["rev-parse", `${commitOrTreeOid}^{tree}`]);
         const targetTree = treeStdout.trim();
         const targetFiles = await this.listTreeFileNames(targetTree);
         const currentFiles = await this.listTreeFileNames(current.treeOid);
-        const selectedTargetFiles = targetFiles.filter((file) => normalized.some((path11) => file === path11 || file.startsWith(`${path11}/`)));
-        const selectedCurrentFiles = currentFiles.filter((file) => normalized.some((path11) => file === path11 || file.startsWith(`${path11}/`)));
+        const selectedTargetFiles = targetFiles.filter((file) => normalized.some((path12) => file === path12 || file.startsWith(`${path12}/`)));
+        const selectedCurrentFiles = currentFiles.filter((file) => normalized.some((path12) => file === path12 || file.startsWith(`${path12}/`)));
         if (selectedTargetFiles.length === 0 && selectedCurrentFiles.length === 0) {
           throw new Error(`None of the selected paths exist in the current or target snapshot: ${normalized.join(", ")}`);
         }
@@ -1429,7 +1429,7 @@ Reason: ${err || out || `exit ${code}`}`));
 
 // src/index.ts
 init_esm_shims();
-import path10 from "path";
+import path11 from "path";
 import { createHash as createHash6 } from "crypto";
 import Schema from "@deepseek-ai/schemastery";
 import pc2 from "picocolors";
@@ -3066,7 +3066,7 @@ var TimeMachineService = class {
         ...driftDiffs.map((diff) => diff.file),
         ...symmetricDifference2(expectedIgnored, currentState.ignoredPaths).map((item) => `(ignored) ${item}`)
       ])].sort();
-      const conflictingPaths = allConflictingPaths.filter((file) => !preservedHandEditPaths.some((path11) => file === path11 || file.startsWith(`${path11}/`)));
+      const conflictingPaths = allConflictingPaths.filter((file) => !preservedHandEditPaths.some((path12) => file === path12 || file.startsWith(`${path12}/`)));
       const currentLineage = current ? dag.getLineage(current.id) : [];
       const targetIndex = currentLineage.findIndex((node) => node.id === checkpointId);
       const externalEffects = currentLineage.slice(targetIndex >= 0 ? targetIndex + 1 : 0).flatMap((node) => node.externalEffects ?? []).map((effect) => cloneJson2(effect));
@@ -3422,7 +3422,7 @@ var TimeMachineService = class {
       const expectedIgnored = current.settledIgnoredPaths ?? current.ignoredPaths ?? [];
       if (actual.treeOid !== expectedTree || !sameStrings(actual.ignoredPaths, expectedIgnored)) {
         const { WorkspaceDriftError: WorkspaceDriftError2 } = await Promise.resolve().then(() => (init_git_plumbing(), git_plumbing_exports));
-        const changed = actual.treeOid === expectedTree ? [] : (isGit ? (await this.gitEngine.getDiffBetween(expectedTree, actual.treeOid)).map((item) => item.file) : current ? (await this.fallbackEngine.getChangedFiles(dag.tree.sessionId, current.id)).map((item) => item.path) : []).filter((file) => !preservedPaths.some((path11) => file === path11 || file.startsWith(`${path11}/`)));
+        const changed = actual.treeOid === expectedTree ? [] : (isGit ? (await this.gitEngine.getDiffBetween(expectedTree, actual.treeOid)).map((item) => item.file) : current ? (await this.fallbackEngine.getChangedFiles(dag.tree.sessionId, current.id)).map((item) => item.path) : []).filter((file) => !preservedPaths.some((path12) => file === path12 || file.startsWith(`${path12}/`)));
         const ignoredDrift = !sameStrings(actual.ignoredPaths, expectedIgnored);
         if (changed.length || ignoredDrift) {
           const details = actual.treeOid === expectedTree ? ["workspace no longer matches the active checkpoint"] : [`managed tree changed (expected ${expectedTree}, observed ${actual.treeOid})${changed.length ? `: ${changed.join(", ")}` : ""}`];
@@ -3496,7 +3496,7 @@ var TimeMachineService = class {
       const verified2 = await this.gitEngine.inspectWorkspace({ omitPaths: [...target.omittedPaths ?? [], ...preservePaths2] });
       const expectedTree2 = options.mode === "merge" ? result.restoredTreeOid : target.gitTreeOid;
       const treeMismatch = verified2.treeOid !== expectedTree2;
-      const allowedMismatch = treeMismatch && preservePaths2.length ? (await this.gitEngine.getDiffBetween(expectedTree2, verified2.treeOid)).every((item) => preservePaths2.some((path11) => item.file === path11 || item.file.startsWith(`${path11}/`))) : false;
+      const allowedMismatch = treeMismatch && preservePaths2.length ? (await this.gitEngine.getDiffBetween(expectedTree2, verified2.treeOid)).every((item) => preservePaths2.some((path12) => item.file === path12 || item.file.startsWith(`${path12}/`))) : false;
       if (treeMismatch && !allowedMismatch || !sameStrings(verified2.ignoredPaths, target.ignoredPaths ?? [])) {
         throw new Error(`Workspace integrity check failed after restoring checkpoint '${target.id}'.`);
       }
@@ -4674,6 +4674,29 @@ async function compensate(service, sessionId, rescueCheckpointId) {
   });
 }
 
+// src/core/workspace-host.ts
+init_esm_shims();
+import path10 from "path";
+async function forkThroughWorkspaceHost(host, sourceSessionId, atSeq, configuredRoot) {
+  const route = await validateWorkspaceRoute(await host.resolveSessionWorkspace(sourceSessionId));
+  const configured = path10.resolve(configuredRoot);
+  const routed = path10.resolve(route.cwd);
+  const sameRoot = process.platform === "win32" ? configured.toLowerCase() === routed.toLowerCase() : configured === routed;
+  if (!sameRoot) {
+    throw Object.assign(new Error(`Workspace route '${route.workspaceId}' resolves outside the configured single-root service.`), { code: "WORKSPACE_ROUTE_MISMATCH" });
+  }
+  const result = await host.forkSession({
+    sourceSessionId,
+    ...atSeq !== void 0 ? { atSeq } : {},
+    workspaceId: route.workspaceId,
+    cwd: route.cwd
+  });
+  if (!result || typeof result.sessionId !== "string" || !result.sessionId.trim()) {
+    throw Object.assign(new Error("Workspace host returned an invalid child session id."), { code: "WORKSPACE_HOST_INVALID_RESULT" });
+  }
+  return { sessionId: result.sessionId };
+}
+
 // src/types.ts
 init_esm_shims();
 
@@ -4939,7 +4962,7 @@ function boundedToolError(result) {
   return void 0;
 }
 function apply(ctx, config = {}) {
-  const workDir = path10.resolve(process.cwd());
+  const workDir = path11.resolve(process.cwd());
   const service = new TimeMachineService({ workDir, storageDir: config.storageDir, config });
   ctx.provide("timeMachine", service);
   let workspaceHost;
@@ -4953,21 +4976,8 @@ function apply(ctx, config = {}) {
     const webServer = new TimeMachineWebServer(service, config.webPort ?? 3088, config.webHost ?? "127.0.0.1", {
       restartConversation: async (sourceSessionId, checkpoint) => {
         if (workspaceHost) {
-          const route = await validateWorkspaceRoute(await workspaceHost.resolveSessionWorkspace(sourceSessionId));
-          const configuredRoot = path10.resolve(service.workDir);
-          const routedRoot = path10.resolve(route.cwd);
-          const sameRoot = process.platform === "win32" ? configuredRoot.toLowerCase() === routedRoot.toLowerCase() : configuredRoot === routedRoot;
-          if (!sameRoot) {
-            throw Object.assign(new Error(`Workspace route '${route.workspaceId}' resolves outside the configured single-root service.`), { code: "WORKSPACE_ROUTE_MISMATCH" });
-          }
           const boundary2 = checkpoint.sessionState.boundarySeq;
-          const forked = await workspaceHost.forkSession({
-            sourceSessionId,
-            ...boundary2 !== void 0 ? { atSeq: boundary2 } : {},
-            workspaceId: route.workspaceId,
-            cwd: route.cwd
-          });
-          return { sessionId: forked.sessionId };
+          return forkThroughWorkspaceHost(workspaceHost, sourceSessionId, boundary2, service.workDir);
         }
         const controller = ctx.get("sessionController");
         if (!controller) throw new Error("This DSH profile has no sessionController.");
@@ -5191,7 +5201,7 @@ function apply(ctx, config = {}) {
       if (!service.config.autoSnapshot || step !== 1) return next();
       installAgentToolBoundary?.(agent);
       const session = agent.session;
-      const cwd = session.header.cwd ? path10.resolve(session.header.cwd) : workDir;
+      const cwd = session.header.cwd ? path11.resolve(session.header.cwd) : workDir;
       if (cwd !== service.workDir) {
         scope.logger.warn(`[time-machine] skipped session ${session.id}: cwd ${cwd} differs from configured workspace ${service.workDir}`);
         return next();
@@ -5234,10 +5244,10 @@ function isNativeWriteTool(name2) {
   return name2 === "write" || name2 === "edit" || name2 === "str_replace_editor";
 }
 function workspaceRelativePath(workDir, displayPath) {
-  const absolute = path10.resolve(workDir, displayPath);
-  const root = path10.resolve(workDir);
-  const relative = path10.relative(root, absolute).replace(/\\/g, "/");
-  if (!relative || relative === ".." || relative.startsWith("../") || path10.isAbsolute(relative)) return void 0;
+  const absolute = path11.resolve(workDir, displayPath);
+  const root = path11.resolve(workDir);
+  const relative = path11.relative(root, absolute).replace(/\\/g, "/");
+  if (!relative || relative === ".." || relative.startsWith("../") || path11.isAbsolute(relative)) return void 0;
   return relative;
 }
 function executionIdentity(execution, identities, allocate) {

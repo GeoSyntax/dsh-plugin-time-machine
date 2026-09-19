@@ -6,7 +6,7 @@ import pc from 'picocolors';
 import { TimeMachineService } from './service.js';
 import { TimeMachineWebServer } from './web/server.js';
 import { registerCliCommands } from './cli/commands.js';
-import { validateWorkspaceRoute } from './core/workspace-route.js';
+import { forkThroughWorkspaceHost } from './core/workspace-host.js';
 import type { SessionMessage, TimeMachineConfig, TimeMachineWorkspaceHost, WorkspaceRoute } from './types.js';
 
 export { TimeMachineService } from './service.js';
@@ -157,23 +157,8 @@ export function apply(ctx: Context, config: Config = {}): void {
     const webServer = new TimeMachineWebServer(service, config.webPort ?? 3088, config.webHost ?? '127.0.0.1', {
       restartConversation: async (sourceSessionId, checkpoint) => {
         if (workspaceHost) {
-          const route = await validateWorkspaceRoute(await workspaceHost.resolveSessionWorkspace(sourceSessionId));
-          const configuredRoot = path.resolve(service.workDir);
-          const routedRoot = path.resolve(route.cwd);
-          const sameRoot = process.platform === 'win32'
-            ? configuredRoot.toLowerCase() === routedRoot.toLowerCase()
-            : configuredRoot === routedRoot;
-          if (!sameRoot) {
-            throw Object.assign(new Error(`Workspace route '${route.workspaceId}' resolves outside the configured single-root service.`), { code: 'WORKSPACE_ROUTE_MISMATCH' });
-          }
           const boundary = checkpoint.sessionState.boundarySeq;
-          const forked = await workspaceHost.forkSession({
-            sourceSessionId,
-            ...(boundary !== undefined ? { atSeq: boundary } : {}),
-            workspaceId: route.workspaceId,
-            cwd: route.cwd,
-          });
-          return { sessionId: forked.sessionId };
+          return forkThroughWorkspaceHost(workspaceHost, sourceSessionId, boundary, service.workDir);
         }
         const controller = ctx.get('sessionController') as SessionControllerLike | undefined;
         if (!controller) throw new Error('This DSH profile has no sessionController.');

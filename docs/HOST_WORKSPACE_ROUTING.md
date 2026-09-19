@@ -42,6 +42,9 @@ rewind/undo/fork calls invoke `forkSession()` instead of the legacy
 `sessionController.fork()`. The plugin validates the resolved route first; an
 adapter error propagates through the existing rescue-checkpoint compensation
 path, so a child session is never reported as usable after a failed attach.
+Until the service registry supports multiple roots, a route whose canonical
+cwd differs from the configured plugin root is rejected with
+`WORKSPACE_ROUTE_MISMATCH` before the child is accepted.
 
 `resolveSessionWorkspace()` must return a canonical, real path. The plugin must
 reject a path that is relative, escapes the declared root, or changes while an

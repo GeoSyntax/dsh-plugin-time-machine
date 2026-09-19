@@ -158,6 +158,14 @@ export function apply(ctx: Context, config: Config = {}): void {
       restartConversation: async (sourceSessionId, checkpoint) => {
         if (workspaceHost) {
           const route = await validateWorkspaceRoute(await workspaceHost.resolveSessionWorkspace(sourceSessionId));
+          const configuredRoot = path.resolve(service.workDir);
+          const routedRoot = path.resolve(route.cwd);
+          const sameRoot = process.platform === 'win32'
+            ? configuredRoot.toLowerCase() === routedRoot.toLowerCase()
+            : configuredRoot === routedRoot;
+          if (!sameRoot) {
+            throw Object.assign(new Error(`Workspace route '${route.workspaceId}' resolves outside the configured single-root service.`), { code: 'WORKSPACE_ROUTE_MISMATCH' });
+          }
           const boundary = checkpoint.sessionState.boundarySeq;
           const forked = await workspaceHost.forkSession({
             sourceSessionId,

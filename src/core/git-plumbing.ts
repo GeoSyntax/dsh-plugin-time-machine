@@ -232,7 +232,16 @@ export class GitPlumbingEngine {
   async isGitRepo(): Promise<boolean> {
     if (this.isRepoCached !== null) return this.isRepoCached;
     try {
-      const { stdout } = await this.runGit(['rev-parse', '--is-inside-work-tree']);
+      // Repository discovery must remain available while an encrypted Shadow
+      // Store is waiting for explicit migration.  A normal plumbing call would
+      // materialize the legacy plaintext runtime and fail closed before it can
+      // report the migration-required capability, so probe Git's control plane
+      // without touching plugin-owned object storage.
+      const { stdout } = await execFileAsync('git', ['rev-parse', '--is-inside-work-tree'], {
+        cwd: this.workDir,
+        env: { ...process.env as Record<string, string>, GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1' },
+        encoding: 'utf8',
+      });
       this.isRepoCached = stdout.trim() === 'true';
     } catch {
       this.isRepoCached = false;

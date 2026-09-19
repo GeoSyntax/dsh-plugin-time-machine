@@ -1041,11 +1041,14 @@ export class TimeMachineService {
     };
   }> {
     const git = await this.gitEngine.isGitRepo();
-    const workspace = git
+    // Read the Shadow Store state before any Git plumbing call. A legacy
+    // plaintext store must be reported as migration-required rather than
+    // making capability discovery fail while trying to materialize it.
+    const shadowStatus = await this.gitEngine.encryptedShadowStatus();
+    const workspace = git && !shadowStatus.migrationRequired
       ? await this.gitEngine.inspectWorkspaceCapabilities()
       : { sparseCheckout: false, submodulePaths: [], inProgressOperation: null };
-    const usable = git && !workspace.sparseCheckout && workspace.submodulePaths.length === 0 && !workspace.inProgressOperation;
-    const shadowStatus = await this.gitEngine.encryptedShadowStatus();
+    const usable = git && !shadowStatus.migrationRequired && !workspace.sparseCheckout && workspace.submodulePaths.length === 0 && !workspace.inProgressOperation;
     return {
       version: 1,
       dagStorageFormatVersion: DAG_FORMAT_VERSION,

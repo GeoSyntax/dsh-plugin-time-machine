@@ -103,6 +103,7 @@ var init_encrypted_shadow_store = __esm({
         await prior;
         this.runtimeDepth = 1;
         let materialized = false;
+        const legacyPlaintext = !await exists(path2.join(this.archiveDir, "manifest.v1.json")) && (await listFiles(this.runtimeDir)).length > 0;
         try {
           await this.recoverJournal();
           await this.materialize();
@@ -113,7 +114,9 @@ var init_encrypted_shadow_store = __esm({
             if (materialized) await this.persist();
           } finally {
             this.runtimeDepth = 0;
-            await fs.rm(this.runtimeDir, { recursive: true, force: true });
+            if (materialized || !legacyPlaintext) {
+              await fs.rm(this.runtimeDir, { recursive: true, force: true });
+            }
             release();
           }
         }
@@ -470,7 +473,11 @@ var init_git_plumbing = __esm({
       async isGitRepo() {
         if (this.isRepoCached !== null) return this.isRepoCached;
         try {
-          const { stdout } = await this.runGit(["rev-parse", "--is-inside-work-tree"]);
+          const { stdout } = await execFileAsync("git", ["rev-parse", "--is-inside-work-tree"], {
+            cwd: this.workDir,
+            env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_NOSYSTEM: "1" },
+            encoding: "utf8"
+          });
           this.isRepoCached = stdout.trim() === "true";
         } catch {
           this.isRepoCached = false;
@@ -3169,9 +3176,9 @@ var TimeMachineService = class {
   /** Report runtime capabilities so Web/CLI integrations can fail early. */
   async getCapabilities() {
     const git = await this.gitEngine.isGitRepo();
-    const workspace = git ? await this.gitEngine.inspectWorkspaceCapabilities() : { sparseCheckout: false, submodulePaths: [], inProgressOperation: null };
-    const usable = git && !workspace.sparseCheckout && workspace.submodulePaths.length === 0 && !workspace.inProgressOperation;
     const shadowStatus = await this.gitEngine.encryptedShadowStatus();
+    const workspace = git && !shadowStatus.migrationRequired ? await this.gitEngine.inspectWorkspaceCapabilities() : { sparseCheckout: false, submodulePaths: [], inProgressOperation: null };
+    const usable = git && !shadowStatus.migrationRequired && !workspace.sparseCheckout && workspace.submodulePaths.length === 0 && !workspace.inProgressOperation;
     return {
       version: 1,
       dagStorageFormatVersion: DAG_FORMAT_VERSION,

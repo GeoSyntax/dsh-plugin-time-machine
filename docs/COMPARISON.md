@@ -31,6 +31,21 @@ not only their package names:
   same-window in-place conversation rewind. Time Machine's default contract is
   a new forked session, with in-place rewind available only through an explicit
   host `sessionController.rewind()` capability.
+- [23swccp/dsh-undo](https://github.com/23swccp/dsh-undo) combines Shadow Git
+  snapshots with conversation undo and archived-task management. Its archive
+  lifecycle is a useful operational model; Time Machine instead keeps a
+  persistent DAG and makes pruning explicit, so an exploratory branch is not
+  silently converted into an archived/deleted task.
+- [Taler97/dsh-rollback](https://github.com/Taler97/dsh-rollback) deliberately
+  focuses on file-mutation rollback through a model-facing `rollback_files`
+  tool and a human `/rollback` command. That is a lower-surface-area option;
+  Time Machine covers the larger turn/session boundary but therefore needs
+  stricter host capability checks.
+- [XSJUSTC/dsh-rewind](https://github.com/XSJUSTC/dsh-rewind) demonstrates a
+  lightweight client-side same-window conversation rewind with optional file
+  restore. Its minimal dependency footprint is attractive for installation;
+  Time Machine accepts a larger service surface in exchange for encrypted
+  metadata, previews, quotas, branches, and audit records.
 
 These are policy differences rather than claims that one implementation wins
 every workflow. Operators should choose based on whether they value in-place
@@ -70,7 +85,7 @@ UX, selective non-destructive restore, or durable branch exploration.
 | Independent shadow store | Opt-in `shadowStore: true`; loose GC plus explicit private-pack repack | Yes | Yes | Usually local backups |
 | Shadow object encryption | Opt-in AES-256-GCM archive with disposable Git runtime, explicit plaintext migration, fail-closed key errors, and previous-key rotation | Product-specific | Product-specific | Usually unavailable |
 | Cross-process workspace lock | Yes; bounded wait with stale-owner recovery | Product-specific | Change Ledger documents active-session blocking and Git-operation fences | Usually unavailable |
-| Pre-destructive tool checkpoint | Opt-in `autoPreCommandSnapshot` on DSH `tools/pre-execute` with `tools/execute` fallback; defaults include native file tools and destructive shell/PTC tools, tagged `pre-command` | Opt-in; automatic before file tools and destructive terminal commands, at most one checkpoint per directory per turn | Before every configured mutation tool; `maxSnapshots`/byte quotas and turn-end pruning | Usually unavailable |
+| Pre-destructive tool checkpoint | Opt-in `autoPreCommandSnapshot` on DSH `tools/pre-execute` with `tools/execute` fallback; defaults include native file tools and destructive shell/PTC tools, tagged `pre-command` | Opt-in; automatic before file tools and destructive terminal commands, at most one checkpoint per directory per turn | Before every configured mutation tool; `maxSnapshots`/byte quotas and turn-end pruning | `dsh-undo`/`dsh-rewind` vary; mutation-level tools are usually lighter than a full DAG checkpoint |
 
 ## Choosing the right tool
 
@@ -170,7 +185,9 @@ with no objects yet); otherwise it remains `false`. `GET /api/capabilities`
 surfaces `shadowStoreMigrationRequired: true` when legacy plaintext objects are
 detected. Existing plaintext objects require explicit `/tm-shadow-migrate`, and normal operations
 remove the disposable Git runtime directory after each plumbing call. The
-archive still needs a durable append journal for crash-resume hardening.
+archive uses a durable append journal to remove interrupted staging and
+unreferenced payloads on the next access; the remaining plaintext runtime
+window is documented as an explicit security boundary.
 Ignored-file quarantine can independently be encrypted with
 `quarantineEncryptionKeyEnv`.
 
@@ -190,3 +207,6 @@ Further reading:
 - [dsh-undo](https://github.com/LingLambda/dsh-undo)
 - [dsh-checkpoint-rewind](https://github.com/PerryLink/dsh-checkpoint-rewind)
 - [dsh-rewind](https://github.com/SiriLee/dsh-rewind)
+- [dsh-undo](https://github.com/23swccp/dsh-undo)
+- [dsh-rollback](https://github.com/Taler97/dsh-rollback)
+- [XSJUSTC/dsh-rewind](https://github.com/XSJUSTC/dsh-rewind)

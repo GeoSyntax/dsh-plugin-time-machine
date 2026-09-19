@@ -577,6 +577,33 @@ describe('TimeMachineService (Dual-Track E2E)', () => {
     }
   });
 
+  it('surfaces migration-required state for a legacy plaintext shadow store', async () => {
+    const envName = `DSH_TM_SHADOW_MIGRATION_KEY_${process.pid}_${Date.now()}`;
+    const previous = process.env[envName];
+    process.env[envName] = 'migration-required-secret';
+    const storageDir = path.join(tmpDir, '.migration-required-shadow-service');
+    try {
+      const legacy = new TimeMachineService({ workDir: tmpDir, storageDir, config: { shadowStore: true } });
+      await fs.writeFile(path.join(tmpDir, 'migration-required.txt'), 'legacy\n', 'utf8');
+      await legacy.createTurnCheckpoint({ sessionId: 'migration-required', turnIndex: 1, prompt: 'legacy', sessionState: { sessionId: 'migration-required', messages: [] } });
+      const encrypted = new TimeMachineService({
+        workDir: tmpDir,
+        storageDir,
+        config: { shadowStore: true, shadowStoreEncryptionKeyEnv: envName },
+      });
+      expect((await encrypted.getCapabilities()).shadowStoreMigrationRequired).toBe(true);
+      expect((await encrypted.getCapabilities()).shadowStoreEncryption).toBe(false);
+      expect((await encrypted.getCapabilities()).mergeRestore).toBe(false);
+      expect((await encrypted.getStorageStatus()).gitObjectsEncrypted).toBe(false);
+      await encrypted.migrateShadowStore();
+      expect((await encrypted.getCapabilities()).shadowStoreMigrationRequired).toBe(false);
+      expect((await encrypted.getCapabilities()).shadowStoreEncryption).toBe(true);
+    } finally {
+      if (previous === undefined) delete process.env[envName];
+      else process.env[envName] = previous;
+    }
+  });
+
   it('compacts old linear checkpoints only when explicitly requested', async () => {
     const sessionId = 'compact-session';
     const file = path.join(tmpDir, 'compact.txt');

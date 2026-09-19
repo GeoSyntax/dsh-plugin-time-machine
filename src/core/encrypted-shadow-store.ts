@@ -76,6 +76,12 @@ export class EncryptedShadowStore {
     await prior;
     this.runtimeDepth = 1;
     let materialized = false;
+    // If no encrypted manifest exists yet, preserve a legacy plaintext runtime
+    // when materialization is refused so the operator can run explicit
+    // migration. Once an archive exists, any runtime is disposable plaintext
+    // and must be removed even when authentication or integrity checks fail.
+    const legacyPlaintext = !(await exists(path.join(this.archiveDir, 'manifest.v1.json')))
+      && (await listFiles(this.runtimeDir)).length > 0;
     try {
       await this.recoverJournal();
       await this.materialize();
@@ -86,7 +92,9 @@ export class EncryptedShadowStore {
         if (materialized) await this.persist();
       } finally {
         this.runtimeDepth = 0;
-        await fs.rm(this.runtimeDir, { recursive: true, force: true });
+        if (materialized || !legacyPlaintext) {
+          await fs.rm(this.runtimeDir, { recursive: true, force: true });
+        }
         release();
       }
     }

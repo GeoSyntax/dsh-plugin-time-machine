@@ -229,6 +229,8 @@ interface RestorePreview {
     diffs: DiffResult[];
     /** Paths changed after the active checkpoint that make safe restore refuse overwrite. */
     conflictingPaths: string[];
+    /** Verified Agent-write paths whose later hand-edits are preserved by policy. */
+    preservedHandEditPaths?: string[];
     workspaceDrifted: boolean;
     requiresForce: boolean;
     /** Short-lived session-bound plan used to bind a reviewed preview to mutation. */

@@ -2581,12 +2581,13 @@ var TimeMachineService = class {
       }));
       const expectedTree = current?.settledGitTreeOid ?? current?.gitTreeOid;
       const expectedIgnored = current?.settledIgnoredPaths ?? current?.ignoredPaths ?? [];
-      const driftDiffs = isGit && current && expectedTree && currentState.treeOid !== expectedTree ? await this.gitEngine.getDiffBetween(expectedTree, currentState.treeOid) : [];
-      const conflictingPaths = [.../* @__PURE__ */ new Set([
+      const preservedHandEditPaths = this.config.preserveVerifiedHandEditsByDefault && current ? await this.findVerifiedHandEdits(current) : [];
+      const driftDiffs = isGit && current && expectedTree && currentState.treeOid !== expectedTree ? await this.gitEngine.getDiffBetween(expectedTree, currentState.treeOid) : !isGit && current && expectedTree && currentState.treeOid !== expectedTree ? (await this.fallbackEngine.getChangedFiles(sessionId, current.id)).map((item) => ({ file: item.path })) : [];
+      const allConflictingPaths = [.../* @__PURE__ */ new Set([
         ...driftDiffs.map((diff) => diff.file),
-        ...!isGit && current && expectedTree && currentState.treeOid !== expectedTree && diffs.length === 0 ? ["(fallback workspace; no file diff available)"] : [],
         ...symmetricDifference2(expectedIgnored, currentState.ignoredPaths).map((item) => `(ignored) ${item}`)
       ])].sort();
+      const conflictingPaths = allConflictingPaths.filter((file) => !preservedHandEditPaths.some((path9) => file === path9 || file.startsWith(`${path9}/`)));
       const workspaceDrifted = Boolean(current && (currentState.treeOid !== expectedTree || !sameStrings(currentState.ignoredPaths, expectedIgnored)));
       this.expireRestorePlans();
       const planId = `plan_${randomUUID5().replace(/-/g, "")}`;
@@ -2617,8 +2618,9 @@ var TimeMachineService = class {
         ignoredPathsToDelete: currentState.ignoredPaths.filter((item) => !targetIgnoredPaths.includes(item)),
         diffs,
         conflictingPaths,
+        preservedHandEditPaths,
         workspaceDrifted,
-        requiresForce: workspaceDrifted,
+        requiresForce: conflictingPaths.length > 0,
         restorePlanId: planId,
         restorePlanExpiresAt: expiresAt
       };

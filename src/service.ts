@@ -750,14 +750,19 @@ export class TimeMachineService {
           }));
       const expectedTree = current?.settledGitTreeOid ?? current?.gitTreeOid;
       const expectedIgnored = current?.settledIgnoredPaths ?? current?.ignoredPaths ?? [];
+      const preservedHandEditPaths = this.config.preserveVerifiedHandEditsByDefault && current
+        ? await this.findVerifiedHandEdits(current)
+        : [];
       const driftDiffs = isGit && current && expectedTree && currentState.treeOid !== expectedTree
         ? await this.gitEngine.getDiffBetween(expectedTree, currentState.treeOid)
-        : [];
-      const conflictingPaths = [...new Set([
+        : !isGit && current && expectedTree && currentState.treeOid !== expectedTree
+          ? (await this.fallbackEngine.getChangedFiles(sessionId, current.id)).map(item => ({ file: item.path }))
+          : [];
+      const allConflictingPaths = [...new Set([
         ...driftDiffs.map(diff => diff.file),
-        ...(!isGit && current && expectedTree && currentState.treeOid !== expectedTree && diffs.length === 0 ? ['(fallback workspace; no file diff available)'] : []),
         ...symmetricDifference(expectedIgnored, currentState.ignoredPaths).map(item => `(ignored) ${item}`),
       ])].sort();
+      const conflictingPaths = allConflictingPaths.filter(file => !preservedHandEditPaths.some(path => file === path || file.startsWith(`${path}/`)));
       const workspaceDrifted = Boolean(current && (
         currentState.treeOid !== expectedTree || !sameStrings(currentState.ignoredPaths, expectedIgnored)
       ));
@@ -790,8 +795,9 @@ export class TimeMachineService {
         ignoredPathsToDelete: currentState.ignoredPaths.filter(item => !targetIgnoredPaths.includes(item)),
         diffs,
         conflictingPaths,
+        preservedHandEditPaths,
         workspaceDrifted,
-        requiresForce: workspaceDrifted,
+        requiresForce: conflictingPaths.length > 0,
         restorePlanId: planId,
         restorePlanExpiresAt: expiresAt,
       };

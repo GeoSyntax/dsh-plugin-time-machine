@@ -255,6 +255,11 @@ export class TimeMachineClient {
     return this.get(`/api/unattributed-changes?sessionId=${encodeURIComponent(sessionId)}&checkpoint=${encodeURIComponent(checkpointId)}`);
   }
 
+  async toolMutations(sessionId: string, checkpointId: string): Promise<unknown> {
+    if (!sessionId.trim() || !checkpointId.trim()) throw new Error('toolMutations requires sessionId and checkpointId.');
+    return this.get(`/api/tool-mutations?sessionId=${encodeURIComponent(sessionId)}&checkpoint=${encodeURIComponent(checkpointId)}`);
+  }
+
   private assertBinding(action: PreviewBoundAction): void {
     if (!action || action.preview.sessionId !== action.sessionId || action.preview.checkpointId !== action.checkpointId || action.preview.restorePlanId !== action.restorePlanId) {
       throw new Error('Restore action is not bound to its preview session/checkpoint.');

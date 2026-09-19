@@ -427,6 +427,7 @@ declare class TimeMachineClient {
     diff(sessionId: string, baseCheckpointId: string, targetCheckpointId: string): Promise<unknown>;
     agentWrites(sessionId: string, checkpointId: string): Promise<unknown>;
     unattributedChanges(sessionId: string, checkpointId: string): Promise<unknown>;
+    toolMutations(sessionId: string, checkpointId: string): Promise<unknown>;
     private assertBinding;
     private get;
     private post;

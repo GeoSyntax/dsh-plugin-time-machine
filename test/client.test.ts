@@ -80,6 +80,17 @@ describe('TimeMachineClient companion contract', () => {
     await expect(client.reflection('s', 'c')).resolves.toEqual({ reflection: { hasPastFailures: true } });
   });
 
+  it('forwards read-only tool mutation queries for companions', async () => {
+    const client = new TimeMachineClient({
+      baseUrl: 'http://127.0.0.1:3088',
+      fetch: async (url) => {
+        expect(String(url)).toContain('/api/tool-mutations?sessionId=s&checkpoint=c');
+        return new Response(JSON.stringify({ mutations: [{ toolName: 'bash', status: 'error' }] }), { status: 200 });
+      },
+    });
+    await expect(client.toolMutations('s', 'c')).resolves.toEqual({ mutations: [{ toolName: 'bash', status: 'error' }] });
+  });
+
   it('resolves a finalized assistant message to its checkpoint', async () => {
     const client = new TimeMachineClient({
       baseUrl: 'http://127.0.0.1:3088',

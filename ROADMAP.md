@@ -14,7 +14,7 @@
 ## 0.3 — 存储隔离与恢复日志
 
 - 已交付：可选 shadow store、durable restore journal、checkpoint/quarantine retention、容量上限与 prune；
-- 已交付：显式 shadow packed-object repack；继续完善可审计的存储迁移/回收 dry-run；
+- 已交付：显式 shadow packed-object repack、`/tm-prune --dry-run` 及 Web/Companion 等价入口；存储格式迁移与 Shadow 加密仍需单独设计和验收；
 - 提供存储格式版本与迁移工具。
 
 ## 后续方向

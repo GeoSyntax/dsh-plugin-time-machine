@@ -101,6 +101,7 @@ dsh plugin --profile web list --depth 0
 - **Session 边界一致性:** `/api/preview`、`/api/diff`、`/api/rewind`、`/api/fork`、`/api/restore-files`、`/api/prune`、`/api/storage` 及账本查询都要求显式且已持久化的 `sessionId`；未知会话统一返回 `404 SESSION_NOT_FOUND`，不会隐式创建幽灵 `default` 会话。
 - **宿主会话核验:** 在 DSH profile 提供 `sessionController.inspect` 时，Dashboard 会过滤已被宿主删除的孤儿 checkpoint session，恢复类 API 也会在执行前再次核验宿主会话。
 - **完整工作区恢复而不分叉会话:** `/tm-restore <checkpoint>` 或 `POST /api/restore-workspace` 可将整个工作区恢复到 checkpoint，同时保留当前 DSH 对话；需要新对话上下文时再使用 `/tm-rewind`。
+- **Companion contract 同步:** `TimeMachineClient` 同步提供 `restoreWorkspaceFromPreview()`，原生 companion 不必绕过一次性 restore-plan 绑定直接拼 HTTP 请求。
 - **可诊断的社区安装:** `/tm-doctor` 会检查当前 profile 是否有 `sessionController`、Git/fallback 引擎、Web Dashboard、预命令边界和 Agent-write ledger，并给出可执行的配置警告。
 
 ## Safety model

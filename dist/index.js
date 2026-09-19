@@ -3886,6 +3886,14 @@ var TimeMachineClient = class {
     this.assertBinding(action);
     return this.restoreFiles({ ...options, sessionId: action.sessionId, checkpointId: action.checkpointId, paths, restorePlanId: action.restorePlanId });
   }
+  async restoreWorkspace(request) {
+    if (!request.sessionId || !request.checkpointId) throw new Error("restoreWorkspace requires sessionId and checkpointId.");
+    return this.post("/api/restore-workspace", request);
+  }
+  async restoreWorkspaceFromPreview(action, options = {}) {
+    this.assertBinding(action);
+    return this.restoreWorkspace({ ...options, sessionId: action.sessionId, checkpointId: action.checkpointId, restorePlanId: action.restorePlanId });
+  }
   async diff(sessionId, baseCheckpointId, targetCheckpointId) {
     return this.get(`/api/diff?sessionId=${encodeURIComponent(sessionId)}&base=${encodeURIComponent(baseCheckpointId)}&target=${encodeURIComponent(targetCheckpointId)}`);
   }

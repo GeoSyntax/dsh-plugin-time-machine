@@ -19,9 +19,11 @@ describe('TimeMachineClient companion contract', () => {
     await client.rewind(action, { merge: true });
     await client.fork(action, 'experiment');
     await client.restoreFilesFromPreview(action, ['src/app.ts'], { force: true });
+    await client.restoreWorkspaceFromPreview(action, { force: true });
     expect(JSON.parse(String(calls[1].init?.body))).toMatchObject({ sessionId: 's', checkpointId: 'c', restorePlanId: 'plan-1', merge: true });
     expect(JSON.parse(String(calls[2].init?.body))).toMatchObject({ sessionId: 's', checkpointId: 'c', restorePlanId: 'plan-1', branchName: 'experiment' });
     expect(JSON.parse(String(calls[3].init?.body))).toMatchObject({ sessionId: 's', checkpointId: 'c', restorePlanId: 'plan-1', paths: ['src/app.ts'], force: true });
+    expect(JSON.parse(String(calls[4].init?.body))).toMatchObject({ sessionId: 's', checkpointId: 'c', restorePlanId: 'plan-1', force: true });
   });
 
   it('discovers persisted sessions for a native companion selector', async () => {

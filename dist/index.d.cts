@@ -851,6 +851,9 @@ interface RestoreFilesRequest {
     merge?: boolean;
     force?: boolean;
 }
+type RestoreWorkspaceRequest = Omit<RewindRequest, 'checkpointId'> & {
+    checkpointId: string;
+};
 interface PreviewBoundAction {
     readonly sessionId: string;
     readonly checkpointId: string;
@@ -871,6 +874,8 @@ declare class TimeMachineClient {
     fork(action: PreviewBoundAction, branchName: string, options?: Omit<ForkRequest, 'sessionId' | 'checkpointId' | 'restorePlanId' | 'branchName'>): Promise<unknown>;
     restoreFiles(request: RestoreFilesRequest): Promise<unknown>;
     restoreFilesFromPreview(action: PreviewBoundAction, paths: string[], options?: Omit<RestoreFilesRequest, 'sessionId' | 'checkpointId' | 'paths' | 'restorePlanId'>): Promise<unknown>;
+    restoreWorkspace(request: RestoreWorkspaceRequest): Promise<unknown>;
+    restoreWorkspaceFromPreview(action: PreviewBoundAction, options?: Omit<RestoreWorkspaceRequest, 'sessionId' | 'checkpointId' | 'restorePlanId'>): Promise<unknown>;
     diff(sessionId: string, baseCheckpointId: string, targetCheckpointId: string): Promise<unknown>;
     agentWrites(sessionId: string, checkpointId: string): Promise<unknown>;
     unattributedChanges(sessionId: string, checkpointId: string): Promise<unknown>;
@@ -981,4 +986,4 @@ declare class TimeMachinePlugin {
     constructor(ctx: Context, config?: Config);
 }
 
-export { type AgentWriteRecord, type CheckpointNode, Config, type DAGManagerOptions, DAGStateManager, type DAGTree, type DiffResult, type ExternalEffectAdapter, type ExternalEffectCompensationContext, type ExternalEffectCompensationResult, type ExternalEffectRecord, type FallbackOptions, FallbackSnapshotEngine, type FileChange, type ForkRequest, GitPlumbingEngine, type GitPlumbingOptions, type GitRestoreOptions, type GitSelectiveRestoreOptions, type GitSnapshot, type PreviewBoundAction, type PruneResult, QuarantineKeyError, type QuarantineMigrationResult, QuarantineQuotaError, ReflectionAdvisor, type ReflectionSummary, type RestoreFilesRequest, type RestoreOptions, RestorePlanError, type RestorePreview, type RestoreResult, type RewindRequest, type SelectiveRestoreResult, type SessionMessage, type SessionState, type SessionSummary, type ShadowGcResult, type ShadowRepackResult, SnapshotSizeError, StorageQuotaError, type StorageStatus, TimeMachineClient, TimeMachineClientError, type TimeMachineClientOptions, type TimeMachineConfig, TimeMachinePlugin, TimeMachineService, type TimeMachineServiceOptions, UnsupportedWorkspaceStateError, type WorkspaceCapabilities, WorkspaceDriftError, WorkspaceMergeConflictError, WorkspaceRestoreConflictError, apply, collectFailedTools, TimeMachinePlugin as default, name };
+export { type AgentWriteRecord, type CheckpointNode, Config, type DAGManagerOptions, DAGStateManager, type DAGTree, type DiffResult, type ExternalEffectAdapter, type ExternalEffectCompensationContext, type ExternalEffectCompensationResult, type ExternalEffectRecord, type FallbackOptions, FallbackSnapshotEngine, type FileChange, type ForkRequest, GitPlumbingEngine, type GitPlumbingOptions, type GitRestoreOptions, type GitSelectiveRestoreOptions, type GitSnapshot, type PreviewBoundAction, type PruneResult, QuarantineKeyError, type QuarantineMigrationResult, QuarantineQuotaError, ReflectionAdvisor, type ReflectionSummary, type RestoreFilesRequest, type RestoreOptions, RestorePlanError, type RestorePreview, type RestoreResult, type RestoreWorkspaceRequest, type RewindRequest, type SelectiveRestoreResult, type SessionMessage, type SessionState, type SessionSummary, type ShadowGcResult, type ShadowRepackResult, SnapshotSizeError, StorageQuotaError, type StorageStatus, TimeMachineClient, TimeMachineClientError, type TimeMachineClientOptions, type TimeMachineConfig, TimeMachinePlugin, TimeMachineService, type TimeMachineServiceOptions, UnsupportedWorkspaceStateError, type WorkspaceCapabilities, WorkspaceDriftError, WorkspaceMergeConflictError, WorkspaceRestoreConflictError, apply, collectFailedTools, TimeMachinePlugin as default, name };

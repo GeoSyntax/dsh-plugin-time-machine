@@ -305,6 +305,7 @@ artifacts/<run-id>/
 - 同一真实 Web session 中，失败工具证据会在从失败 checkpoint 分叉时进入 `reflectionAdvisory`。
 - 真实 DSH 不可达模型端点会产生并持久化 `failed` checkpoint，且保留错误证据。
 - 真实 DSH 强制执行退出码非零的 shell 命令后，checkpoint 持久化了 `failedTools` 证据。
+- 真实 DSH source smoke 在 `TM_DSH_LIVE_PRECOMMAND=1` 下已验证：高风险 shell 工具执行前实际持久化了 `pre-command` checkpoint。
 - 真实 DSH Web smoke 在 Windows 上通过有效本地网关完成真实 turn、fork、rewind，并触发真实缺失 session 的 `SessionController` fork 拒绝；rescue 补偿恢复了 fork 调用前工作区。
 - Web UI 在 fork/rewind 后采用服务端返回的新 conversation sessionId，后续 DAG 查询不再使用旧会话。
 - CLI 命令注册层已自动化覆盖 `/tm-tree`、`/tm-fork`、`/tm-rewind`，包括 sessionController 返回的新会话身份和工作区恢复。

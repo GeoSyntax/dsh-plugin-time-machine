@@ -109,6 +109,7 @@ The shadow store is opt-in. Loose unreachable objects are reclaimed after plugin
 - The lock prevents concurrent mutation but does not provide separate worktrees for multiple Agents.
 - DSH's current `workspaceRegistry` can attach sessions to existing workspace directories, but its public `SessionForkRequest` only carries `sessionId` and `atSeq`; the fork command therefore inherits the source workspace rather than creating a new worktree. Time Machine reports shared-lock isolation until the host exposes a stronger workspace/fork contract.
 - External-effect declarations are an audit/reflection contract, not a transaction log: adapters still own authentication, idempotency, compensation execution, and verification.
+- External effects are queryable without mutation through `/tm-external-list`, `GET /api/external-effects`, and `TimeMachineClient.externalEffects()`. Restore previews also include effects on the abandoned active-lineage segment; none of these read paths execute compensation.
 
 ## Change history
 

@@ -146,7 +146,7 @@ try {
     requestId: `tm-prompt-${Date.now()}`,
     sessionId,
     mode: 'queue',
-    content: [{ type: 'text', text: 'Create web-smoke.txt with exactly the text WEB-SMOKE-OK, then confirm briefly.' }],
+    content: [{ type: 'text', text: 'Use the native file-write tool (not shell or a code block) to create web-smoke.txt with exactly the text WEB-SMOKE-OK, then confirm briefly.' }],
   });
 
   const started = Date.now();

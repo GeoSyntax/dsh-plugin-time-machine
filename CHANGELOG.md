@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Extend `/tm-doctor` to surface the shared-lock workspace boundary and the
+  current plaintext-at-rest status of Shadow Git objects, with actionable
+  warnings for community installations.
+- Make the real DSH Web smoke fixture explicitly use the native file-write
+  tool, reducing model-dependent false negatives while retaining the
+  assistant-message, failed-tool, fork, and rewind assertions.
 - Add opt-in `preserveVerifiedHandEditsByDefault`, which enables the
   Agent-write ledger and preserves verified post-write hand-edits without a
   per-command flag; CLI/API callers can explicitly disable preservation.

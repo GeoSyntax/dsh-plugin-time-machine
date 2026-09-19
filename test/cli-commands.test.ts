@@ -52,6 +52,9 @@ describe('registered DSH time-machine commands', () => {
     const result = await handlers['tm-doctor']({ agent: { session: { id: 'doctor-session' } }, rawInput: '' });
     expect(result.kind).toBe('success');
     expect(result.text).toContain('Conversation fork/rewind: available');
+    expect(result.text).toContain('Workspace isolation: shared-lock');
+    expect(result.text).toContain('Shadow Git object encryption: not available');
+    expect(result.text).toContain('Forked sessions share the configured workspace');
     expect(result.text).toContain('Pre-command checkpoints: disabled');
     expect(result.text).toContain('enable autoPreCommandSnapshot');
   });

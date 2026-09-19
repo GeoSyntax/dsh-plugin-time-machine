@@ -66,6 +66,8 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
           `Session: ${sessionId}`,
           `Workspace engine: ${capabilities.git ? 'Git plumbing' : 'fallback snapshots'}`,
           `Conversation fork/rewind: ${sessionController ? 'available' : 'unavailable (no sessionController)'}`,
+          `Workspace isolation: ${capabilities.workspaceIsolation}`,
+          `Shadow Git object encryption: ${capabilities.shadowStoreEncryption ? 'enabled' : 'not available (objects are plaintext at rest)'}`,
           `Web dashboard: ${service.config.enableWebUI === false ? 'disabled' : `available on ${service.config.webHost ?? '127.0.0.1'}:${service.config.webPort ?? 3088}`}`,
           `Pre-command checkpoints: ${service.config.autoPreCommandSnapshot ? 'enabled' : 'disabled'}`,
           `Agent-write ledger: ${service.config.enableAgentWriteLedger ? (service.config.preserveVerifiedHandEditsByDefault ? 'enabled (preserve hand-edits by default)' : 'enabled') : 'disabled'}`,
@@ -74,6 +76,8 @@ export function registerCliCommands(ctx: Context, service: TimeMachineService): 
         const warnings: string[] = [];
         if (!capabilities.git) warnings.push('Git is unavailable; restores use fallback snapshots and textual diffs only.');
         if (!sessionController) warnings.push('Workspace restore can run, but the conversation cannot be switched automatically.');
+        if (capabilities.workspaceIsolation === 'shared-lock') warnings.push('Forked sessions share the configured workspace; this is not an isolated Git worktree or container.');
+        if (!capabilities.shadowStoreEncryption && capabilities.shadowStore) warnings.push('Shadow Git objects are plaintext at rest; protect the storage directory with OS-level encryption and permissions.');
         if (!service.config.autoPreCommandSnapshot) warnings.push('High-risk tool boundaries are not captured; enable autoPreCommandSnapshot for stronger crash recovery.');
         if (warnings.length > 0) lines.push(`Warnings:\n- ${warnings.join('\n- ')}`);
         else lines.push('Status: ready for dual-track checkpoint, rewind, and fork workflows.');

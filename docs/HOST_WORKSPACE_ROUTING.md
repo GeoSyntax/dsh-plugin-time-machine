@@ -12,8 +12,11 @@ The portable plugin now exposes `GET /api/workspace-route?sessionId=...` and
 `TimeMachineClient.workspaceRoute()` so a companion can inspect the current
 route. Without a host adapter the response is explicitly
 `configured-root`/`shared-lock`; an adapter-provided route is validated before
-it is returned, including an existence/`realpath` check. Invalid relative,
-missing, or non-canonical paths fail closed.
+it is returned, including an existence/`realpath` check. Invalid relative or
+missing paths fail closed. The real path is authoritative for safety checks,
+but valid platform aliases such as macOS `/var` ↔ `/private/var`, Windows
+junctions, and case-insensitive spellings are accepted and preserved when the
+adapter is called.
 
 ## Required host surface
 
@@ -46,11 +49,12 @@ Until the service registry supports multiple roots, a route whose canonical
 cwd differs from the configured plugin root is rejected with
 `WORKSPACE_ROUTE_MISMATCH` before the child is accepted.
 
-`resolveSessionWorkspace()` must return a canonical, real path. The plugin must
-reject a path that is relative, escapes the declared root, or changes while an
-operation is running. `forkSession()` must create/attach the child session and
-route it to the returned workspace before resolving; returning a session id
-first and attaching later is not sufficient for rewind atomicity.
+`resolveSessionWorkspace()` must return an existing absolute path. The plugin
+resolves it with `realpath` before comparing roots and rejects a path that is
+relative, escapes the declared root, or changes while an operation is running.
+`forkSession()` must create/attach the child session and route it to the
+returned workspace before resolving; returning a session id first and attaching
+later is not sufficient for rewind atomicity.
 
 ## Plugin behavior when enabled
 

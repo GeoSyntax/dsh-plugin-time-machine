@@ -20,6 +20,28 @@ describe('workspace host adapter contract', () => {
     }
   });
 
+  it('accepts a filesystem alias while preserving the host route spelling', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-workspace-host-alias-'));
+    const aliasParent = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-workspace-host-alias-parent-'));
+    const alias = path.join(aliasParent, 'workspace');
+    const calls: any[] = [];
+    try {
+      try {
+        await fs.symlink(root, alias, process.platform === 'win32' ? 'junction' : 'dir');
+      } catch {
+        return;
+      }
+      await expect(forkThroughWorkspaceHost({
+        resolveSessionWorkspace: async () => ({ workspaceId: 'root', cwd: alias, isolation: 'shared-lock' }),
+        forkSession: async request => { calls.push(request); return { sessionId: 'child', workspaceId: request.workspaceId, cwd: request.cwd }; },
+      }, 'source', undefined, root)).resolves.toEqual({ sessionId: 'child' });
+      expect(calls[0]?.cwd).toBe(alias);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+      await fs.rm(aliasParent, { recursive: true, force: true });
+    }
+  });
+
   it('rejects a route outside the configured root before calling the host', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-workspace-host-root-'));
     const other = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-workspace-host-other-'));

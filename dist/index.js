@@ -3708,6 +3708,39 @@ ${changes.map((item) => `${item.status} ${item.path}`).join("\n")}` };
       }
     });
     scope.commands.register({
+      name: "tm-undo",
+      description: "Undo recent turns by restoring and forking from the active checkpoint lineage",
+      input: { hint: "[count] [--merge|--force] [--preserve-hand-edits] [--delete-new-ignored]" },
+      handler: async ({ agent, rawInput }) => {
+        const args = rawInput.trim().split(/\s+/).filter(Boolean);
+        const positionals = args.filter((arg) => !arg.startsWith("--"));
+        const count = positionals.length ? Number(positionals[0]) : 1;
+        if (!Number.isInteger(count) || count < 1) return { kind: "error", text: "Usage: /tm-undo [positive-count] [--merge|--force] [--preserve-hand-edits] [--delete-new-ignored]" };
+        const controller = scope.get("sessionController");
+        if (!controller) return { kind: "error", text: "This DSH profile has no sessionController; conversation undo is unavailable." };
+        const sessionId = agent.session.id;
+        const checkpointId = await resolveRelativeCheckpoint(service, sessionId, count);
+        if (!checkpointId) return { kind: "error", text: `Cannot undo ${count} turn(s): the active session has fewer than ${count + 1} checkpoints.` };
+        const result = await service.rewindToCheckpoint(sessionId, checkpointId, {
+          mode: args.includes("--force") ? "force" : args.includes("--merge") ? "merge" : void 0,
+          preserveVerifiedHandEdits: args.includes("--preserve-hand-edits"),
+          deleteNewIgnoredPaths: args.includes("--delete-new-ignored")
+        });
+        try {
+          const created = await restartConversation(controller, sessionId, result.targetNode, service.workDir);
+          await service.completeRestoreJournal(result.restoreJournalId);
+          return {
+            kind: "success",
+            text: `Undid ${count} turn${count === 1 ? "" : "s"} to ${checkpointId}. Continue in forked session ${created.sessionId}. Rescue point: ${result.rescueCheckpointId ?? "none"}.${result.preservedHandEditPaths?.length ? ` Preserved hand-edited paths: ${result.preservedHandEditPaths.join(", ")}.` : ""}`
+          };
+        } catch (error) {
+          await compensate(service, sessionId, result.rescueCheckpointId);
+          await service.completeRestoreJournal(result.restoreJournalId);
+          throw error;
+        }
+      }
+    });
+    scope.commands.register({
       name: "tm-restore",
       description: "Restore the full workspace to a checkpoint without forking the conversation",
       input: { hint: "<checkpoint> [--merge|--force] [--delete-new-ignored] [--plan=<id>]" },
@@ -3792,6 +3825,13 @@ function optionValue(args, name2) {
   const prefix = `${name2}=`;
   const inline = args.find((arg) => arg.startsWith(prefix));
   return inline ? inline.slice(prefix.length) || void 0 : void 0;
+}
+async function resolveRelativeCheckpoint(service, sessionId, count) {
+  const dag = await service.getDAGManager(sessionId);
+  const current = dag.getCurrentNode();
+  if (!current) return void 0;
+  const lineage = dag.getLineage(current.id);
+  return lineage.at(-(count + 1))?.id;
 }
 function parseDurationMs(value) {
   const match = /^(\d+(?:\.\d+)?)(ms|s|m|h|d|w)$/i.exec(value.trim());

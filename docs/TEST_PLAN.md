@@ -295,7 +295,7 @@ artifacts/<run-id>/
 
 当前已经有证据：
 
-- 当前仓库全量自动化测试 96/96 通过；Web 21/21、CLI 10/10，覆盖 DSH durable `tool/call`/`tool/result` 失败配对、反思输入提取、失败 fork 点反思，以及 Web fork 失败补偿测试。
+- 当前仓库全量自动化测试 97/97 通过；Web 21/21、CLI 11/11，覆盖 DSH durable `tool/call`/`tool/result` 失败配对、反思输入提取、失败 fork 点反思，以及 Web fork 失败补偿测试。
 - Git 与 fallback 恢复完成后均执行工作区摘要校验；持久化 DAG 加载会校验节点、父节点、分支和会话归属。
 - 真实 DSH 源码宿主加载插件通过。
 - 真实本地模型请求、文件创建、turn 结束后的 finalized checkpoint 落盘通过。
@@ -310,7 +310,7 @@ artifacts/<run-id>/
 - 真实 DSH Web smoke 在新增 `Sec-Fetch-Site` 围栏后仍通过，说明正常宿主 API 请求未被 CSRF 防护误拦截。
 - Web UI 在 fork/rewind 后采用服务端返回的新 conversation sessionId，后续 DAG 查询不再使用旧会话。
 - CLI 命令注册层已自动化覆盖 `/tm-tree`、`/tm-fork`、`/tm-rewind`，包括 sessionController 返回的新会话身份和工作区恢复。
-- CLI 命令注册层已自动化覆盖 `/tm-tree`、`/tm-doctor`、`/tm-restore`、`/tm-fork`、`/tm-rewind`，包括不分叉会话的完整工作区恢复。
+- CLI 命令注册层已自动化覆盖 `/tm-tree`、`/tm-doctor`、`/tm-restore`、`/tm-fork`、`/tm-rewind`、`/tm-undo`，包括不分叉会话的完整工作区恢复和按活动 DAG lineage 解析相对回退步数。
 - `turn/end` 生命周期会从 DSH 持久事件中提取失败工具、输入和错误原因，并传入 checkpoint 反思顾问；已用接近真实 DSH 消息结构的单元测试覆盖。
 - 真实 checkpoint DAG 和 Dashboard status/dag 通过；`/api/restore-workspace` 通过 Web 回归并保持当前会话不变。
 - Web API rewind/fork、Host/JSON 安全、Session fork 失败补偿和重启 DAG 持久化已有自动化覆盖。

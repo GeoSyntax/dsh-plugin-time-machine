@@ -66,3 +66,8 @@
 
 See [README.md](./README.md), [docs/COMPARISON.md](./docs/COMPARISON.md), and
 [docs/ROADMAP.md](./docs/ROADMAP.md) for configuration and upgrade guidance.
+## Unreleased
+
+- Add `/tm-undo [count]`, a relative-turn CLI shortcut that resolves the active
+  DAG lineage and reuses the same safe restore, rescue, and session-fork path as
+  `/tm-rewind`.

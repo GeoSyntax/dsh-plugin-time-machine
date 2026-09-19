@@ -185,6 +185,11 @@ var init_encrypted_shadow_store = __esm({
           await fs.writeFile(temporaryManifest, `${JSON.stringify(manifest, null, 2)}
 `, "utf8");
           await fs.rename(temporaryManifest, path2.join(this.archiveDir, "manifest.v1.json"));
+          const referenced = new Set(entries.map((entry) => entry.payload.replace(/\\/g, "/")));
+          for (const payloadFile of await listFiles(path2.join(this.archiveDir, "payload"))) {
+            const relative = path2.relative(this.archiveDir, payloadFile).replace(/\\/g, "/");
+            if (!referenced.has(relative)) await fs.rm(payloadFile, { force: true });
+          }
         } finally {
           await fs.rm(staging, { recursive: true, force: true }).catch(() => void 0);
         }

@@ -31,8 +31,11 @@ DSH | Time Machine | Safe workspace rewind, DAG forks, and failure reflection
 ```
 
 Copy and adapt this body. Replace the screenshot placeholders with a real
-dashboard screenshot and a `/tm-tree` or `/tm-preview` terminal capture. Do
-not publish placeholders.
+dashboard screenshot and a `/tm-tree` or `/tm-preview` terminal capture. The
+repository also contains a rendered transcript preview at
+[`docs/assets/dag-demo.svg`](assets/dag-demo.svg) that matches the verified
+local live demo; use it only as supporting material, not as a substitute for
+a fresh screenshot from the target DSH profile. Do not publish placeholders.
 
 ```markdown
 > Unofficial community plugin; not affiliated with or endorsed by DeepSeek.

@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720" role="img" aria-labelledby="title desc">
+  <title id="title">DSH Time Machine verified DAG demo</title>
+  <desc id="desc">A rendered terminal transcript showing a failed Redis branch, rescue checkpoint, and successful JWT branch.</desc>
+  <rect width="1200" height="720" rx="18" fill="#10151c"/>
+  <rect x="28" y="28" width="1144" height="54" rx="10" fill="#1b2430"/>
+  <circle cx="58" cy="55" r="8" fill="#ff6b6b"/><circle cx="84" cy="55" r="8" fill="#ffd166"/><circle cx="110" cy="55" r="8" fill="#57cc99"/>
+  <text x="145" y="62" fill="#b8c4d4" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="22">dsh time-machine / verified demo</text>
+  <g font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="20">
+    <text x="56" y="126" fill="#57cc99">$ /tm-tree session_prod_auth</text>
+    <text x="56" y="164" fill="#dbe7f3">DSH Time Machine DAG Tree</text>
+    <text x="56" y="194" fill="#9aabc0">Session: session_prod_auth | Active Branch: experiment/jwt-auth</text>
+    <text x="72" y="246" fill="#dbe7f3">○ chk_t1_baseline [main]  Implement basic UserService</text>
+    <text x="106" y="276" fill="#91a4ba">└─ Created user.service.ts</text>
+    <text x="72" y="330" fill="#ff8585">○ chk_t2_failed [main]  Integrate Redis Cluster  ✖ FAILED</text>
+    <text x="106" y="360" fill="#ffaaa8">└─ ECONNREFUSED: Redis node unreachable</text>
+    <text x="72" y="414" fill="#ffd166">◆ rescue_before_restore [main]  automatic rescue point</text>
+    <text x="106" y="444" fill="#dfc986">└─ Workspace can be restored atomically</text>
+    <text x="72" y="498" fill="#57cc99">● [HEAD] chk_t3_jwt [experiment/jwt-auth]  Implement JWT  ✔ OK</text>
+    <text x="106" y="528" fill="#9be7c2">└─ Redis files removed; failed-branch reflection retained</text>
+    <rect x="56" y="574" width="1088" height="92" rx="10" fill="#18232a" stroke="#2b805d"/>
+    <text x="78" y="610" fill="#57cc99">✓ 6/6 live checks passed</text>
+    <text x="78" y="642" fill="#b8c4d4">orphan cleanup · session alignment · reflection · REST API · diff · DAG</text>
+  </g>
+</svg>

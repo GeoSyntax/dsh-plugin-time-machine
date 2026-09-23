@@ -4,6 +4,8 @@
 
 Use preview-first checkpoints, safe workspace restore, persistent DAG branches, and failure reflection in DeepSeek Harness.
 
+[中文说明](README.zh-CN.md)
+
 ## Demo
 
 The verified demo below shows a failed Redis branch, a rescue checkpoint, orphan-file cleanup, and a successful JWT branch that keeps the failure evidence.

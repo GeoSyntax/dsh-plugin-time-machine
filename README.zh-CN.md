@@ -4,13 +4,17 @@
 
 Time Machine 是面向 DeepSeek Harness 的非官方社区插件。它补上 DSH 原生 append-only 会话日志缺少的工作区物理回滚能力，并把“文件状态”和“Agent 认知状态”放进同一个可解释的检查点。
 
-[English README](README.md) · [官方 DSH 社区介绍](https://github.com/deepseek-ai/deepseek-harness/discussions/7191) · [插件目录提交](https://github.com/alexchenzl/dsh-plugin-directory/issues/247)
+[English README](README.en.md) · [官方 DSH 社区介绍](https://github.com/deepseek-ai/deepseek-harness/discussions/7191) · [插件目录提交](https://github.com/alexchenzl/dsh-plugin-directory/issues/247)
 
 ## 真实效果
 
 下面的效果来自本地运行的 Web 仪表盘：一次失败的 Redis 分支、一处自动救援点，以及继续成功的 JWT 分支会同时保留在时间线中。回滚后新增的配置文件和临时目录会被清理，失败信息仍可用于下一次 Agent 推理。
 
-![DSH Time Machine DAG 演示](https://raw.githubusercontent.com/GeoSyntax/dsh-plugin-time-machine/main/docs/assets/dag-demo.svg)
+![DSH Time Machine 本地实机仪表盘](https://raw.githubusercontent.com/GeoSyntax/dsh-plugin-time-machine/main/docs/assets/dashboard-real.png)
+
+这张图来自本地真实运行的 Web 仪表盘，而不是示意图：左侧同时保留成功基线、失败 Redis 分支、自动救援检查点和成功的 `experiment/jwt` 分支；右侧展示当前检查点的 Git 元数据、Agent 写入审计和可恢复文件。你可以直接复制下面的命令启动同一个界面。
+
+![DSH Time Machine DAG 结构示意](https://raw.githubusercontent.com/GeoSyntax/dsh-plugin-time-machine/main/docs/assets/dag-demo.svg)
 
 本地实机页面包含四个关键区域：分支状态、DAG 时间线、检查点详情和文件变更/恢复操作。启动后访问 `http://127.0.0.1:3088` 即可查看。
 

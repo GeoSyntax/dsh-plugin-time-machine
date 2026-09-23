@@ -87,7 +87,6 @@ The release gate covers 143 automated tests, build and consumer imports, package
 The project has also passed real DSH source-host and Web smoke runs with a local OpenAI-compatible Gemini gateway: finalized checkpoints, Agent-write evidence, restart DAGs, failed tools, pre-command checkpoints, Web fork/rewind, and SessionController failure compensation.
 
 - [Test plan and evidence](docs/TEST_PLAN.md)
-- [Project overview](docs/PROJECT_OVERVIEW.md)
 - [Community submission package](docs/COMMUNITY_SUBMISSION.md)
 - [Release process](docs/RELEASING.md)
 

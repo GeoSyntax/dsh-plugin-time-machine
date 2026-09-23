@@ -1,4 +1,39 @@
 const API_BASE = window.location.origin;
+// Agent Write Ledger remains in the source as the stable English capability name.
+
+const translations = {
+  zh: {
+    brand: 'DSH 时光机', subtitle: '会话分叉、工作区恢复与 DAG 分支探索', branchLabel: '分支：', sessionLabel: '会话：', noSessions: '暂无已保存会话', zeroCheckpoints: '0 个检查点',
+    undoLatest: '撤销最新轮次', refresh: '刷新', timelineTitle: '探索时间线（DAG）', inspectorTitle: '检查点详情', selectTurn: '请选择一个轮次',
+    emptyInspector: '点击时间线中的检查点，可查看详情、检查差异或发起时光回滚。', loading: '正在加载检查点……', forkTitle: '🌿 创建探索分支',
+    forkIntro: '从', forkIntroEnd: '创建平行探索分支，不覆盖当前进度。', branchName: '新分支名称：', descriptionOptional: '描述（可选）：', cancel: '取消', forkConfirm: '创建并切换分支', diffViewer: '文件差异查看器',
+    checkpoints: n => `${n} 个检查点`, checkpoint: n => `${n} 个检查点`, filesChanged: n => `${n} 个文件变更`, agentWrites: n => `${n} 次 Agent 写入`, unattributed: n => `${n} 项未归因变更`, toolMutations: n => `${n} 次工具变更`, omitted: n => `${n} 项未纳入`,
+    noSessionData: '暂无已保存的 DSH 会话。运行一次提示词后会创建第一个检查点。', noCheckpoints: '暂无检查点。运行一次提示词后会生成第一个检查点。', connectionFailed: e => `无法连接时光机服务：${e}`,
+    viewingTurn: n => `正在查看第 ${n} 轮`, turnInstruction: '轮次指令', metadata: '检查点元数据', executionSummary: '执行摘要', agentLedger: n => `Agent 写入账本（${n}）`, unattributedGroup: n => `未归因轮次变更（${n}）`, toolLedger: n => `工具变更账本（${n}）`, workspaceChanges: n => `工作区文件变更（${n}）`,
+    forkButton: '🌿 创建探索分支', rewindButton: '⚡ 回滚到此轮次', noAgentWrites: '此检查点没有已验证的 Agent 写入。', noUnattributed: '没有缺少 Agent 写入证据的工作区变更。', noToolMutations: '没有记录到命令执行前的工具变更。', noFiles: '此轮次没有修改文件。', restoreSelected: '↶ 恢复选中的文件', partial: n => `⚠ 部分检查点：${n} 个路径未被捕获，回滚时会保留其当前内容。`,
+    selectPath: '选择此路径进行选择性恢复', operationUnavailable: '哈希不可用', shaUnavailable: 'SHA-256 不可用', omittedPaths: '未纳入路径', nodeId: '节点 ID', branch: '分支', commitOid: 'Git Commit OID', treeOid: 'Git Tree OID', timestamp: '时间戳',
+    requiredBranch: '必须填写分支名称', selectFile: '请先选择至少一个文件', restoreConfirm: n => `确定从第 ${n} 轮恢复 ${n} 个选中路径吗？`, restored: paths => `✔ 已恢复 ${paths}。会话内容未改变。`, restoreFailed: e => `选择性恢复失败：${e}`,
+    forkNameRequired: '必须填写分支名称', rewindPreviewFailed: e => `无法预览回滚：${e}`, diffFailed: e => `加载差异失败：${e}`, noDiff: '未检测到文本差异。',
+    statusSuccess: '✔ 成功', statusFailed: '✖ 失败', statusAborted: '■ 已中止', statusRunning: '… 运行中',
+    confirmUndo: '确定撤销最新一轮并继续创建新的 DSH 会话吗？系统会先创建救援点。', undoDone: id => `✔ 已撤销最新轮次。请在 DSH 会话 ${id} 中继续。`, undoFailed: e => `撤销失败：${e}`,
+    confirmFork: name => `✔ 分支 ${name} 已恢复。请在新的 DSH 会话中继续。`, forkFailed: e => `创建分支失败：${e}`,
+    langButton: 'EN', languageLabel: '切换到英文', mergeWarning: '检测到工作区漂移。确定后将尝试三方合并并保留不冲突的本地编辑；取消则中止回滚。',
+    rewindConfirm: n => `确定回滚到第 ${n} 轮吗？系统会先创建救援点。`, driftWarning: '⚠ 检测到工作区漂移，安全恢复将拒绝覆盖。', externalEffects: '⚠ 文件恢复不会撤销外部副作用：', omittedPreview: '⚠ 这是一个部分检查点，未纳入的路径会保留当前内容：', preservedEdits: '✓ 已验证的手工编辑将被保留：', more: n => `……以及另外 ${n} 项`,
+    rewindDone: n => `✔ 已恢复到第 ${n} 轮。请在新的 DSH 会话中继续。`, rewindFailed: e => `回滚失败：${e}`,
+  },
+  en: {
+    brand: 'DSH Time Machine', subtitle: 'Coordinated session forks, workspace restore and DAG exploration', branchLabel: 'BRANCH:', sessionLabel: 'SESSION:', noSessions: 'No persisted sessions', zeroCheckpoints: '0 checkpoint(s)', undoLatest: 'Undo latest turn', refresh: 'Refresh', timelineTitle: 'Exploration Timeline (DAG)', inspectorTitle: 'Snapshot Inspector', selectTurn: 'Select a turn', emptyInspector: 'Click a checkpoint to inspect details, review diffs, or start a rewind.', loading: 'Loading checkpoints…', forkTitle: '🌿 Fork exploration branch', forkIntro: 'Create a parallel branch from', forkIntroEnd: 'without overwriting current progress.', branchName: 'New branch name:', descriptionOptional: 'Description (optional):', cancel: 'Cancel', forkConfirm: 'Fork and switch branch', diffViewer: 'File diff viewer', checkpoints: n => `${n} checkpoint(s)`, checkpoint: n => `${n} checkpoint(s)`, filesChanged: n => `${n} file(s) changed`, agentWrites: n => `${n} Agent write(s)`, unattributed: n => `${n} unattributed`, toolMutations: n => `${n} tool mutation(s)`, omitted: n => `${n} omitted`, noSessionData: 'No persisted DSH sessions yet. Run a prompt to create the first checkpoint.', noCheckpoints: 'No checkpoints recorded yet. Run a prompt to generate the first checkpoint.', connectionFailed: e => `Failed to connect to Time Machine server: ${e}`, viewingTurn: n => `Viewing Turn #${n}`, turnInstruction: 'TURN INSTRUCTION', metadata: 'SNAPSHOT METADATA', executionSummary: 'EXECUTION SUMMARY', agentLedger: n => `AGENT WRITE LEDGER (${n})`, unattributedGroup: n => `UNATTRIBUTED TURN CHANGES (${n})`, toolLedger: n => `TOOL MUTATION LEDGER (${n})`, workspaceChanges: n => `WORKSPACE FILE CHANGES (${n})`, forkButton: '🌿 Fork Exploration Branch', rewindButton: '⚡ Rewind to This Turn', noAgentWrites: 'No verified Agent writes recorded for this checkpoint.', noUnattributed: 'No workspace changes lack Agent-write evidence.', noToolMutations: 'No pre-command tool mutation evidence recorded.', noFiles: 'No files modified in this turn.', restoreSelected: '↶ Restore selected files', partial: n => `⚠ Partial checkpoint: ${n} path(s) were not captured. Rewind preserves their live content.`, selectPath: 'Select this path for selective restore', operationUnavailable: 'hash unavailable', shaUnavailable: 'SHA-256 unavailable', omittedPaths: 'Omitted Paths', nodeId: 'Node ID', branch: 'Branch', commitOid: 'Git Commit OID', treeOid: 'Git Tree OID', timestamp: 'Timestamp', requiredBranch: 'Branch name is required', selectFile: 'Select at least one file first', restored: paths => `✔ Restored ${paths}. Conversation unchanged.`, restoreFailed: e => `Selective restore failed: ${e}`, forkNameRequired: 'Branch name is required', rewindPreviewFailed: e => `Could not preview rewind: ${e}`, diffFailed: e => `Failed to load diff: ${e}`, noDiff: 'No textual diff detected.', statusSuccess: '✔ SUCCESS', statusFailed: '✖ FAILED', statusAborted: '■ ABORTED', statusRunning: '… RUNNING', confirmUndo: 'Undo the latest completed turn and continue in a new DSH session? A rescue point will be created first.', undoDone: id => `✔ Undid the latest turn. Continue in DSH session: ${id}`, undoFailed: e => `Undo failed: ${e}`, confirmFork: name => `✔ Branch ${name} restored. Continue in the new DSH session.`, forkFailed: e => `Fork failed: ${e}`, langButton: '中', languageLabel: 'Switch to Chinese', mergeWarning: 'Workspace drift was detected. OK will attempt a Git three-way merge and preserve non-conflicting local edits; Cancel aborts the rewind.', rewindConfirm: n => `Rewind to Turn #${n}? A rescue point is created first.`, driftWarning: '⚠ Workspace drift detected; safe restore will refuse to overwrite it.', externalEffects: '⚠ External effects are not undone by file restore:', omittedPreview: '⚠ This is a partial checkpoint. Omitted paths will be preserved live:', preservedEdits: '✓ Verified hand-edits will be preserved:', more: n => `…and ${n} more`, rewindDone: n => `✔ Restored Turn #${n}. Continue in the new DSH session.`, rewindFailed: e => `Rewind failed: ${e}` },
+};
+let locale = localStorage.getItem('dsh-tm-locale') === 'en' ? 'en' : 'zh';
+const t = (key, ...args) => { const value = translations[locale][key] ?? translations.zh[key] ?? key; return typeof value === 'function' ? value(...args) : value; };
+function applyLanguage() {
+  document.documentElement.lang = locale === 'zh' ? 'zh-CN' : 'en';
+  document.title = locale === 'zh' ? 'DeepSeek Harness - 时光机仪表盘' : 'DeepSeek Harness - Time Machine Dashboard';
+  document.querySelectorAll('[data-i18n]').forEach(node => { node.textContent = t(node.dataset.i18n); });
+  const languageButton = document.getElementById('btn-language');
+  if (languageButton) { languageButton.textContent = t('langButton'); languageButton.title = t('languageLabel'); }
+  sessionSelector?.setAttribute('aria-label', locale === 'zh' ? '选择 DSH 会话' : 'Select DSH session');
+}
 
 let currentSessionId = new URLSearchParams(window.location.search).get('sessionId');
 let dagData = null;
@@ -23,6 +58,16 @@ const diffModal = document.getElementById('diff-modal');
 const diffTitle = document.getElementById('diff-title');
 const diffContent = document.getElementById('diff-content');
 const diffModalClose = document.getElementById('diff-modal-close');
+const btnLanguage = document.getElementById('btn-language');
+
+btnLanguage.addEventListener('click', async () => {
+  locale = locale === 'zh' ? 'en' : 'zh';
+  localStorage.setItem('dsh-tm-locale', locale);
+  applyLanguage();
+  await loadSessions();
+  if (selectedNodeId) selectNode(selectedNodeId);
+});
+applyLanguage();
 
 async function requestJson(url, options) {
   const response = await fetch(url, options);
@@ -41,14 +86,14 @@ async function loadDag() {
   if (!currentSessionId) {
     dagData = null;
     sessionBadge.textContent = 'none';
-    showEmpty(timelineFlow, 'No persisted DSH sessions yet. Run a prompt to create the first checkpoint.');
+    showEmpty(timelineFlow, t('noSessionData'));
     return;
   }
   try {
     dagData = await requestJson(`${API_BASE}/api/dag?sessionId=${encodeURIComponent(currentSessionId)}`);
     renderTimeline();
   } catch (error) {
-    showEmpty(timelineFlow, `Failed to connect to Time Machine server: ${error.message}`, true);
+    showEmpty(timelineFlow, t('connectionFailed', error.message), true);
   }
 }
 
@@ -61,10 +106,16 @@ function syncSessionUrl() {
 
 function renderSessionSelector(sessions) {
   sessionSelector.replaceChildren();
+  if (sessions.length === 0) {
+    const empty = document.createElement('option');
+    empty.value = '';
+    empty.textContent = t('noSessions');
+    sessionSelector.append(empty);
+  }
   for (const session of sessions) {
     const option = document.createElement('option');
     option.value = String(session.sessionId);
-    option.textContent = `${session.sessionId} · ${session.checkpointCount} checkpoint(s)`;
+    option.textContent = `${session.sessionId} · ${t('checkpoint', session.checkpointCount)}`;
     sessionSelector.append(option);
   }
   sessionSelector.disabled = sessions.length === 0;
@@ -84,7 +135,7 @@ async function loadSessions() {
     syncSessionUrl();
     await loadDag();
   } catch (error) {
-    showEmpty(timelineFlow, `Failed to discover DSH sessions: ${error.message}`, true);
+    showEmpty(timelineFlow, t('connectionFailed', error.message), true);
   }
 }
 
@@ -97,7 +148,7 @@ sessionSelector.addEventListener('change', async () => {
 
 btnUndoLatest.addEventListener('click', async () => {
   if (!currentSessionId) return;
-  const confirmed = confirm('Undo the latest completed turn and continue in a new DSH session? A rescue point will be created first.');
+  const confirmed = confirm(t('confirmUndo'));
   if (!confirmed) return;
   btnUndoLatest.disabled = true;
   try {
@@ -108,9 +159,9 @@ btnUndoLatest.addEventListener('click', async () => {
     });
     adoptConversation(result);
     await loadSessions();
-    alert(`✔ Undid the latest turn. Continue in DSH session: ${result.conversation.sessionId}`);
+    alert(t('undoDone', result.conversation.sessionId));
   } catch (error) {
-    alert(`Undo failed: ${error.message}`);
+    alert(t('undoFailed', error.message));
   } finally {
     btnUndoLatest.disabled = !currentSessionId;
   }
@@ -132,10 +183,10 @@ function renderTimeline() {
   sessionBadge.textContent = String(dagData.sessionId);
 
   const nodes = Object.values(dagData.nodes).sort((left, right) => left.timestamp - right.timestamp);
-  nodeCountBadge.textContent = `${nodes.length} checkpoints`;
+  nodeCountBadge.textContent = t('checkpoints', nodes.length);
   timelineFlow.replaceChildren();
   if (nodes.length === 0) {
-    showEmpty(timelineFlow, 'No checkpoints recorded yet. Run a prompt to generate the first checkpoint.');
+    showEmpty(timelineFlow, t('noCheckpoints'));
     return;
   }
 
@@ -163,11 +214,11 @@ function createTimelineCard(node) {
   const meta = element('div', 'card-meta');
   meta.append(
     element('span', '', `🕒 ${new Date(node.timestamp).toLocaleTimeString()}`),
-    element('span', '', `📁 ${files.length} file(s) changed`),
-    ...(agentWrites.length ? [element('span', 'badge badge-success', `✎ ${agentWrites.length} Agent write(s)`)] : []),
-    ...(unattributed.length ? [element('span', 'badge badge-warning', `? ${unattributed.length} unattributed`)] : []),
-    ...(toolMutations.length ? [element('span', 'badge badge-info', `⚙ ${toolMutations.length} tool mutation(s)`)] : []),
-    ...(omitted.length ? [element('span', 'badge badge-warning', `⚠ ${omitted.length} omitted`)] : []),
+    element('span', '', `📁 ${t('filesChanged', files.length)}`),
+    ...(agentWrites.length ? [element('span', 'badge badge-success', `✎ ${t('agentWrites', agentWrites.length)}`)] : []),
+    ...(unattributed.length ? [element('span', 'badge badge-warning', `? ${t('unattributed', unattributed.length)}`)] : []),
+    ...(toolMutations.length ? [element('span', 'badge badge-info', `⚙ ${t('toolMutations', toolMutations.length)}`)] : []),
+    ...(omitted.length ? [element('span', 'badge badge-warning', `⚠ ${t('omitted', omitted.length)}`)] : []),
   );
   card.append(top, element('div', 'card-prompt', String(node.prompt || '')), meta);
   return card;
@@ -177,24 +228,24 @@ function selectNode(nodeId) {
   selectedNodeId = nodeId;
   const node = dagData.nodes[nodeId];
   if (!node) return;
-  inspectorStatusBadge.textContent = `Viewing Turn #${node.turnIndex}`;
+  inspectorStatusBadge.textContent = t('viewingTurn', node.turnIndex);
   inspectorStatusBadge.className = 'badge badge-success';
   inspectorContent.className = 'inspector-body';
   inspectorContent.replaceChildren();
 
   const actions = element('div', 'action-bar');
-  const forkButton = element('button', 'btn btn-primary', '🌿 Fork Exploration Branch');
+  const forkButton = element('button', 'btn btn-primary', t('forkButton'));
   forkButton.addEventListener('click', () => openForkModal(node.id, node.turnIndex));
-  const rewindButton = element('button', 'btn btn-danger', '⚡ Rewind to This Turn');
+  const rewindButton = element('button', 'btn btn-danger', t('rewindButton'));
   rewindButton.addEventListener('click', () => triggerRewind(node.id, node.turnIndex));
   actions.append(forkButton, rewindButton);
 
   inspectorContent.append(
     actions,
-    infoGroup('Turn Instruction', String(node.prompt || '')),
+    infoGroup(t('turnInstruction'), String(node.prompt || '')),
     metadataGroup(node),
   );
-  if (node.summary) inspectorContent.append(infoGroup('Execution Summary', String(node.summary)));
+  if (node.summary) inspectorContent.append(infoGroup(t('executionSummary'), String(node.summary)));
   inspectorContent.append(agentWritesGroup(node));
   inspectorContent.append(unattributedChangesGroup(node));
   inspectorContent.append(toolMutationsGroup(node));
@@ -204,10 +255,10 @@ function selectNode(nodeId) {
 function agentWritesGroup(node) {
   const writes = Array.isArray(node.agentWrites) ? node.agentWrites : [];
   if (writes.length === 0) {
-    const empty = element('p', '', 'No verified Agent writes recorded for this checkpoint.');
+    const empty = element('p', '', t('noAgentWrites'));
     empty.style.color = 'var(--text-muted)';
     empty.style.fontSize = '0.8rem';
-    return group('Agent Write Ledger (0)', empty);
+    return group(t('agentLedger', 0), empty);
   }
   const list = element('ul', 'file-list');
   for (const write of writes) {
@@ -217,17 +268,17 @@ function agentWritesGroup(node) {
     item.append(
       element('span', '', `✎ ${String(write.path)}`),
       element('span', 'badge badge-success', operation),
-      element('code', '', digest ? `${digest.slice(0, 12)}…` : 'hash unavailable'),
+      element('code', '', digest ? `${digest.slice(0, 12)}…` : t('operationUnavailable')),
     );
-    item.title = digest ? `SHA-256: ${digest}` : 'SHA-256 unavailable';
+    item.title = digest ? `SHA-256: ${digest}` : t('shaUnavailable');
     list.append(item);
   }
-  return group(`Agent Write Ledger (${writes.length})`, list);
+  return group(t('agentLedger', writes.length), list);
 }
 
 function unattributedChangesGroup(node) {
   const changes = Array.isArray(node.unattributedChanges) ? node.unattributedChanges : [];
-  if (changes.length === 0) return group('Unattributed Turn Changes (0)', element('p', '', 'No workspace changes lack Agent-write evidence.'));
+  if (changes.length === 0) return group(t('unattributedGroup', 0), element('p', '', t('noUnattributed')));
   const body = element('div');
   body.append(element('div', 'info-box', 'These paths changed during the turn but were not attributed to a native Agent write event. Review before preserving hand edits.'));
   const list = element('ul', 'file-list');
@@ -237,34 +288,34 @@ function unattributedChangesGroup(node) {
     list.append(item);
   }
   body.append(list);
-  return group(`Unattributed Turn Changes (${changes.length})`, body);
+  return group(t('unattributedGroup', changes.length), body);
 }
 
 function toolMutationsGroup(node) {
   const records = Array.isArray(node.toolMutations) ? node.toolMutations : [];
-  if (records.length === 0) return group('Tool Mutation Ledger (0)', element('p', '', 'No pre-command tool mutation evidence recorded.'));
+  if (records.length === 0) return group(t('toolLedger', 0), element('p', '', t('noToolMutations')));
   const list = element('ul', 'file-list');
   for (const record of records) {
     const item = element('li', 'file-item');
     const files = Array.isArray(record.changedFiles) ? record.changedFiles : [];
-    item.append(element('span', '', `⚙ ${String(record.toolName)}`), element('span', `badge ${record.status === 'error' ? 'badge-warning' : 'badge-success'}`, String(record.status).toUpperCase()), element('code', '', files.map(file => `${file.status} ${file.path}`).join(', ') || 'no workspace delta'));
+    item.append(element('span', '', `⚙ ${String(record.toolName)}`), element('span', `badge ${record.status === 'error' ? 'badge-warning' : 'badge-success'}`, String(record.status).toUpperCase()), element('code', '', files.map(file => `${file.status} ${file.path}`).join(', ') || t('noFiles')));
     if (record.error) item.append(element('span', 'badge badge-warning', String(record.error)));
     list.append(item);
   }
-  return group(`Tool Mutation Ledger (${records.length})`, list);
+  return group(t('toolLedger', records.length), list);
 }
 
 function metadataGroup(node) {
   const body = element('div', 'info-box');
   body.style.fontSize = '0.75rem';
   for (const [label, value] of [
-    ['Node ID', node.id],
-    ['Branch', node.branch],
-    ['Git Commit OID', node.gitCommitOid || 'N/A'],
-    ['Git Tree OID', node.gitTreeOid || 'N/A'],
-    ['Timestamp', new Date(node.timestamp).toLocaleString()],
+    [t('nodeId'), node.id],
+    [t('branch'), node.branch],
+    [t('commitOid'), node.gitCommitOid || 'N/A'],
+    [t('treeOid'), node.gitTreeOid || 'N/A'],
+    [t('timestamp'), new Date(node.timestamp).toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-US')],
     ...(Array.isArray(node.omittedPaths) && node.omittedPaths.length
-      ? [['Omitted Paths', node.omittedPaths.join(', ')]]
+      ? [[t('omittedPaths'), node.omittedPaths.join(', ')]]
       : []),
   ]) {
     const row = document.createElement('div');
@@ -272,16 +323,16 @@ function metadataGroup(node) {
     row.append(strong, document.createTextNode(String(value)));
     body.append(row);
   }
-  return group('Snapshot Metadata', body);
+  return group(t('metadata'), body);
 }
 
 function fileChangesGroup(node) {
   const files = Array.isArray(node.changedFiles) ? node.changedFiles : [];
   if (files.length === 0) {
-    const empty = element('p', '', 'No files modified in this turn.');
+    const empty = element('p', '', t('noFiles'));
     empty.style.color = 'var(--text-muted)';
     empty.style.fontSize = '0.8rem';
-    return group('Workspace File Changes (0)', empty);
+    return group(t('workspaceChanges', 0), empty);
   }
 
   const list = element('ul', 'file-list');
@@ -292,7 +343,7 @@ function fileChangesGroup(node) {
     const checkbox = document.createElement('input');
     checkbox.type = 'checkbox';
     checkbox.value = String(file.path);
-    checkbox.title = 'Select this path for selective restore';
+    checkbox.title = t('selectPath');
     checkbox.addEventListener('click', event => event.stopPropagation());
     selectors.push(checkbox);
     item.append(
@@ -310,16 +361,16 @@ function fileChangesGroup(node) {
   const body = document.createElement('div');
   const omitted = Array.isArray(node.omittedPaths) ? node.omittedPaths : [];
   if (omitted.length) {
-    const warning = element('div', 'info-box', `⚠ Partial checkpoint: ${omitted.length} path(s) were not captured. Rewind preserves their live content.`);
+    const warning = element('div', 'info-box', t('partial', omitted.length));
     body.append(warning);
   }
   body.append(list);
-  const restore = element('button', 'btn btn-secondary', '↶ Restore selected files');
+  const restore = element('button', 'btn btn-secondary', t('restoreSelected'));
   restore.addEventListener('click', async event => {
     event.stopPropagation();
     const paths = selectors.filter(input => input.checked).map(input => input.value);
-    if (paths.length === 0) return alert('Select at least one file first');
-    if (!confirm(`Restore ${paths.length} selected path(s) from Turn #${node.turnIndex}?`)) return;
+    if (paths.length === 0) return alert(t('selectFile'));
+    if (!confirm(locale === 'zh' ? `确定从第 ${node.turnIndex} 轮恢复 ${paths.length} 个选中路径吗？` : `Restore ${paths.length} selected path(s) from Turn #${node.turnIndex}?`)) return;
     try {
       const result = await requestJson(`${API_BASE}/api/restore-files`, {
         method: 'POST',
@@ -327,18 +378,18 @@ function fileChangesGroup(node) {
         body: JSON.stringify({ sessionId: currentSessionId, checkpointId: node.id, paths }),
       });
       await loadDag();
-      alert(`✔ Restored ${result.result.restoredPaths.join(', ')}. Conversation unchanged.`);
+      alert(t('restored', result.result.restoredPaths.join(', ')));
     } catch (error) {
-      alert(`Selective restore failed: ${error.message}`);
+      alert(t('restoreFailed', error.message));
     }
   });
   body.append(restore);
-  return group(`Workspace File Changes (${files.length})`, body);
+  return group(t('workspaceChanges', files.length), body);
 }
 
 function openForkModal(nodeId, turnIndex) {
   selectedNodeId = nodeId;
-  modalForkFrom.textContent = `Turn #${turnIndex} (${nodeId})`;
+  modalForkFrom.textContent = locale === 'zh' ? `第 ${turnIndex} 轮（${nodeId}）` : `Turn #${turnIndex} (${nodeId})`;
   forkBranchInput.value = `branch-turn-${turnIndex}-alt`;
   forkModal.classList.remove('hidden');
 }
@@ -348,7 +399,7 @@ modalCancelFork.addEventListener('click', () => forkModal.classList.add('hidden'
 modalConfirmFork.addEventListener('click', async () => {
   const branchName = forkBranchInput.value.trim();
   const description = forkDescInput.value.trim();
-  if (!branchName) return alert('Branch name is required');
+  if (!branchName) return alert(t('forkNameRequired'));
   try {
     const result = await requestJson(`${API_BASE}/api/fork`, {
       method: 'POST',
@@ -358,9 +409,9 @@ modalConfirmFork.addEventListener('click', async () => {
     forkModal.classList.add('hidden');
     adoptConversation(result);
     await loadSessions();
-    alert(`✔ Branch ${branchName} restored. Continue in DSH session: ${result.conversation.sessionId}`);
+    alert(t('confirmFork', branchName));
   } catch (error) {
-    alert(`Fork failed: ${error.message}`);
+    alert(t('forkFailed', error.message));
   }
 });
 
@@ -370,33 +421,31 @@ async function triggerRewind(nodeId, turnIndex) {
     const params = new URLSearchParams({ sessionId: currentSessionId, checkpoint: nodeId });
     preview = (await requestJson(`${API_BASE}/api/preview?${params}`)).preview;
   } catch (error) {
-    alert(`Could not preview rewind: ${error.message}`);
+    alert(t('rewindPreviewFailed', error.message));
     return;
   }
   const files = (preview.diffs || []).slice(0, 12).map(diff => `${diff.status} ${diff.file}`).join('\n');
-  const more = (preview.diffs || []).length > 12 ? `\n…and ${(preview.diffs || []).length - 12} more` : '';
+  const more = (preview.diffs || []).length > 12 ? `\n${t('more', (preview.diffs || []).length - 12)}` : '';
   const conflicts = (preview.conflictingPaths || []).slice(0, 12).join('\n');
-  const conflictMore = (preview.conflictingPaths || []).length > 12 ? `\n…and ${(preview.conflictingPaths || []).length - 12} more` : '';
+  const conflictMore = (preview.conflictingPaths || []).length > 12 ? `\n${t('more', (preview.conflictingPaths || []).length - 12)}` : '';
   const omitted = (preview.targetOmittedPaths || []).length
-    ? `\n\n⚠ This is a partial checkpoint. Omitted paths will be preserved live:\n${preview.targetOmittedPaths.join('\n')}`
+    ? `\n\n${t('omittedPreview')}\n${preview.targetOmittedPaths.join('\n')}`
     : '';
   const preserved = (preview.preservedHandEditPaths || []).length
-    ? `\n\n✓ Verified hand-edits will be preserved:\n${preview.preservedHandEditPaths.join('\n')}`
+    ? `\n\n${t('preservedEdits')}\n${preview.preservedHandEditPaths.join('\n')}`
     : '';
   const externalEffects = (preview.externalEffects || []).length
-    ? `\n\n⚠ External effects are not undone by file restore:\n${preview.externalEffects.map(effect => `${effect.status} ${effect.adapter}:${effect.operation}`).join('\n')}`
+    ? `\n\n${t('externalEffects')}\n${preview.externalEffects.map(effect => `${effect.status} ${effect.adapter}:${effect.operation}`).join('\n')}`
     : '';
   const warning = preview.requiresForce
-    ? `\n\n⚠ Workspace drift detected; safe restore will refuse to overwrite it.\nConflicts:\n${conflicts || '(unavailable)'}${conflictMore}`
+    ? `\n\n${t('driftWarning')}\n${locale === 'zh' ? '冲突：' : 'Conflicts:'}\n${conflicts || '(unavailable)'}${conflictMore}`
     : '';
   let merge = false;
   if (preview.requiresForce) {
-    merge = confirm('Workspace drift was detected. OK will attempt a Git three-way merge and preserve non-conflicting local edits; Cancel aborts the rewind.');
+    merge = confirm(t('mergeWarning'));
     if (!merge) return;
   }
-  const confirmed = confirm(
-    `Rewind to Turn #${turnIndex}${merge ? ' with three-way merge' : ''}?\n\nPlanned file changes:\n${files || '(none)'}${more}${warning}${omitted}${preserved}${externalEffects}\n\nA rescue point is created first.`,
-  );
+  const confirmed = confirm(`${t('rewindConfirm', turnIndex)}${merge ? (locale === 'zh' ? '（三方合并）' : ' with three-way merge') : ''}\n\n${locale === 'zh' ? '计划文件变更：' : 'Planned file changes:'}\n${files || '(none)'}${more}${warning}${omitted}${preserved}${externalEffects}`);
   if (!confirmed) return;
   try {
     const result = await requestJson(`${API_BASE}/api/rewind`, {
@@ -406,9 +455,9 @@ async function triggerRewind(nodeId, turnIndex) {
     });
     adoptConversation(result);
     await loadSessions();
-    alert(`✔ Restored Turn #${turnIndex}. Continue in DSH session: ${result.conversation.sessionId}`);
+    alert(t('rewindDone', turnIndex));
   } catch (error) {
-    alert(`Rewind failed: ${error.message}`);
+    alert(t('rewindFailed', error.message));
   }
 }
 
@@ -417,11 +466,11 @@ async function viewDiff(baseId, targetId, filePath) {
     const params = new URLSearchParams({ sessionId: currentSessionId, base: baseId, target: targetId });
     const data = await requestJson(`${API_BASE}/api/diff?${params}`);
     const selected = data.diffs?.find(diff => diff.file === filePath) ?? data.diffs?.[0];
-    diffTitle.textContent = `Diff: ${filePath}`;
-    diffContent.textContent = selected?.diffText ?? 'No textual diff detected.';
+    diffTitle.textContent = `${locale === 'zh' ? '差异：' : 'Diff: '}${filePath}`;
+    diffContent.textContent = selected?.diffText ?? t('noDiff');
     diffModal.classList.remove('hidden');
   } catch (error) {
-    alert(`Failed to load diff: ${error.message}`);
+    alert(t('diffFailed', error.message));
   }
 }
 
@@ -452,10 +501,10 @@ function element(tag, className = '', text = '') {
 }
 
 function statusPresentation(status) {
-  if (status === 'failed') return { className: 'badge-failed', text: '✖ FAILED' };
-  if (status === 'aborted') return { className: 'badge-idle', text: '■ ABORTED' };
-  if (status === 'running') return { className: 'badge-idle', text: '… RUNNING' };
-  return { className: 'badge-success', text: '✔ SUCCESS' };
+  if (status === 'failed') return { className: 'badge-failed', text: t('statusFailed') };
+  if (status === 'aborted') return { className: 'badge-idle', text: t('statusAborted') };
+  if (status === 'running') return { className: 'badge-idle', text: t('statusRunning') };
+  return { className: 'badge-success', text: t('statusSuccess') };
 }
 
 void loadSessions();

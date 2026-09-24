@@ -1,100 +1,66 @@
 # DSH Time Machine
 
-**Rewind the workspace and the DSH session together, then fork without losing failed work**
+**Return a DSH conversation and its workspace to a checkpoint, then explore another branch.**
 
-Use preview-first checkpoints, safe workspace restore, persistent DAG branches, and failure reflection in DeepSeek Harness.
+An unofficial DeepSeek Harness community plugin that saves file and session boundaries, previews restores, and keeps the history of each attempt.
 
-[中文说明](README.md)
+[简体中文](README.md) · [Feature comparison](docs/COMPARISON.md) · [Test plan](docs/TEST_PLAN.md) · [Report an issue](https://github.com/GeoSyntax/dsh-plugin-time-machine/issues)
 
-## Demo
+## Preview
 
-The verified demo below shows a failed Redis branch, a rescue checkpoint, orphan-file cleanup, and a successful JWT branch that keeps the failure evidence.
+![Running Web dashboard with successful, failed, rescue, and forked checkpoints on the left and checkpoint details on the right](docs/assets/dashboard-real.png)
 
-![DSH Time Machine live dashboard](https://raw.githubusercontent.com/GeoSyntax/dsh-plugin-time-machine/main/docs/assets/dashboard-real.png)
-
-This screenshot is captured from a real local Web dashboard. It shows a successful baseline, a failed Redis attempt, an automatic rescue checkpoint, and a successful `experiment/jwt` branch preserved together in the timeline. The Chinese README is the repository default; this file keeps the full English guide.
-
-![DSH Time Machine DAG schematic](https://raw.githubusercontent.com/GeoSyntax/dsh-plugin-time-machine/main/docs/assets/dag-demo.svg)
+This is a screenshot of the running Web dashboard. **The auth, Redis, and JWT content was created as sample data for the demo.** It shows a failed checkpoint, a pre-restore rescue point, and a successful `experiment/jwt` branch. The interface defaults to Chinese and can switch to English.
 
 ## Install
+
+Install [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) and pnpm first. You need Node.js `^22.19.0 || >=24.0.0`. The current package supports DSH `>=0.1.5-rc.2 <0.2.0` with the `web` profile.
 
 ```bash
 dsh plugin --profile web add github:GeoSyntax/dsh-plugin-time-machine
 ```
 
-The current distribution is a GitHub dependency for DSH `>=0.1.5-rc.2 <0.2.0` on the `web` profile. It requires Node.js `^22.19.0 || >=24.0.0`.
+DSH adds the plugin's `cordis.patch.yml` as a profile Bundle during installation. Restart DSH after adding or updating the plugin; you do not need to copy a configuration block into the profile. This package is available from GitHub and has not been published to npm. See the [DSH Bundle installation guide](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/user/develop/basic/publish.md).
 
 ## Quickstart
 
-Add the plugin to the profile's `cordis.patch.yml`, then restart DSH:
+Start DSH from the project directory that the Agent will edit:
 
-```yaml
-plugins:
-  - id: time-machine
-    package: dsh-plugin-time-machine
-    config:
-      autoSnapshot: true
-      restoreMode: safe
-      enableWebUI: true
+```bash
+dsh web
 ```
 
-Use these commands in a session:
+Complete one conversation turn that changes a file. The plugin creates checkpoints at turn boundaries by default. Then run these commands in the conversation:
 
 ```text
-/tm-list                              # show checkpoints on the active lineage
-/tm-preview <checkpoint>              # inspect files, conflicts, and side effects
-/tm-rewind <checkpoint>               # restore the workspace and fork an aligned session
-/tm-fork <checkpoint> experiment/jwt   # explore a parallel branch without overwriting history
+/tm-list
+/tm-tree
 ```
 
-The standalone dashboard listens on `http://127.0.0.1:3088` when `enableWebUI` is enabled. Preview a plan before every destructive operation.
+`/tm-list` shows checkpoint IDs and `/tm-tree` shows the branch history. Open `http://127.0.0.1:3088` in another tab to inspect the dashboard and preview file changes before restoring or forking. DSH Web itself defaults to `http://127.0.0.1:3080`.
 
 ## What you can do
 
-- **Clean up orphan files:** remove ordinary files and directories created after a checkpoint, while ignored files remain protected by default and explicit deletion uses recoverable quarantine.
-- **Keep every experiment:** preserve failed branches, rescue points, and successful alternatives in a persistent DAG instead of overwriting a linear undo chain.
-- **Align memory with disk:** store DSH messages, token state, message anchors, and workspace trees in one checkpoint boundary.
-- **Learn from failed turns:** carry sanitized failed-tool evidence and reflection guidance into a new fork so the Agent can avoid repeating a known-bad approach.
-- **Review before mutation:** inspect unified diffs, added/deleted paths, conflicts, omitted paths, external effects, and a single-use restore plan before changing files.
-- **Protect verified hand-edits:** opt into the Agent-write ledger and preserve a path only when recorded write evidence proves that a later edit is not the same Agent write.
-- **Work outside Git:** use the fallback manifest engine with content hashes and the same path-safety checks when the workspace is not a Git repository.
-- **Audit external effects:** declare database, network, process, or cloud changes and block restore/fork in strict mode until an explicit compensation adapter resolves them.
+- **Restore the workspace:** Preview affected paths, conflicts, and external effects before restoring. A full restore removes ordinary files created later; ignored files remain protected by default.
+- **Preserve attempts:** Store checkpoints in a persistent DAG so failures and alternate branches remain available.
+- **Align the conversation:** Ask DSH to fork at the selected message boundary while restoring files. The original session remains available.
+- **Carry failure evidence:** Use a failed tool summary to guide the Agent in the new branch.
+- **Use a non-Git directory:** Fall back to manifest and content-hash snapshots when the workspace is not a Git repository.
 
-## Safety model
+See the [feature comparison](docs/COMPARISON.md) for detailed behavior and alternatives.
 
-Time Machine uses an isolated Git index and private `refs/dsh-tm/*` objects, so ordinary branches, the user's staging index, and DSH's append-only session log remain untouched. Every rewind or fork creates a rescue checkpoint first.
+## Limits
 
-Safe mode refuses unverified user/staged/ignored drift. Git-only `--merge` keeps non-conflicting edits and reports conflicts. Symlink ancestors, hard-linked targets, sparse checkouts, submodules, and in-progress merge/rebase/cherry-pick states fail closed before mutation.
+- Default `safe` mode refuses to overwrite unverified user edits, staged changes, or protected ignored files. Inspect the preview before a restore.
+- Forks in the current DSH host share one workspace. They do not create an isolated worktree or container.
+- Restoring files does not reverse database transactions, network calls, or cloud changes. Strict gates and compensation adapters require project configuration.
+- Full workspace restore and selective file restore are separate operations.
 
-Optional AES-256-GCM encryption protects session metadata, shadow objects, and quarantine backups. Restore journals recover interrupted operations on the next startup.
-
-## Compared with similar plugins
-
-| Product | Primary workflow | Time Machine's difference |
-| --- | --- | --- |
-| Hermes checkpoints | Pre-tool snapshots, Agent-write hashes, same-window rollback | Adds persistent DAG exploration, session alignment, failure reflection, and external-effect gates while keeping strict drift rejection as the default |
-| Change Ledger | Lightweight mutation ledger and selective restore | Adds full orphan cleanup, preview plans, rescue journals, and a session-aware branch model |
-| `dsh-checkpoint-rewind` | DSH checkpoint/rewind with Git or copy providers | Extends the turn boundary with durable branches, reflection, and evidence-based restore policies |
-| `dsh-undo` / `dsh-rewind` | Low-friction linear or same-window undo | Keeps the original exploration branches and makes a new session explicit when the host only supports shared workspaces |
-
-Choose a smaller undo plugin for a simple Ctrl+Z interaction. Choose Time Machine when the workspace, conversation, failed attempts, and parallel exploration need to remain explainable together. See the [full comparison](docs/COMPARISON.md).
-
-## Boundaries
-
-- **External systems:** file restore cannot undo a database transaction, network request, process, or cloud mutation. Register a compensation adapter or use strict mode to block the restore.
-- **Workspace isolation:** current public DSH alpha hosts expose a shared workspace fork, not a new worktree or container. The plugin reports `shared-lock` and refuses to pretend it is isolated.
-- **Compatibility:** the manifest declares the `web` profile only. The optional [`client-companion/`](client-companion/README.md) package adds DSH Web action slots; it is not required by the core service.
-- **Partial snapshots:** oversized files can be omitted only with an explicit opt-in, and every omitted path remains visible in preview and restore results.
+For additional safety policies, optional encryption, and configuration, see [DESIGN.md](DESIGN.md).
 
 ## Verification
 
-The release gate covers 143 automated tests, build and consumer imports, package contents, dependency audit, DSH bundle smoke, and Node 22/24 on Ubuntu, macOS, and Windows.
-
-The project has also passed real DSH source-host and Web smoke runs with a local OpenAI-compatible Gemini gateway: finalized checkpoints, Agent-write evidence, restart DAGs, failed tools, pre-command checkpoints, Web fork/rewind, and SessionController failure compensation.
-
-- [Test plan and evidence](docs/TEST_PLAN.md)
-- [Community submission package](docs/COMMUNITY_SUBMISSION.md)
-- [Release process](docs/RELEASING.md)
+The repository [CI](https://github.com/GeoSyntax/dsh-plugin-time-machine/actions/workflows/ci.yml) covers Node.js 22/24 on Windows, macOS, and Ubuntu, DSH Bundle loading, client companion checks, dependency auditing, and automated tests. The [test plan](docs/TEST_PLAN.md) also describes local DSH source-host and Web checks. The screenshot demonstrates the UI and sample timeline; it does not prove that external side effects are reversible.
 
 ## License
 

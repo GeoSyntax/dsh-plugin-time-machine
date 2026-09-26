@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.2.0 — 2026-09-27
+
+### Finalized for public release
+
 - Compare workspace roots by canonical `realpath` before attaching DSH turns,
   so macOS `/var`/`/private/var` aliases and other symlinked workspace roots do
   not silently skip checkpoints or native tool ledgers.
@@ -125,9 +129,9 @@
 - Add a Dashboard `Undo latest turn` action wired to the same REST contract,
   with explicit confirmation and new-session feedback.
 
-## 0.2.0 — 2026-09-19
+### Earlier 0.2.0 candidate (2026-09-19)
 
-### Added
+#### Added
 
 - Git plumbing snapshots with isolated indexes, DAG branches, rescue points,
   interrupted-restore journals, and non-Git fallback snapshots.
@@ -166,7 +170,7 @@
 - Explicit `webAllowedOrigins` support for trusted cross-port companions; wildcard
   CORS remains disabled.
 
-### Safety boundaries
+#### Safety boundaries
 
 - `handEditPolicy` remains `reject-drift` by default. `ledger-opt-in` is
   available when integrations enable the explicit Agent-write ledger, and
@@ -174,7 +178,6 @@
   the core still never guesses authorship.
 - `workspaceIsolation` is `shared-lock`, not an independent worktree or
   container.
-- `shadowStoreEncryption` and native DSH message-action UI are not implemented.
 - The companion client is a transport contract, not a native transcript slot;
   a separate DSH Web client package is still required to render buttons.
 - Database, network, process, and cloud side effects require explicit external

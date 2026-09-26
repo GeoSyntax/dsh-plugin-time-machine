@@ -4,7 +4,7 @@
 
 面向 DeepSeek Harness 的非官方社区插件：保存文件和会话边界，预览后恢复工作区，并保留每条尝试过的分支。
 
-[English](README.en.md) · [功能对照](docs/COMPARISON.md) · [测试记录](docs/TEST_PLAN.md) · [问题反馈](https://github.com/GeoSyntax/dsh-plugin-time-machine/issues)
+[English](README.en.md) · [v0.2.0 发行说明](https://github.com/GeoSyntax/dsh-plugin-time-machine/releases/tag/v0.2.0) · [功能对照](docs/COMPARISON.md) · [测试记录](docs/TEST_PLAN.md) · [问题反馈](https://github.com/GeoSyntax/dsh-plugin-time-machine/issues)
 
 ## 效果预览
 
@@ -17,7 +17,7 @@
 先安装 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 和 pnpm；需要 Node.js `^22.19.0 || >=24.0.0`。当前支持 DSH `>=0.1.5-rc.2 <0.2.0` 的 `web` profile。
 
 ```bash
-dsh plugin --profile web add github:GeoSyntax/dsh-plugin-time-machine
+dsh plugin --profile web add github:GeoSyntax/dsh-plugin-time-machine#v0.2.0
 ```
 
 插件的 `cordis.patch.yml` 会作为 Bundle 随安装加入 profile。安装或更新后重启 DSH；无需再手动复制插件配置。当前通过 GitHub 安装，尚未发布 npm 包。[DSH 的 Bundle 安装说明](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/user/develop/basic/publish.md)解释了 profile 的加载方式。

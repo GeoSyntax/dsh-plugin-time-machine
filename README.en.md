@@ -4,7 +4,7 @@
 
 An unofficial DeepSeek Harness community plugin that saves file and session boundaries, previews restores, and keeps the history of each attempt.
 
-[简体中文](README.md) · [Feature comparison](docs/COMPARISON.md) · [Test plan](docs/TEST_PLAN.md) · [Report an issue](https://github.com/GeoSyntax/dsh-plugin-time-machine/issues)
+[简体中文](README.md) · [v0.2.0 release](https://github.com/GeoSyntax/dsh-plugin-time-machine/releases/tag/v0.2.0) · [Feature comparison](docs/COMPARISON.md) · [Test plan](docs/TEST_PLAN.md) · [Report an issue](https://github.com/GeoSyntax/dsh-plugin-time-machine/issues)
 
 ## Preview
 
@@ -17,7 +17,7 @@ This is a screenshot of the running Web dashboard. **The auth, Redis, and JWT co
 Install [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) and pnpm first. You need Node.js `^22.19.0 || >=24.0.0`. The current package supports DSH `>=0.1.5-rc.2 <0.2.0` with the `web` profile.
 
 ```bash
-dsh plugin --profile web add github:GeoSyntax/dsh-plugin-time-machine
+dsh plugin --profile web add github:GeoSyntax/dsh-plugin-time-machine#v0.2.0
 ```
 
 DSH adds the plugin's `cordis.patch.yml` as a profile Bundle during installation. Restart DSH after adding or updating the plugin; you do not need to copy a configuration block into the profile. This package is available from GitHub and has not been published to npm. See the [DSH Bundle installation guide](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/user/develop/basic/publish.md).

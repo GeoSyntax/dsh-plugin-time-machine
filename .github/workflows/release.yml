@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Run the release checks without publishing"
+        description: "Verify only; set false from a release tag to publish to npm"
         required: false
         default: true
         type: boolean
@@ -19,7 +19,7 @@ permissions:
 
 jobs:
   publish-core:
-    name: Verify and publish package
+    name: Verify core package; publish only on request
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -38,17 +38,25 @@ jobs:
       - run: pnpm test:release
       - name: Verify empty-directory consumer install
         run: pnpm test:consumer
+      - name: Require a version tag for manual publishing
+        if: github.event_name == 'workflow_dispatch' && inputs.dry_run != true
+        shell: bash
+        run: |
+          case "$GITHUB_REF" in
+            refs/tags/v*.*.*|refs/tags/client-v*.*.*) ;;
+            *) echo "Select a release tag when publishing to npm." >&2; exit 1 ;;
+          esac
       - name: Verify tag matches package version
         if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
         run: test "${GITHUB_REF_NAME#v}" = "$(node -p "require('./package.json').version")"
       - name: Publish with npm provenance
-        if: startsWith(github.ref, 'refs/tags/v') && (inputs.dry_run != true)
+        if: github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/tags/v') && inputs.dry_run == false
         run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Pack without publishing
-        if: (github.event_name == 'workflow_dispatch' && inputs.dry_run == true) || startsWith(github.ref, 'refs/tags/client-v')
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.dry_run == true)
         run: npm pack --dry-run
 
   publish-client-companion:
@@ -81,7 +89,7 @@ jobs:
         shell: bash
         run: test "${GITHUB_REF_NAME#client-v}" = "$(node -p "require('./client-companion/package.json').version")"
       - name: Publish companion with npm provenance
-        if: startsWith(github.ref, 'refs/tags/client-v') && (inputs.dry_run != true)
+        if: github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/tags/client-v') && inputs.dry_run == false
         working-directory: client-companion
         run: npm publish --provenance --access public
         env:

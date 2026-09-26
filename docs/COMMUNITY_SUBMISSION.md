@@ -15,8 +15,8 @@ official endorsement.
 | DSH bundle smoke | Verified | `.github/workflows/ci.yml`, `pnpm smoke:dsh` |
 | Cross-platform release gate | Verified | Node 22/24 on Ubuntu, macOS and Windows |
 | npm package | Not published | Publish `dsh-plugin-time-machine@0.2.0` only after the release checklist |
-| GitHub Release | Not created | Merge the release commit, then create `v0.2.0` |
-| Community discussion | Not submitted | Use the template below after the default branch is current |
+| GitHub Release | [Releases](https://github.com/GeoSyntax/dsh-plugin-time-machine/releases) | First public release: `v0.2.0` |
+| Community discussion | Submitted | [DSH discussion #7191](https://github.com/deepseek-ai/deepseek-harness/discussions/7191) |
 
 ## Official DSH discussion
 
@@ -63,10 +63,10 @@ and assistant-message action slots for DSH Web client `0.1.6-alpha.1` and
 ### Install
 
 ```bash
-dsh plugin --profile web add github:GeoSyntax/dsh-plugin-time-machine
+dsh plugin --profile web add github:GeoSyntax/dsh-plugin-time-machine#v0.2.0
 ```
 
-Enable `time-machine` in the profile's `cordis.patch.yml`, restart DSH, then
+The Bundle patch activates the plugin when installed; restart DSH, then
 use `/tm-list`, `/tm-preview <checkpoint>`, `/tm-rewind <checkpoint>`, or
 `/tm-fork <checkpoint> <branch>`.
 
@@ -100,7 +100,7 @@ the repository root URL. Recommended values are:
 Package URL: https://github.com/GeoSyntax/dsh-plugin-time-machine
 Category: Sessions & History
 One-line description: Unofficial DSH checkpoints, safe rewind, DAG forks, and failure reflection for the web profile.
-Install command: dsh plugin --profile web add github:GeoSyntax/dsh-plugin-time-machine
+Install command: dsh plugin --profile web add github:GeoSyntax/dsh-plugin-time-machine#v0.2.0
 ```
 
 The directory checks that the URL is public, points to a directory on the

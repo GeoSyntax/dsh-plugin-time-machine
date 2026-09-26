@@ -25,11 +25,9 @@ dependencies 一起安装。
    仓库提供 `pnpm smoke:dsh` 作为 bundle/宿主加载的最小入口；它要求 PATH 中有 `dsh`，并使用临时 `DSH_HOME`，不会修改默认 profile。CI 会用声明的 DSH 版本执行这一步。
 6. 在具备真实模型/无头 fixture 的环境中，再执行完整 turn lifecycle、Session fork、safe rewind 和 compensation 测试；bundle smoke 通过不等于恢复语义已被宿主端到端证明。
 7. 提交 release 变更，创建 `vX.Y.Z` tag 与 GitHub Release；附上 tarball checksum 和已验证的 DSH/OS 矩阵。
-8. 推送 `vX.Y.Z` tag 会触发 `.github/workflows/release.yml`：它会再次执行
-   `pnpm test:release`、校验 tag 与 package version 一致，然后使用 npm
-   provenance 发布。首次启用前，在仓库环境中配置 `NPM_TOKEN`，并确认 npm
-   trusted publishing/2FA 策略；发布后从空 profile 重做一次 registry 安装验证。
-9. 发布 companion 时，在 `client-companion/package.json` 更新版本，运行：
+8. 推送 `vX.Y.Z` tag 会触发 `.github/workflows/release.yml` 的验证与打包流程，**不会自动发布 npm**。这允许先完成 GitHub Release，再单独处理 npm 首次发布权限。
+9. npm 准备就绪后，在仓库中配置有权限发布的 `NPM_TOKEN`（或为已存在的包配置 trusted publisher），从对应版本 tag 手动运行 Release workflow，并设置 `dry_run=false`。工作流会再次执行 `pnpm test:release`、核对 tag 与包版本，再以 provenance 发布。不要从 `main` 分支触发发布。发布后从空 profile 重做一次 registry 安装验证。
+10. 发布 companion 时，在 `client-companion/package.json` 更新版本，运行：
 
    ```bash
    cd client-companion
@@ -41,6 +39,6 @@ dependencies 一起安装。
    ```
 
    提交后创建 `client-vX.Y.Z` tag。Release workflow 会构建本地 core link、
-   重跑 companion 门禁、校验 tag 版本，并在非 dry-run 时以 npm provenance 发布。
+   重跑 companion 门禁并校验 tag 版本；npm 发布同样需要从版本 tag 手动触发 `dry_run=false`。
 
 如果任何恢复测试失败，不发布；不要仅通过改文档隐藏不兼容行为。

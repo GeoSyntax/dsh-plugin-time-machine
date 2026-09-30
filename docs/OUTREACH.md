@@ -35,6 +35,7 @@
 每次公开推广都应包含：
 
 - [v0.2.0 Release](https://github.com/GeoSyntax/dsh-plugin-time-machine/releases/tag/v0.2.0)；
+- [本地综合演示报告](DEMO_REPORT.md)，用于说明真实可复现的服务层和 Web contract 证据；
 - 版本固定的安装命令；
 - 真实 Dashboard 截图或 60 秒内的 rewind/fork 视频；
 - DSH、Node.js 和操作系统兼容范围；

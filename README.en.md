@@ -62,6 +62,10 @@ For additional safety policies, optional encryption, and configuration, see [DES
 
 The repository [CI](https://github.com/GeoSyntax/dsh-plugin-time-machine/actions/workflows/ci.yml) covers Node.js 22/24 on Windows, macOS, and Ubuntu, DSH Bundle loading, client companion checks, dependency auditing, and automated tests. The [test plan](docs/TEST_PLAN.md) also describes local DSH source-host and Web checks. The screenshot demonstrates the UI and sample timeline; it does not prove that external side effects are reversible.
 
+## Community and feedback
+
+This is an unofficial community plugin. See [DSH plugin discussion #7191](https://github.com/deepseek-ai/deepseek-harness/discussions/7191) for the demo and compatibility feedback, or open a [GitHub issue](https://github.com/GeoSyntax/dsh-plugin-time-machine/issues) with a minimal reproduction. The [outreach and feedback guide](docs/OUTREACH.md) covers tester recruitment, directory submission, and release promotion.
+
 ## License
 
 MIT

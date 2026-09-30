@@ -75,7 +75,7 @@ dsh web
 
 ## 社区与反馈
 
-这是一个非官方社区插件。欢迎在 [DSH 插件讨论 #7191](https://github.com/deepseek-ai/deepseek-harness/discussions/7191) 查看演示、反馈兼容性，或在 [GitHub Issues](https://github.com/GeoSyntax/dsh-plugin-time-machine/issues) 提交最小复现。完整的用户招募、社区目录提交和推广检查表见 [社区推广与反馈手册](docs/OUTREACH.md)。
+这是一个非官方社区插件。欢迎在 [DSH 插件讨论 #7191](https://github.com/deepseek-ai/deepseek-harness/discussions/7191) 查看演示、反馈兼容性，或在 [GitHub Issues](https://github.com/GeoSyntax/dsh-plugin-time-machine/issues) 提交最小复现。想独立验证 v0.2.0，可参加 [测试招募 Issue #25](https://github.com/GeoSyntax/dsh-plugin-time-machine/issues/25)。安全问题请看 [SECURITY.md](SECURITY.md)，贡献方式见 [CONTRIBUTING.md](CONTRIBUTING.md)；完整的用户招募、社区目录提交和推广检查表见 [社区推广与反馈手册](docs/OUTREACH.md)。
 
 ## 许可证
 

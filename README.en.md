@@ -75,7 +75,7 @@ The repository [CI](https://github.com/GeoSyntax/dsh-plugin-time-machine/actions
 
 ## Community and feedback
 
-This is an unofficial community plugin. See [DSH plugin discussion #7191](https://github.com/deepseek-ai/deepseek-harness/discussions/7191) for the demo and compatibility feedback, or open a [GitHub issue](https://github.com/GeoSyntax/dsh-plugin-time-machine/issues) with a minimal reproduction. The [outreach and feedback guide](docs/OUTREACH.md) covers tester recruitment, directory submission, and release promotion.
+This is an unofficial community plugin. See [DSH plugin discussion #7191](https://github.com/deepseek-ai/deepseek-harness/discussions/7191) for the demo and compatibility feedback, or open a [GitHub issue](https://github.com/GeoSyntax/dsh-plugin-time-machine/issues) with a minimal reproduction. To independently validate v0.2.0, join [tester recruitment issue #25](https://github.com/GeoSyntax/dsh-plugin-time-machine/issues/25). See [SECURITY.md](SECURITY.md) for security reports and [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines; the [outreach and feedback guide](docs/OUTREACH.md) covers tester recruitment, directory submission, and release promotion.
 
 ## License
 

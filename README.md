@@ -62,6 +62,10 @@ dsh web
 
 仓库的 [CI](https://github.com/GeoSyntax/dsh-plugin-time-machine/actions/workflows/ci.yml) 覆盖 Node.js 22/24 的 Windows、macOS、Ubuntu，DSH Bundle 加载、客户端 companion、依赖审计及自动化测试。[测试计划](docs/TEST_PLAN.md)还记录了本地 DSH 源码宿主与 Web 流程的验证方法。截图展示的是界面和样例时间线；它本身不构成外部副作用可回滚的证明。
 
+## 社区与反馈
+
+这是一个非官方社区插件。欢迎在 [DSH 插件讨论 #7191](https://github.com/deepseek-ai/deepseek-harness/discussions/7191) 查看演示、反馈兼容性，或在 [GitHub Issues](https://github.com/GeoSyntax/dsh-plugin-time-machine/issues) 提交最小复现。完整的用户招募、社区目录提交和推广检查表见 [社区推广与反馈手册](docs/OUTREACH.md)。
+
 ## 许可证
 
 MIT

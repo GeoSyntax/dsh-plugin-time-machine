@@ -98,7 +98,7 @@
     "node": "^22.19.0 || >=24.0.0"
   },
   "dependencies": {
-    "@deepseek-ai/schemastery": "^3.18.2",
+    "@deepseek-ai/schemastery": "^3.18.3",
     "picocolors": "^1.1.1"
   },
   "peerDependencies": {

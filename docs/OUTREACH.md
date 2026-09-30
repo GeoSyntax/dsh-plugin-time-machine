@@ -28,7 +28,7 @@
 5. 从旧 checkpoint 执行 `/tm-fork`；
 6. 填写 DSH 版本、操作系统、安装结果、恢复结果和最困惑的步骤。
 
-反馈中不要上传私有代码、密钥、真实 token 或业务数据。可以只提供最小复现仓库、脱敏日志和版本号。
+反馈中不要上传私有代码、密钥、真实 token 或业务数据。可以只提供最小复现仓库、脱敏日志和版本号。用户可以直接使用仓库的 [Community installation and rewind feedback 模板](../.github/ISSUE_TEMPLATE/community-feedback.yml) 提交结构化结果。
 
 ## 发布内容
 

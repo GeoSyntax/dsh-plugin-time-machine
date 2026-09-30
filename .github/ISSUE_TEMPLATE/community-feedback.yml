@@ -1,0 +1,98 @@
+name: Community installation and rewind feedback
+description: Report a real DSH Time Machine installation, rewind, fork, or dashboard experience.
+title: "[Feedback]: "
+labels:
+  - community-feedback
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for testing DSH Time Machine. This form is for reproducible community feedback, not private support.
+
+        **Do not include source code from private projects, API keys, tokens, credentials, database contents, or unredacted logs.**
+
+        中文用户可以直接用中文填写。请先使用一个可丢弃的测试项目，并固定安装一个 Release tag.
+
+  - type: input
+    id: plugin-version
+    attributes:
+      label: Plugin version
+      description: The GitHub tag or package version you installed, for example v0.2.0.
+      placeholder: v0.2.0
+    validations:
+      required: true
+
+  - type: input
+    id: dsh-version
+    attributes:
+      label: DSH version
+      placeholder: 0.1.6-alpha.1
+    validations:
+      required: true
+
+  - type: dropdown
+    id: operating-system
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: outcome
+    attributes:
+      label: What did you test?
+      options:
+        - Installation
+        - Checkpoint and list/tree
+        - Preview and rewind
+        - Orphan-file cleanup
+        - Fork and DAG history
+        - Web dashboard
+        - Non-Git fallback engine
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction or test steps
+      description: Include commands and a minimal disposable workspace; replace secrets and private paths with placeholders.
+      placeholder: |
+        1. Installed with ...
+        2. Started DSH with ...
+        3. Changed a disposable file ...
+        4. Ran /tm-preview ...
+        5. Ran /tm-rewind ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: result
+    attributes:
+      label: Result and expectation
+      description: What happened, and what did you expect?
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Sanitized evidence
+      description: Optional links to a disposable reproduction, screenshot, or redacted log. Never paste credentials or private source.
+      placeholder: https://github.com/...
+
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety confirmation
+      options:
+        - label: I removed secrets, credentials, private source, and sensitive workspace data.
+          required: true
+        - label: I understand this is an unofficial community plugin and file restore cannot undo external side effects.
+          required: true

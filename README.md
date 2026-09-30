@@ -22,6 +22,17 @@ dsh plugin --profile web add github:GeoSyntax/dsh-plugin-time-machine#v0.2.0
 
 插件的 `cordis.patch.yml` 会作为 Bundle 随安装加入 profile。安装或更新后重启 DSH；无需再手动复制插件配置。当前通过 GitHub 安装，尚未发布 npm 包。[DSH 的 Bundle 安装说明](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/user/develop/basic/publish.md)解释了 profile 的加载方式。
 
+### 固定包安装（可选）
+
+如果需要离线审查或可复现安装，可以从 [v0.2.0 Release](https://github.com/GeoSyntax/dsh-plugin-time-machine/releases/tag/v0.2.0) 下载 `dsh-plugin-time-machine-0.2.0.tgz`，并先核对 [SHA256SUMS.txt](https://github.com/GeoSyntax/dsh-plugin-time-machine/releases/download/v0.2.0/SHA256SUMS.txt)：
+
+```bash
+sha256sum -c SHA256SUMS.txt
+npm install ./dsh-plugin-time-machine-0.2.0.tgz
+```
+
+该 tarball 是 npm 格式的固定发布产物，但当前尚未发布到 npm registry；DSH Bundle 用户仍应优先使用上面的 `dsh plugin ...#v0.2.0` 命令。
+
 ## 快速开始
 
 在希望 Agent 修改的项目目录启动：

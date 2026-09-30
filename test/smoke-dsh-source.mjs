@@ -85,18 +85,27 @@ try {
   if (!config.includes('dsh-plugin-time-machine') || !config.includes('gemini-local')) {
     throw new Error('Source DSH profile did not activate the plugin and Gemini overlay.');
   }
+  if (!config.includes('@deepseek-ai/dsh-tool-fs')) {
+    throw new Error('Source DSH profile did not mount the native filesystem tool package.');
+  }
   if (!config.includes('enableAgentWriteLedger')) {
     throw new Error('Source DSH profile did not enable the Agent-write ledger in the plugin configuration.');
   }
 
   if (live) {
     if (!process.env.TM_GEMINI_API_KEY) throw new Error('TM_DSH_LIVE=1 requires TM_GEMINI_API_KEY.');
-    run([
+    const liveTurnOutput = run([
       '--profile', profile,
       '--patch', patchFile,
-      'Use the native write tool (not bash or any shell command) to create hello.txt with exactly the text DSH-TM-SOURCE-OK, then confirm briefly.',
+      'Call the native tool named write exactly once with JSON arguments {"file_path":"hello.txt","content":"DSH-TM-SOURCE-OK"}. Do not use bash, pwsh, run_code, or any shell command. Do not merely describe the action: the tool call must create the file, then confirm briefly.',
     ], { timeout: 180_000 });
-    const content = await readFile(path.join(workspace, 'hello.txt'), 'utf8');
+    let content;
+    try {
+      content = await readFile(path.join(workspace, 'hello.txt'), 'utf8');
+    } catch (error) {
+      const detail = liveTurnOutput.trim().slice(-4000);
+      throw new Error(`Live DSH did not create the expected file. Agent output:\n${detail}`, { cause: error });
+    }
     if (content.trim() !== 'DSH-TM-SOURCE-OK') throw new Error('Live DSH did not create the expected file.');
     const dagFiles = await findFiles(workspace, (name) => name.startsWith('dag_') && name.endsWith('.json'));
     if (dagFiles.length === 0) throw new Error('Live DSH did not persist a time-machine DAG checkpoint.');

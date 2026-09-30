@@ -4,7 +4,7 @@
 
 An unofficial DeepSeek Harness community plugin that saves file and session boundaries, previews restores, and keeps the history of each attempt.
 
-[简体中文](README.md) · [v0.2.0 release](https://github.com/GeoSyntax/dsh-plugin-time-machine/releases/tag/v0.2.0) · [Feature comparison](docs/COMPARISON.md) · [Test plan](docs/TEST_PLAN.md) · [Report an issue](https://github.com/GeoSyntax/dsh-plugin-time-machine/issues)
+[简体中文](README.md) · [v0.2.0 release](https://github.com/GeoSyntax/dsh-plugin-time-machine/releases/tag/v0.2.0) · [Real task report](docs/REAL_TASK_REPORT.md) · [Feature comparison](docs/COMPARISON.md) · [Test plan](docs/TEST_PLAN.md) · [Report an issue](https://github.com/GeoSyntax/dsh-plugin-time-machine/issues)
 
 ## Preview
 

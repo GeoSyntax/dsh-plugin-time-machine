@@ -4,7 +4,7 @@
 
 面向 DeepSeek Harness 的非官方社区插件：保存文件和会话边界，预览后恢复工作区，并保留每条尝试过的分支。
 
-[English](README.en.md) · [v0.2.0 发行说明](https://github.com/GeoSyntax/dsh-plugin-time-machine/releases/tag/v0.2.0) · [功能对照](docs/COMPARISON.md) · [测试记录](docs/TEST_PLAN.md) · [问题反馈](https://github.com/GeoSyntax/dsh-plugin-time-machine/issues)
+[English](README.en.md) · [v0.2.0 发行说明](https://github.com/GeoSyntax/dsh-plugin-time-machine/releases/tag/v0.2.0) · [真实任务报告](docs/REAL_TASK_REPORT.md) · [功能对照](docs/COMPARISON.md) · [测试记录](docs/TEST_PLAN.md) · [问题反馈](https://github.com/GeoSyntax/dsh-plugin-time-machine/issues)
 
 ## 效果预览
 

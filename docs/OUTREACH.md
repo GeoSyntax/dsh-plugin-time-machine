@@ -19,7 +19,7 @@
 
 ## 招募测试用户
 
-优先招募 Windows、macOS、Linux 各至少一名用户。请让每位用户按固定流程测试：
+优先招募 Windows、macOS、Linux 各至少一名用户。可以直接使用仓库的 [v0.2.0 测试招募 Issue #25](https://github.com/GeoSyntax/dsh-plugin-time-machine/issues/25)；请让每位用户按固定流程测试：
 
 1. 安装 `v0.2.0`；
 2. 让 Agent 修改一个可丢弃的测试文件；

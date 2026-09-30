@@ -12,8 +12,10 @@
 ## 独立目录
 
 - [DSH Plugin Directory submission #247](https://github.com/alexchenzl/dsh-plugin-directory/issues/247)：提交根目录 Bundle、分类、单行描述和版本固定安装命令。
-- 目录自动检查公开仓库、`package.json`、`dsh.bundle.patch` 和 patch 文件；它不是安全审计或官方认证。
-- 目录通过后，记录目录链接和检查日期；如果安装方式或版本改变，更新原提交。
+- 提交表单要求公开仓库、`package.json`、`dsh.bundle.patch` 和 patch 文件；它不是安全审计或官方认证。
+- 目录仓库当前公开的 Actions 主要负责给提交打 `plugin-submission` 标签；不要把标签、Issue 保持打开或一次 CI 运行当作收录证明。
+- 只有目录维护者在 Issue 中明确回复并提供目录条目链接，才记录为“已收录”；在此之前状态应写成“已提交，等待维护者处理”。
+- 如果安装方式或版本改变，更新原提交，并保留提交时间和证据链接。
 
 ## 招募测试用户
 
